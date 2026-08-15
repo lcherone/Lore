@@ -1,0 +1,508 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RepositoryProvider {
+  github
+  gitlab
+  bitbucket
+  local
+}
+
+enum CodeEntityType {
+  file
+  class
+  interface
+  trait
+  function
+  method
+  constant
+  event
+  listener
+  service
+  repository
+  controller
+  route
+  database_table
+  configuration_key
+  external_api
+  test
+}
+
+enum RelationshipSource {
+  static_analysis
+  git_history
+  ai_inference
+  manual
+  github
+  jira
+}
+
+enum KnowledgeKind {
+  fact
+  decision
+  rule
+  preference
+  inference
+  policy
+  regression
+  warning
+}
+
+enum KnowledgeStatus {
+  candidate
+  active
+  challenged
+  superseded
+  archived
+  rejected
+}
+
+enum Severity {
+  info
+  suggestion
+  warning
+  error
+  blocker
+}
+
+enum EvidenceType {
+  pull_request
+  review_comment
+  commit
+  ticket
+  code
+  documentation
+  test_result
+  ci_result
+  manual_confirmation
+  incident
+}
+
+enum EvidenceRelationship {
+  supports
+  contradicts
+  originated_from
+  confirmed_by
+  supersedes
+}
+
+enum ChallengeStatus {
+  open
+  resolved
+}
+
+enum ChallengeResolution {
+  confirmed
+  modified
+  superseded
+  split_scope
+  archived
+  false_positive
+}
+
+enum ProposalOperation {
+  create
+  update
+  supersede
+  challenge
+  merge
+  archive
+}
+
+enum ProposalStatus {
+  pending
+  auto_accepted
+  approved
+  rejected
+  failed_validation
+}
+
+enum SessionStatus {
+  preparing
+  active
+  verifying
+  completed
+  abandoned
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+  critical
+}
+
+model Organisation {
+  id               String            @id @default(uuid()) @db.Uuid
+  name             String
+  slug             String            @unique
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  repositories     Repository[]
+  evidence         Evidence[]
+  knowledgeItems   KnowledgeItem[]
+  proposals        KnowledgeProposal[]
+  policies         Policy[]
+  reviewerProfiles ReviewerProfile[]
+  sessions         AgentSession[]
+  reports          ChangeSafetyReport[]
+  auditEvents      AuditEvent[]
+  memberships      Membership[]
+  ingestionReceipts IngestionReceipt[]
+}
+
+model User {
+  id          String       @id @default(uuid()) @db.Uuid
+  email       String       @unique
+  name        String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  memberships Membership[]
+}
+
+model Membership {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @db.Uuid
+  userId         String       @db.Uuid
+  role           String
+  createdAt      DateTime     @default(now())
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, userId])
+  @@index([userId])
+}
+
+model Repository {
+  id                   String             @id @default(uuid()) @db.Uuid
+  organisationId       String             @db.Uuid
+  provider             RepositoryProvider
+  providerRepositoryId String?
+  owner                String
+  name                 String
+  defaultBranch        String             @default("main")
+  cloneUrl             String?
+  localPath            String?
+  languageSummary      Json
+  lastIndexedCommit    String?
+  analysisVersion      String             @default("1")
+  retentionConfig      Json               @default("{}")
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  organisation         Organisation       @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  entities             CodeEntity[]
+  relationships        CodeRelationship[]
+  evidence             Evidence[]
+  knowledgeItems       KnowledgeItem[]
+  proposals            KnowledgeProposal[]
+  policies             Policy[]
+  regressions          RegressionRecord[]
+  sessions             AgentSession[]
+  reports              ChangeSafetyReport[]
+
+  @@unique([organisationId, provider, owner, name])
+  @@index([organisationId])
+}
+
+model CodeEntity {
+  id             String         @id @default(uuid()) @db.Uuid
+  repositoryId   String         @db.Uuid
+  type           CodeEntityType
+  name           String
+  qualifiedName  String
+  path           String
+  startLine      Int?
+  endLine        Int?
+  language       String
+  metadata       Json           @default("{}")
+  fingerprint    String
+  contentHash    String?
+  analyzerVersion String        @default("1")
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  repository     Repository     @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  outgoing       CodeRelationship[] @relation("relationshipSource")
+  incoming       CodeRelationship[] @relation("relationshipTarget")
+
+  @@unique([repositoryId, fingerprint])
+  @@index([repositoryId, path])
+  @@index([repositoryId, qualifiedName])
+}
+
+model CodeRelationship {
+  id               String             @id @default(uuid()) @db.Uuid
+  repositoryId     String             @db.Uuid
+  sourceEntityId   String             @db.Uuid
+  targetEntityId   String             @db.Uuid
+  relationshipType String
+  confidence       Float
+  source           RelationshipSource
+  metadata         Json               @default("{}")
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  repository       Repository         @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  sourceEntity     CodeEntity         @relation("relationshipSource", fields: [sourceEntityId], references: [id], onDelete: Cascade)
+  targetEntity     CodeEntity         @relation("relationshipTarget", fields: [targetEntityId], references: [id], onDelete: Cascade)
+
+  @@unique([repositoryId, sourceEntityId, targetEntityId, relationshipType, source])
+  @@index([sourceEntityId, relationshipType])
+  @@index([targetEntityId, relationshipType])
+}
+
+model Evidence {
+  id             String        @id @default(uuid()) @db.Uuid
+  organisationId String        @db.Uuid
+  repositoryId   String?       @db.Uuid
+  type           EvidenceType
+  provider       String
+  externalId     String
+  url            String?
+  title          String?
+  content        String
+  author         String?
+  occurredAt     DateTime
+  metadata       Json          @default("{}")
+  contentHash    String?
+  createdAt      DateTime      @default(now())
+  organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository     Repository?   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  knowledgeLinks KnowledgeEvidence[]
+
+  @@unique([organisationId, provider, externalId])
+  @@index([organisationId, repositoryId, occurredAt])
+}
+
+model KnowledgeItem {
+  id              String          @id @default(uuid()) @db.Uuid
+  organisationId  String          @db.Uuid
+  repositoryId    String?         @db.Uuid
+  kind            KnowledgeKind
+  status          KnowledgeStatus
+  title           String
+  statement       String
+  rationale       String
+  confidence      Float
+  severity        Severity
+  scope           Json
+  metadata        Json            @default("{}")
+  createdBy       String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  lastConfirmedAt DateTime?
+  supersededById  String?         @db.Uuid
+  organisation    Organisation    @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository      Repository?     @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  supersededBy    KnowledgeItem?  @relation("supersession", fields: [supersededById], references: [id])
+  supersedes      KnowledgeItem[] @relation("supersession")
+  evidenceLinks   KnowledgeEvidence[]
+  challenges      KnowledgeChallenge[]
+  revisions       KnowledgeRevision[]
+  usageEvents     KnowledgeUsage[]
+
+  @@index([organisationId, repositoryId, status, kind])
+  @@index([organisationId, confidence])
+}
+
+model KnowledgeEvidence {
+  knowledgeItemId String               @db.Uuid
+  evidenceId      String               @db.Uuid
+  relationship    EvidenceRelationship
+  weight          Float                @default(1)
+  knowledgeItem   KnowledgeItem        @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+  evidence        Evidence             @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  @@id([knowledgeItemId, evidenceId, relationship])
+}
+
+model KnowledgeChallenge {
+  id              String               @id @default(uuid()) @db.Uuid
+  knowledgeItemId String               @db.Uuid
+  reason          String
+  status          ChallengeStatus      @default(open)
+  createdAt       DateTime             @default(now())
+  resolvedAt      DateTime?
+  resolution      ChallengeResolution?
+  knowledgeItem   KnowledgeItem        @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+
+  @@index([knowledgeItemId, status])
+}
+
+model KnowledgeProposal {
+  id             String            @id @default(uuid()) @db.Uuid
+  organisationId String            @db.Uuid
+  repositoryId   String?           @db.Uuid
+  operation      ProposalOperation
+  payload        Json
+  source         String
+  status         ProposalStatus    @default(pending)
+  validationErrors Json            @default("[]")
+  createdAt      DateTime          @default(now())
+  reviewedAt     DateTime?
+  reviewedBy     String?
+  organisation   Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository     Repository?       @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId, repositoryId, status])
+}
+
+model KnowledgeRevision {
+  id              String          @id @default(uuid()) @db.Uuid
+  knowledgeItemId String          @db.Uuid
+  version         Int
+  statement       String
+  scope           Json
+  classification  KnowledgeKind
+  confidence      Float
+  status          KnowledgeStatus
+  changeReason    String
+  createdAt       DateTime        @default(now())
+  createdBy       String
+  knowledgeItem   KnowledgeItem   @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+
+  @@unique([knowledgeItemId, version])
+}
+
+model Policy {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @db.Uuid
+  repositoryId   String?      @db.Uuid
+  name           String
+  description    String
+  owner          String
+  severity       Severity
+  scope          Json
+  enabled        Boolean      @default(true)
+  detectorType   String
+  detectorConfig Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository     Repository?  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId, repositoryId, enabled])
+}
+
+model RegressionRecord {
+  id                 String      @id @default(uuid()) @db.Uuid
+  repositoryId       String      @db.Uuid
+  title              String
+  description        String
+  introducedByCommit String?
+  fixedByCommit      String?
+  pullRequestId      String?
+  ticketId           String?
+  affectedEntities   Json
+  evidence           Json
+  severity           Severity
+  createdAt          DateTime    @default(now())
+  repository         Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@index([repositoryId, severity])
+}
+
+model ReviewerProfile {
+  id               String       @id @default(uuid()) @db.Uuid
+  organisationId   String       @db.Uuid
+  providerIdentity String
+  name             String
+  email            String?
+  metadata         Json         @default("{}")
+  organisation     Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, providerIdentity])
+}
+
+model AgentSession {
+  id              String              @id @default(uuid()) @db.Uuid
+  organisationId  String              @db.Uuid
+  repositoryId    String              @db.Uuid
+  task            String
+  status          SessionStatus
+  baseCommit      String?
+  currentCommit   String?
+  startedAt       DateTime            @default(now())
+  completedAt     DateTime?
+  agentType       String
+  metadata        Json                @default("{}")
+  filesObserved   Json                @default("[]")
+  filesChanged    Json                @default("[]")
+  organisation    Organisation        @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository      Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  contexts        ContextPackageRecord[]
+  reports         ChangeSafetyReport[]
+
+  @@index([organisationId, repositoryId, status])
+}
+
+model ContextPackageRecord {
+  id        String       @id @default(uuid()) @db.Uuid
+  sessionId String       @db.Uuid
+  payload   Json
+  createdAt DateTime     @default(now())
+  session   AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+}
+
+model ChangeSafetyReport {
+  id             String        @id @default(uuid()) @db.Uuid
+  organisationId String        @db.Uuid
+  repositoryId   String        @db.Uuid
+  sessionId      String?       @db.Uuid
+  task           String
+  risk           RiskLevel
+  payload        Json
+  blockers       Int           @default(0)
+  warnings       Int           @default(0)
+  createdAt      DateTime      @default(now())
+  organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository     Repository    @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  session        AgentSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId, repositoryId, createdAt])
+}
+
+model KnowledgeUsage {
+  id              String        @id @default(uuid()) @db.Uuid
+  knowledgeItemId String        @db.Uuid
+  sessionId       String?       @db.Uuid
+  outcome         String?
+  includedAs      String
+  createdAt       DateTime      @default(now())
+  knowledgeItem   KnowledgeItem @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+
+  @@index([knowledgeItemId, createdAt])
+}
+
+model AuditEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @db.Uuid
+  userId         String
+  action         String
+  targetType     String
+  targetId       String
+  before         Json?
+  after          Json?
+  createdAt      DateTime     @default(now())
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId, createdAt])
+}
+
+model IngestionReceipt {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @db.Uuid
+  provider       String
+  externalId     String
+  eventType      String
+  receivedAt     DateTime     @default(now())
+  processedAt    DateTime?
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, provider, externalId])
+}

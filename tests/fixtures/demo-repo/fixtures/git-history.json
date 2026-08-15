@@ -1,0 +1,8 @@
+[
+  {"sha":"a100001","occurredAt":"2026-01-01T10:00:00.000Z","paths":["src/Tax/Avalara/AddressCode.php","tests/Tax/RefundTaxTransactionTest.php"]},
+  {"sha":"a100002","occurredAt":"2026-02-01T10:00:00.000Z","paths":["src/Tax/Avalara/AddressCode.php","tests/Tax/RefundTaxTransactionTest.php"]},
+  {"sha":"a100003","occurredAt":"2026-03-01T10:00:00.000Z","paths":["src/Tax/Avalara/AddressCode.php","tests/Tax/RefundTaxTransactionTest.php"]},
+  {"sha":"a100004","occurredAt":"2026-04-01T10:00:00.000Z","paths":["src/Tax/Avalara/AddressCode.php","tests/Tax/RefundTaxTransactionTest.php","src/Tax/RefundTaxTransaction.php"]},
+  {"sha":"a100005","occurredAt":"2026-05-01T10:00:00.000Z","paths":["src/Tax/Avalara/AddressCode.php","tests/Tax/RefundTaxTransactionTest.php","src/Tax/RefundTaxTransaction.php"]},
+  {"sha":"a100006","occurredAt":"2026-06-01T10:00:00.000Z","paths":["src/Search/Basket/BasketSearch.php","tests/Search/BasketSearchTest.php"]}
+]

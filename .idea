@@ -1,0 +1,1802 @@
+Yes. Looking across the problems you repeatedly come back to, I think there **is a credible business hiding in your history**.
+
+Not a guaranteed “make millions” idea—nobody can honestly promise that—but there is one where I think you have unusually good founder-market fit.
+
+# The idea: an AI Engineering Memory / Operating Layer
+
+Think:
+
+> **A system that learns how a software team actually works, then gives AI coding agents the institutional knowledge needed to work like a member of that team.**
+
+I would *not* build another coding agent.
+
+Codex, Claude Code, Copilot, Cursor, etc. already write code extremely well. AI development-tool adoption is already enormous: JetBrains reported that 90% of developers regularly used at least one AI tool for development work by January 2026. ([The JetBrains Blog][1])
+
+Instead, build the **memory and governance layer around those agents**.
+
+And you've already independently bumped into this problem several times.
+
+---
+
+## Why I arrived here from your history
+
+A pattern appears repeatedly in things you've wanted to build.
+
+You've talked about:
+
+* capturing PR reviewer feedback and remembering that *Joe prefers X whereas another reviewer accepts Y*
+* turning that feedback into reusable coding knowledge
+* having AI report what it changed and why
+* automatically understanding Jira tickets
+* associating GitHub PRs with Jira work
+* tracking what you're working on
+* reconstructing work from browser activity
+* maintaining a central AI-assisted work dashboard
+* having different machines/nodes exchange information
+* keeping data private/local where possible
+* building lightweight tools rather than enormous enterprise systems
+
+Those aren't really separate ideas.
+
+They're manifestations of the same missing layer:
+
+**software teams have huge amounts of undocumented operational knowledge that AI agents don't possess.**
+
+For example:
+
+> "We don't use this interface here because this particular implementation needs X."
+
+> "Rebecca normally expects this information in the Jira ticket."
+
+> "Joe commented on three PRs that repositories using this package should implement it this way."
+
+> "When touching the basket search, remember that POS intentionally behaves differently from the frontend."
+
+> "This weird code exists because of SS-6160."
+
+> "Don't 'clean up' this filter. It deliberately preserves legacy CP behaviour."
+
+You encounter exactly this sort of knowledge constantly.
+
+Codex doesn't inherently know it.
+
+Claude doesn't know it.
+
+A new developer certainly doesn't know it.
+
+And conventional documentation tends not to capture it.
+
+---
+
+# The product
+
+Give it a working name like **Lore**.
+
+The basic proposition:
+
+> **Lore learns your engineering organisation while you work and supplies the right organisational context to humans and AI agents at the moment they need it.**
+
+It connects to:
+
+```text
+GitHub / GitLab
+      │
+Jira ─┼──────► Lore
+      │          │
+Slack │          ├── Engineering knowledge graph
+      │          ├── Decisions
+Docs ─┘          ├── Reviewer preferences
+                 ├── Architectural conventions
+                 ├── Historical reasoning
+                 └── Project quirks
+                           │
+                 ┌─────────┼─────────┐
+                 ▼         ▼         ▼
+              Codex    Claude Code   Cursor
+```
+
+But the interesting part isn't RAG/search.
+
+It's **learning from what happens after the AI acts**.
+
+---
+
+# Example from your actual workflow
+
+Imagine Codex produces:
+
+```php
+class ProductRepository
+{
+    ...
+}
+```
+
+Joe reviews the PR:
+
+> Can we implement ProductRepositoryInterface here rather than depending directly on the concrete repository?
+
+Lore observes that.
+
+It extracts something like:
+
+```yaml
+rule:
+  concept: repository-interface
+  scope:
+    repository: soho/ecom
+  evidence:
+    - pull_request: 1832
+      reviewer: joe
+  confidence: 0.64
+
+guidance:
+  "Repository dependencies should normally use
+   their interface rather than concrete implementation."
+```
+
+Two months later another PR gets created.
+
+Before Codex starts, Lore injects:
+
+```text
+Relevant engineering knowledge:
+
+Repository dependencies in this project normally use
+their corresponding interface.
+
+Evidence:
+PR #1832
+PR #1941
+PR #2017
+
+Confidence: High
+```
+
+Now something much more interesting happens.
+
+Joe approves it.
+
+That is **additional evidence that the learned rule was correct**.
+
+Lore gets smarter from the development lifecycle.
+
+---
+
+# And it learns *why* ugly code exists
+
+This could be even more valuable.
+
+Consider the kind of basket-search issue you've previously worked through.
+
+An AI sees:
+
+```php
+if ($this->isOmsBasket()) {
+    // skip active filter
+}
+```
+
+and thinks:
+
+> That's inconsistent. I'll simplify it.
+
+Lore knows:
+
+```text
+DO NOT REMOVE
+
+Reason:
+Admin CP/POS basket searches historically allow
+region-enabled + priced products even where the normal
+frontend Active filter would exclude them.
+
+Introduced during Elasticsearch migration.
+
+Related:
+SS-xxxx
+PR #xxxx
+```
+
+That is extraordinarily useful with AI coding agents.
+
+As AI writes more code, **understanding why existing code looks wrong becomes increasingly important**.
+
+---
+
+# Why I prefer this over simply building an AI code reviewer
+
+That market is already becoming crowded.
+
+[CodeRabbit](https://www.coderabbit.ai/?utm_source=chatgpt.com), for example, has just raised $143 million at a **$1.5 billion valuation**, reports more than 17,000 customers and more than two million code reviews per week. ([Reuters][2])
+
+[GitHub](https://github.com/?utm_source=chatgpt.com) says Copilot code review has already performed more than **60 million reviews** and accounts for more than one in five code reviews on GitHub. ([The GitHub Blog][3])
+
+So I wouldn't fight them.
+
+I'd make them **better**.
+
+Your positioning becomes:
+
+> **We don't write your code. We teach your AI how your company writes code.**
+
+That distinction matters.
+
+---
+
+# The moat is the team's history
+
+This is where I think there's potentially a substantial company rather than another disposable AI wrapper.
+
+A generic AI application is relatively easy to reproduce.
+
+Your customer's accumulated engineering intelligence isn't.
+
+After a company has used Lore for two years it could contain:
+
+```text
+31,482 PR decisions
+8,291 reviewer corrections
+1,943 architectural decisions
+712 project-specific conventions
+286 historical compatibility constraints
+141 recurring production problems
+93 undocumented integration quirks
+```
+
+Now replacing Lore means throwing away **two years of learned organisational behaviour**.
+
+That's a real switching cost.
+
+A recent analysis of the AI application market makes essentially this broader point: with applications becoming cheap to build, defensibility increasingly comes from proprietary data, distribution, and deep workflow integration rather than the AI model itself. ([TechRadar][4])
+
+Your product naturally develops all three.
+
+---
+
+# There's another important feature: "Why?"
+
+You should be able to select code and ask:
+
+> **Why is this implemented this way?**
+
+Lore searches:
+
+Git history → PR → Jira → reviewer discussion → related PRs → architectural decisions.
+
+Then responds:
+
+> This was deliberately implemented this way in PR #829.
+>
+> The normal implementation caused inactive products to disappear from CP basket search following the Elasticsearch migration.
+>
+> Rebecca confirmed CP should preserve the old SQL behaviour in SS-xxxx.
+>
+> Changing this would potentially reintroduce that regression.
+
+That could save engineering organisations an enormous amount of archaeology.
+
+And you've personally spent significant amounts of time doing exactly that archaeology.
+
+---
+
+# Then add reviewer intelligence
+
+This is something I particularly like from your earlier idea.
+
+Not merely:
+
+```text
+Company coding standards
+```
+
+but:
+
+```text
+Organisation
+   ↓
+Team
+   ↓
+Repository
+   ↓
+Subsystem
+   ↓
+Reviewer
+```
+
+For example:
+
+```text
+Global:
+Prefer dependency injection.
+
+Soho repository:
+Use service interfaces.
+
+Checkout:
+Avoid changing transaction state directly.
+
+Joe:
+Frequently requests interfaces around repositories.
+
+Rebecca:
+Requires integration behaviour documented in Jira.
+```
+
+The AI can distinguish **hard architectural rules from reviewer tendencies**.
+
+That is much more sophisticated than a giant `AGENTS.md`.
+
+---
+
+# It also solves the stale-rules problem
+
+You don't want Lore blindly accumulating instructions forever.
+
+Each piece of knowledge should have:
+
+```text
+confidence
+evidence count
+last observed
+scope
+contradictions
+superseded_by
+source
+```
+
+Suppose ten PRs followed:
+
+```text
+Always use ProductInterface
+```
+
+Then architecture changes.
+
+Three recent PRs deliberately stop doing it.
+
+Lore notices the contradiction:
+
+> **Possible outdated convention detected**
+>
+> ProductInterface preference has been contradicted by three recently approved PRs.
+>
+> Review rule?
+
+Now engineering documentation becomes somewhat **self-maintaining**.
+
+That's much more compelling to me than "AI documentation".
+
+---
+
+# Your side-hustle MVP is surprisingly small
+
+Do **not** initially build Jira, Slack, VSCode, Harvest, GitLab, dashboards, agents and everything else.
+
+Build one incredibly good loop:
+
+```text
+GitHub App
+     │
+     ▼
+Read merged PRs
+     │
+     ├── PR description
+     ├── diff
+     ├── review comments
+     └── resolution
+     │
+     ▼
+Extract engineering lessons
+     │
+     ▼
+Knowledge database
+     │
+     ▼
+CLI / MCP server
+     │
+     ▼
+Codex / Claude / Cursor
+```
+
+That's it.
+
+### Version 0.1
+
+Install the GitHub app.
+
+It analyses perhaps the previous 100 merged PRs.
+
+Then it produces:
+
+```text
+I discovered 37 potential engineering conventions.
+
+12 high confidence
+18 medium confidence
+7 low confidence
+```
+
+Developer approves/rejects them.
+
+Now expose:
+
+```text
+lore context SS-6160
+```
+
+or an MCP equivalent.
+
+The coding agent gets relevant knowledge before working.
+
+That is something you could genuinely build yourself evenings/weekends.
+
+---
+
+# Your killer onboarding experience
+
+This could sell the product.
+
+Instead of:
+
+> Welcome to Lore. Start teaching us about your company.
+
+Installation says:
+
+> **We analysed your last 500 pull requests.**
+>
+> We discovered:
+>
+> 74 coding conventions
+> 31 architectural decisions
+> 19 recurring reviewer preferences
+> 13 historical compatibility constraints
+> 8 frequently repeated review comments
+>
+> **You may already be repeating the same review feedback every week.**
+
+Then show examples.
+
+That's an immediate "oh..." moment.
+
+No months of training required.
+
+---
+
+# Then Phase 2 becomes very interesting
+
+Add Jira.
+
+Now Lore understands:
+
+```text
+Requirement
+    ↓
+Implementation
+    ↓
+Review
+    ↓
+Correction
+    ↓
+Approval
+    ↓
+Production outcome
+```
+
+So instead of learning merely:
+
+> Joe likes interfaces.
+
+It can understand:
+
+> This implementation pattern was introduced to solve this business requirement, was corrected during review for this reason, and has subsequently been reused successfully six times.
+
+That's considerably harder for competitors to reproduce.
+
+---
+
+# Phase 3: AI agent governance
+
+Eventually I'd move the product higher up the value chain.
+
+Before an agent changes code:
+
+```text
+Agent requests task
+        ↓
+Lore builds context package
+        ↓
+Known conventions
+Historical decisions
+Related failures
+Reviewer preferences
+Security constraints
+        ↓
+Agent writes code
+        ↓
+Lore evaluates result
+        ↓
+PR
+        ↓
+Human feedback
+        ↓
+Lore learns
+```
+
+At that point you're no longer selling "AI memory".
+
+You're selling:
+
+> **The organisational control plane for AI software development.**
+
+And the timing is good. Current industry discussion is moving toward exactly this problem: as AI produces more code, verification, governance and review become increasingly important. ([TechRadar][5])
+
+---
+
+# Business model
+
+I would keep pricing extremely simple initially.
+
+| Plan       |        Price | Target                         |
+| ---------- | -----------: | ------------------------------ |
+| Developer  |         Free | Open source / 1 developer      |
+| Team       |       £49/mo | ≤5 developers                  |
+| Studio     |      £149/mo | ≤20 developers                 |
+| Business   |     £399+/mo | Agencies / larger teams        |
+| Enterprise | £1k–£10k+/mo | SSO, audit, private deployment |
+
+The **agency market** would be my initial target.
+
+Not giant enterprises.
+
+A 20-person agency might have:
+
+```text
+20 developers
+30 repositories
+12 clients
+10 years of Git history
+constant staff turnover
+hundreds of undocumented decisions
+multiple reviewers
+multiple AI coding tools
+```
+
+That's exactly where institutional knowledge becomes painful.
+
+And importantly, you understand that environment.
+
+---
+
+# Revenue maths
+
+You don't actually need millions of users.
+
+For example:
+
+| Customers | Average revenue |    ARR |
+| --------: | --------------: | -----: |
+|       100 |         £150/mo |  £180k |
+|       500 |         £200/mo |  £1.2m |
+|     1,000 |         £250/mo |    £3m |
+|     3,000 |         £300/mo | £10.8m |
+
+A few thousand software organisations globally is not an absurd target.
+
+And enterprise contracts could radically change those numbers.
+
+---
+
+# Your Harvest idea is still useful
+
+I **wouldn't** make your time-tracking idea the main company.
+
+[Harvest](https://www.getharvest.com/?utm_source=chatgpt.com) already has 70,000+ companies and integrations with Jira, GitHub and Chrome. ([Harvest][6])
+
+But the clever part of your idea wasn't really the timer.
+
+It was:
+
+> **Automatically understand what the developer is doing.**
+
+That belongs inside Lore eventually.
+
+Imagine an end-of-day report:
+
+```text
+Today
+
+SS-6160 — 3h 42m
+Avalara address mapping
+
+PR #821
+Implemented separate ShipFrom/ShipTo mapping.
+
+PR review #817
+Investigated transaction state handling.
+
+Comms — 46m
+Assisted Jack with basket search issue.
+
+Learned today:
+2 engineering conventions
+1 reviewer preference
+1 architectural decision
+```
+
+Now your previous ideas start converging.
+
+---
+
+# And your node-to-node system fits too
+
+Interestingly, even the decentralised system you've been thinking about could eventually become relevant.
+
+Companies are going to be extremely sensitive about uploading:
+
+```text
+source code
+PRs
+Jira
+architecture
+customer information
+internal decisions
+```
+
+So Lore could ultimately have a **local/private knowledge node**.
+
+```text
+Developer machine
+      │
+      ▼
+Lore Node
+      │
+      ├── local embeddings
+      ├── encrypted knowledge
+      ├── repository access
+      └── MCP
+             │
+             ▼
+        AI coding agent
+
+      │
+ encrypted coordination
+      ▼
+
+Lore Cloud
+identity / billing / sync / policy
+```
+
+The cloud doesn't necessarily need the company's source code.
+
+That privacy architecture could become a substantial enterprise differentiator.
+
+But **don't build this first**.
+
+---
+
+# One thing I would actively avoid
+
+Don't make:
+
+> "One dashboard containing Jira + GitHub + Harvest + AI."
+
+You previously gravitated toward a Mission Control-style system, and there is something useful in it. But as a standalone business it's broad, expensive to build and easy for Jira/GitHub/Linear/etc. to absorb.
+
+Instead make the dashboard an **output of the intelligence layer**.
+
+Your valuable asset isn't the dashboard.
+
+It's this:
+
+```text
+                    ORGANISATIONAL MEMORY
+                            │
+          ┌─────────────────┼─────────────────┐
+          ▼                 ▼                 ▼
+       Humans             Agents           Reports
+          │                 │                 │
+          ▼                 ▼                 ▼
+       GitHub             Codex           Managers
+       Jira               Claude
+       IDE                Cursor
+```
+
+---
+
+# Why I think this idea fits *you*
+
+There's a notable pattern in the things you've asked me about.
+
+You're repeatedly dealing with **information falling between systems**.
+
+Jira says what should happen.
+
+GitHub says what changed.
+
+PR comments say how people want it changed.
+
+The repository says what currently exists.
+
+Slack explains something important once and then loses it.
+
+Harvest says how long it took.
+
+And your own memory has to join all of those together.
+
+You've repeatedly tried to automate that joining process.
+
+That is usually a much stronger source of business ideas than sitting down and asking:
+
+> "What app could I make?"
+
+You've experienced the problem.
+
+---
+
+## If I were in your position
+
+I'd spend **£0 initially** other than API usage and hosting.
+
+I'd build:
+
+**`Lore — AI memory for software teams`**
+
+with only:
+
+1. GitHub installation.
+2. Historical PR analysis.
+3. Extraction of conventions/decisions/reviewer feedback.
+4. Evidence attached to every learned rule.
+5. Approve/reject/edit knowledge.
+6. MCP server.
+7. `get_context(task)` for Codex/Claude.
+8. Automatic learning from subsequent PR reviews.
+
+Then I'd install it against repositories I already work with and find out whether it starts surfacing things where I think:
+
+> "Bloody hell, I'd forgotten about that."
+
+If it does, you've found something.
+
+If after a few weeks it merely generates obvious coding standards, kill or pivot it.
+
+The **test isn't whether the AI works**.
+
+The test is whether it remembers useful things that experienced engineers forgot.
+
+That is the product.
+
+And of all the ideas you've raised with me over time, **this is the one I'd personally investigate first as a serious side-business**, because your previous experiments, your day-to-day problems, current AI-development trends, and a plausible SaaS business model all intersect unusually cleanly here.
+
+[1]: https://blog.jetbrains.com/research/2026/04/which-ai-coding-tools-do-developers-actually-use-at-work/?utm_source=chatgpt.com "Which AI Coding Tools Do Developers Actually Use at Work? - The JetBrains Blog"
+[2]: https://www.reuters.com/technology/ai-code-review-platform-coderabbit-valued-15-billion-latest-funding-round-2026-08-12/?utm_source=chatgpt.com "AI code review platform CodeRabbit valued at $1.5 billion in latest funding round"
+[3]: https://github.blog/ai-and-ml/github-copilot/60-million-copilot-code-reviews-and-counting/?utm_source=chatgpt.com "60 million Copilot code reviews and counting - The GitHub Blog"
+[4]: https://www.techradar.com/pro/bad-news-your-ai-application-isnt-that-special?utm_source=chatgpt.com "Bad news: your AI application isn't that special"
+[5]: https://www.techradar.com/pro/the-ai-era-is-creating-a-new-cto?utm_source=chatgpt.com "The AI era is creating a new CTO"
+[6]: https://www.getharvest.com/integrations/jira?utm_source=chatgpt.com "Jira Time Tracking Integration - Harvest"
+
+
+
+The key is: **do not rely on the AI remembering to ask Lore.** Make Lore part of the execution path around the AI.
+
+The model should be treated as an unreliable decision-maker for *when* to fetch context. Your platform should deterministically decide when context must be loaded, what scope to search, and what knowledge is allowed to be stored.
+
+## 1. AI should not decide whether Lore is used
+
+A weak design would be:
+
+```text
+Codex
+  ↓
+"Maybe I should call Lore..."
+  ↓
+MCP tool
+```
+
+That will eventually fail because the model may decide it already has enough context.
+
+Instead:
+
+```text
+Task
+  ↓
+Lore Orchestrator
+  ↓
+Mandatory context discovery
+  ↓
+Context package
+  ↓
+AI agent
+  ↓
+Code changes
+  ↓
+Mandatory impact/safety review
+  ↓
+PR
+  ↓
+Human review
+  ↓
+Knowledge extraction
+```
+
+The AI never gets a task without Lore being involved.
+
+MCP can still be used for deeper queries, but that's **secondary retrieval**, not the primary safeguard.
+
+---
+
+# 2. How Lore knows what knowledge might affect some code
+
+You need an **impact graph** rather than simply embeddings.
+
+Suppose the task is:
+
+> SS-6160: change the Avalara ShipFrom/ShipTo payload.
+
+Lore first resolves tangible entities:
+
+```json
+{
+  "ticket": "SS-6160",
+  "concepts": [
+    "Avalara",
+    "ShipFrom",
+    "ShipTo",
+    "tax",
+    "transaction"
+  ]
+}
+```
+
+Then the repository analyser finds likely code:
+
+```text
+src/Tax/AvalaraClient.php
+src/Tax/TransactionMapper.php
+src/Order/Address.php
+tests/Tax/AvalaraClientTest.php
+```
+
+But importantly, it expands from there.
+
+For every file it understands:
+
+```text
+imports
+implements
+extends
+calls
+called-by
+reads-table
+writes-table
+uses-config
+uses-event
+produces-payload
+tests
+historically-changed-with
+owned-by
+related-tickets
+```
+
+You end up with something like:
+
+```text
+SS-6160
+   │
+   ▼
+AvalaraTransactionMapper
+   │
+   ├── calls → AddressMapper
+   │
+   ├── produces → Avalara API payload
+   │
+   ├── tested-by → AvalaraTransactionMapperTest
+   │
+   └── used-by → CreateTaxTransaction
+                         │
+                         └── called-by → Checkout
+```
+
+That graph lets Lore reason about impact.
+
+---
+
+# 3. The graph should combine static and historical relationships
+
+Static analysis alone won't discover everything.
+
+You want several layers.
+
+### Static code relationships
+
+For PHP, for example:
+
+```text
+class → interface
+class → parent
+method → method
+method → service
+service → repository
+repository → database table
+controller → service
+event → listener
+configuration → consumer
+```
+
+These are relatively deterministic.
+
+### Git relationships
+
+Git gives very valuable implicit architecture:
+
+```text
+file A changes with file B 87% of the time
+class X was introduced alongside class Y
+changes to service Z usually change test Q
+```
+
+For example:
+
+```text
+TransactionMapper.php
+   ↓ co-change 91%
+TransactionMapperTest.php
+```
+
+Lore should therefore consider the test likely affected even before an LLM says so.
+
+### Jira/PR relationships
+
+Then:
+
+```text
+SS-6160
+   ↓
+PR #842
+   ↓
+files changed
+   ↓
+review comments
+   ↓
+approved implementation
+```
+
+Over time, that becomes an extremely rich graph.
+
+---
+
+# 4. Then AI helps where static analysis cannot
+
+AI should add **semantic edges**.
+
+For example it may observe:
+
+```php
+if ($this->isOmsBasket()) {
+    return;
+}
+```
+
+Static analysis can tell you where `isOmsBasket()` comes from.
+
+AI can infer:
+
+```text
+Purpose:
+Preserves legacy basket-search behaviour.
+
+Business area:
+CP/POS basket.
+
+Risk:
+Removing this may hide inactive products.
+```
+
+But this should initially be considered an **inference**, not fact.
+
+Store that distinction explicitly.
+
+```json
+{
+  "statement": "This branch preserves legacy CP/POS basket behaviour",
+  "type": "inference",
+  "confidence": 0.61
+}
+```
+
+If Jira + PR discussion confirm it:
+
+```json
+{
+  "statement": "This branch preserves legacy CP/POS basket behaviour",
+  "type": "verified_decision",
+  "confidence": 0.98,
+  "evidence": [
+    "JIRA:SS-1234",
+    "GH:PR-842",
+    "GH:COMMENT-19192"
+  ]
+}
+```
+
+That distinction is critical.
+
+---
+
+# 5. How Lore knows what to ask
+
+The AI doesn't start with an open-ended:
+
+> What might be relevant?
+
+The orchestrator generates structured questions from the task.
+
+For every task it asks internally:
+
+```text
+What files are explicitly referenced?
+
+What symbols are involved?
+
+What calls those symbols?
+
+What do those symbols call?
+
+What interfaces/contracts are involved?
+
+What tests cover those symbols?
+
+What external APIs are involved?
+
+What database tables are involved?
+
+What previous tickets changed these symbols?
+
+What previous PR review feedback concerned them?
+
+What organisational rules apply to this repository/path/symbol?
+
+What previous regressions involved this area?
+
+What files historically change alongside these files?
+```
+
+That can largely happen **without an LLM**.
+
+Then an LLM can perform a second semantic pass:
+
+> Given this ticket and discovered dependency graph, are there concepts we appear to have missed?
+
+That's a much safer use of AI.
+
+---
+
+# 6. Context should progressively expand
+
+You don't want to dump the company's entire knowledge base into every prompt.
+
+Use something like:
+
+```text
+TASK
+ ↓
+repository
+ ↓
+candidate files
+ ↓
+symbols
+ ↓
+dependencies
+ ↓
+historical relationships
+ ↓
+applicable knowledge
+```
+
+Then rank context.
+
+Example:
+
+```text
+HIGH
+
+Rule #119
+Transaction mappers must implement TransactionMapperInterface.
+Confidence: 0.99
+Evidence: 14 PRs
+
+Decision #42
+Avalara address roles require independent address codes.
+Confidence: 1.0
+Evidence: SS-6160
+
+MEDIUM
+
+Reviewer preference #12
+Joe generally prefers DTOs for external API payloads.
+Confidence: 0.77
+
+LOW
+
+Possible convention:
+Tax mappers tend to keep formatting outside API clients.
+Confidence: 0.53
+```
+
+I'd probably only inject high-confidence information automatically.
+
+Medium-confidence material can be marked as advisory.
+
+---
+
+# 7. How you force agents to use Lore consistently
+
+This is possibly the most important architectural decision.
+
+There are several enforcement levels.
+
+## Weak
+
+Give developers an MCP server:
+
+```text
+lore.search
+lore.get_context
+```
+
+Useful, but not reliable.
+
+---
+
+## Better
+
+Supply permanent agent instructions:
+
+```text
+Before modifying code:
+1. call lore.prepare_task
+2. examine returned constraints
+3. call lore.check_change before completion
+```
+
+Better, but still ultimately model-controlled.
+
+---
+
+## Strong
+
+Wrap the coding agent.
+
+Instead of developers executing:
+
+```bash
+codex
+```
+
+they execute:
+
+```bash
+lore codex
+```
+
+Lore controls the session:
+
+```text
+lore
+ ├── reads task
+ ├── analyses repository
+ ├── builds mandatory context
+ ├── starts Codex
+ ├── exposes MCP
+ ├── watches modified files
+ ├── recomputes affected context
+ └── runs completion review
+```
+
+Now the developer doesn't need to trust the model.
+
+---
+
+# 8. Watching files is important
+
+Suppose Codex initially thinks it's only changing:
+
+```text
+src/Avalara/TransactionMapper.php
+```
+
+But halfway through it edits:
+
+```text
+src/Order/Order.php
+```
+
+Lore should detect that.
+
+Immediately:
+
+```text
+new file touched
+    ↓
+extract symbols
+    ↓
+expand graph
+    ↓
+find applicable rules
+    ↓
+inject additional context
+```
+
+For example:
+
+> **Additional constraint discovered**
+>
+> `Order::getDeliveryAddress()` is also consumed by the BC integration.
+>
+> Avoid changing its return semantics.
+>
+> Related decision: BC-2382.
+
+This is where the system starts becoming genuinely powerful.
+
+---
+
+# 9. Do another deterministic check before completion
+
+When the agent says:
+
+> Done.
+
+Lore shouldn't simply accept that.
+
+It sees:
+
+```text
+git diff
+changed symbols
+dependency graph
+tests
+known rules
+task requirements
+```
+
+and runs:
+
+```text
+lore verify
+```
+
+Producing something like:
+
+```text
+CHANGE SAFETY REPORT
+
+Task:
+SS-6160
+
+Changed:
+- AvalaraTransactionMapper::mapAddresses()
+- AddressCode::fromRole()
+
+Potentially affected:
+- CreateTaxTransaction
+- RefundTaxTransaction
+- AvalaraTransactionMapperTest
+
+Applicable rules:
+✓ Address roles must have independent codes
+✓ API clients must not construct address payloads directly
+
+Warnings:
+! RefundTaxTransaction also consumes AddressCode
+  but its tests were not modified or executed.
+
+Historical regression:
+! PR #782 previously broke refund tax requests
+  after modifying address-role mapping.
+
+Recommendation:
+Run RefundTaxTransactionTest.
+```
+
+This should happen **outside the agent**.
+
+---
+
+# 10. Safety reports should not automatically become knowledge
+
+This is another crucial distinction.
+
+You need separate stores for:
+
+```text
+Observations
+Knowledge
+```
+
+An observation might be:
+
+```json
+{
+  "event": "review_comment",
+  "reviewer": "joe",
+  "text": "Can we use the interface here?",
+  "pr": 1271
+}
+```
+
+That is evidence.
+
+It isn't yet a company rule.
+
+---
+
+# 11. Knowledge promotion pipeline
+
+I'd design it something like:
+
+```text
+Raw event
+   ↓
+Extract candidate lesson
+   ↓
+Find corroborating evidence
+   ↓
+Determine scope
+   ↓
+Detect contradictions
+   ↓
+Calculate confidence
+   ↓
+Candidate knowledge
+   ↓
+Human approval OR sufficient evidence
+   ↓
+Active knowledge
+```
+
+For example:
+
+### First observation
+
+Joe writes:
+
+> Use `ProductRepositoryInterface`.
+
+Lore creates:
+
+```text
+Candidate:
+Prefer repository interfaces.
+
+Evidence: 1
+Confidence: 0.31
+Scope: unknown
+```
+
+Don't inject it as a rule.
+
+### Five similar reviews
+
+```text
+Evidence: 5
+Repositories: 3
+Confidence: 0.72
+Likely scope: team
+```
+
+Now it can appear as advisory context.
+
+### Fifteen examples + approvals
+
+```text
+Evidence: 15
+Contradictions: 0
+Confidence: 0.96
+```
+
+Now you can potentially promote it to:
+
+```text
+Established convention
+```
+
+---
+
+# 12. Never let the AI silently rewrite organisational knowledge
+
+I would make this an absolute rule.
+
+The AI can propose:
+
+```text
+CREATE
+UPDATE
+DEPRECATE
+MERGE
+CONTRADICT
+```
+
+But the knowledge service performs the actual mutation.
+
+For example:
+
+```json
+{
+  "operation": "propose",
+  "candidate": {
+    "kind": "engineering_convention",
+    "statement": "Repositories should depend on interfaces",
+    "scope": {
+      "repository": "soho/ecom"
+    },
+    "evidence": [
+      "github:pr:123",
+      "github:review:456"
+    ]
+  }
+}
+```
+
+The backend validates:
+
+```text
+Are the sources real?
+Does the evidence contain this claim?
+Is scope justified?
+Does existing knowledge contradict it?
+Is this someone's preference or an actual rule?
+Is there enough evidence?
+```
+
+The model itself gets no direct DB write access.
+
+---
+
+# 13. Provenance must exist everywhere
+
+Every piece of knowledge should answer:
+
+> **Why do you believe this?**
+
+Something like:
+
+```json
+{
+  "id": "knowledge_92",
+  "statement": "OMS basket search intentionally skips Active filtering",
+  "scope": {
+    "repository": "soho/ecom",
+    "paths": [
+      "src/Search/Basket/*"
+    ]
+  },
+  "classification": "architectural_decision",
+  "confidence": 0.97,
+
+  "evidence": [
+    {
+      "type": "jira",
+      "id": "SS-2189"
+    },
+    {
+      "type": "pull_request",
+      "id": "GH-918"
+    },
+    {
+      "type": "review_comment",
+      "id": "GH-918-COMMENT-42"
+    }
+  ],
+
+  "created": "2026-08-15T...",
+  "last_confirmed": "...",
+
+  "status": "active"
+}
+```
+
+No evidence means it should generally be treated as low-confidence AI inference.
+
+---
+
+# 14. I'd distinguish five knowledge classes
+
+This avoids one of the biggest dangers: mixing facts with opinions.
+
+```text
+FACT
+Something objectively true about the system.
+
+DECISION
+Something intentionally designed this way.
+
+RULE
+Something developers are expected to follow.
+
+PREFERENCE
+Something a reviewer/team tends to prefer.
+
+INFERENCE
+Something Lore thinks is probably true.
+```
+
+Example:
+
+```text
+FACT
+OrderRepository implements OrderRepositoryInterface.
+
+DECISION
+OMS basket search deliberately doesn't use the normal active filter.
+
+RULE
+Payment classes must not log card details.
+
+PREFERENCE
+Joe normally prefers dependencies typed against interfaces.
+
+INFERENCE
+This service appears to be the canonical path for order refunds.
+```
+
+They should be treated very differently.
+
+---
+
+# 15. Safety rules need a stronger level
+
+Some knowledge should never be statistical.
+
+For example:
+
+```text
+Never log access tokens.
+Never change payment status without...
+Never query production from tests.
+Never commit credentials.
+```
+
+Store them as:
+
+```text
+policy
+```
+
+rather than learned knowledge.
+
+Policies should be deterministic and manually controlled.
+
+```text
+Policy
+   ↓
+mandatory check
+   ↓
+failure blocks completion
+```
+
+Whereas:
+
+```text
+Reviewer preference
+   ↓
+advisory warning
+```
+
+doesn't block anything.
+
+---
+
+# 16. A useful enforcement hierarchy
+
+I'd use something like:
+
+| Type                 | Effect         |
+| -------------------- | -------------- |
+| Security policy      | Block          |
+| Compliance rule      | Block          |
+| Architecture rule    | Error/warning  |
+| Established decision | Strong warning |
+| Convention           | Guidance       |
+| Reviewer preference  | Suggestion     |
+| AI inference         | Informational  |
+
+That prevents Lore becoming an infuriating linting system.
+
+---
+
+# 17. Knowledge should also decay
+
+Something that was correct in 2024 may be wrong in 2027.
+
+So knowledge needs lifecycle:
+
+```text
+candidate
+    ↓
+active
+    ↓
+challenged
+    ↓
+superseded
+    ↓
+archived
+```
+
+And confidence decay.
+
+For example:
+
+```text
+Last evidence: 2 years ago
+Repository architecture substantially changed
+Relevant files deleted
+
+0.94 → 0.68
+```
+
+Then:
+
+> This convention may be stale.
+
+---
+
+# 18. Contradictions are valuable
+
+Suppose Lore knows:
+
+```text
+Use repositories through interfaces.
+```
+
+Then sees three approved PRs using concrete implementations.
+
+Don't overwrite the rule.
+
+Create:
+
+```text
+CONTRADICTION
+
+Existing:
+Repository dependencies use interfaces.
+
+New evidence:
+PR #912
+PR #943
+PR #961
+
+Possible explanations:
+- convention changed
+- exception exists
+- narrower scope required
+```
+
+Then the human can resolve:
+
+```text
+New actual rule:
+
+Use interfaces for application services.
+Concrete repositories are permitted inside migration tooling.
+```
+
+Lore becomes **more precise over time**, rather than simply accumulating garbage.
+
+---
+
+# 19. The complete loop
+
+I'd ultimately architect it like this:
+
+```text
+                    ┌────────────────────┐
+                    │ Jira / GitHub Task │
+                    └─────────┬──────────┘
+                              │
+                              ▼
+                    ┌────────────────────┐
+                    │ Task Understanding │
+                    └─────────┬──────────┘
+                              │
+                              ▼
+                    ┌────────────────────┐
+                    │   Impact Engine    │
+                    │                    │
+                    │ AST                │
+                    │ Dependency graph   │
+                    │ Git history        │
+                    │ PR/Jira history    │
+                    └─────────┬──────────┘
+                              │
+                              ▼
+                    ┌────────────────────┐
+                    │ Knowledge Resolver │
+                    └─────────┬──────────┘
+                              │
+                     mandatory context
+                              │
+                              ▼
+                        ┌──────────┐
+                        │ AI Agent │
+                        └────┬─────┘
+                             │
+                     edits repository
+                             │
+                             ▼
+                    ┌────────────────────┐
+                    │ Change Observer    │
+                    │ re-evaluate graph  │
+                    └─────────┬──────────┘
+                              │
+                         more context
+                              │
+                              ▼
+                         ┌─────────┐
+                         │  Agent  │
+                         └────┬────┘
+                              │
+                              ▼
+                    ┌────────────────────┐
+                    │ Safety / Impact    │
+                    │ Review             │
+                    └─────────┬──────────┘
+                              │
+                              ▼
+                             PR
+                              │
+                 ┌────────────┴────────────┐
+                 │                         │
+                 ▼                         ▼
+          Human review                 CI/tests
+                 │                         │
+                 └────────────┬────────────┘
+                              ▼
+                    ┌────────────────────┐
+                    │ Evidence Collector │
+                    └─────────┬──────────┘
+                              ▼
+                    ┌────────────────────┐
+                    │ Knowledge Extractor│
+                    └─────────┬──────────┘
+                              ▼
+                    ┌────────────────────┐
+                    │ Validation /       │
+                    │ Promotion Engine   │
+                    └─────────┬──────────┘
+                              ▼
+                       Knowledge Graph
+```
+
+---
+
+# The most important product principle
+
+I would write this into the project's architecture from day one:
+
+> **AI proposes; deterministic systems discover and enforce; evidence determines what becomes knowledge.**
+
+That solves most of the concerns you're raising.
+
+You're not trying to create a magical AI that remembers everything and always behaves correctly.
+
+You're creating a controlled system where the AI is one component:
+
+```text
+AI:
+understands semantics
+extracts meaning
+suggests relationships
+explains risk
+
+Software:
+tracks dependencies
+forces retrieval
+records evidence
+controls writes
+enforces policy
+maintains history
+```
+
+And that separation is what would make **Lore much more credible as an engineering product** rather than another "give an LLM access to GitHub and hope for the best" application.

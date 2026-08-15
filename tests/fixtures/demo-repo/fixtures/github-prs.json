@@ -1,0 +1,28 @@
+[
+  {
+    "externalId":"1832",
+    "number":1832,
+    "title":"Use the repository contract in OrderCreator",
+    "body":"Moves the application service to the repository interface.",
+    "author":"casey",
+    "reviewers":["joe-hart"],
+    "reviewComments":[{"externalId":"1832-4","author":"joe-hart","body":"Depend on the repository interface at this service boundary.","occurredAt":"2026-05-03T11:22:00.000Z"}],
+    "commits":["c1832"],
+    "changedFiles":["src/Order/Service/OrderCreator.php"],
+    "mergedAt":"2026-05-04T09:00:00.000Z",
+    "url":"https://github.example/acme/commerce/pull/1832"
+  },
+  {
+    "externalId":"2017",
+    "number":2017,
+    "title":"Keep mapper boundary for Avalara payloads",
+    "body":"Retains the shared mapper for create and refund flows.",
+    "author":"rebecca",
+    "reviewers":["joe-hart"],
+    "reviewComments":[{"externalId":"2017-2","author":"joe-hart","body":"Keep external payload construction in the mapper.","occurredAt":"2026-07-02T09:14:00.000Z"}],
+    "commits":["c2017"],
+    "changedFiles":["src/Tax/Avalara/AvalaraTransactionMapper.php"],
+    "mergedAt":"2026-07-03T09:00:00.000Z",
+    "url":"https://github.example/acme/commerce/pull/2017"
+  }
+]

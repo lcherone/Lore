@@ -1,0 +1,1334 @@
+# Lore: updated consolidation plan and implementation prompt
+
+Status: planning artifact; no product implementation is authorised by this file alone  
+Reviewed: 2026-08-15, against the live working trees in /Users/dev/Lore, /Users/dev/DailyReport, and /Users/dev/StokerAPI
+
+## 1. Purpose and review boundary
+
+This document replaces a high-level comparison with a current, implementation-ready plan.
+
+The goal is not to merge three applications. It is to make Lore the focused system that:
+
+- gathers durable evidence from development activity;
+- turns repeated evidence into reviewable knowledge;
+- prepares bounded, repository-specific context before an AI agent changes code;
+- observes what changed;
+- verifies the change against policies, impact, history, and tests;
+- records the outcome so future work improves.
+
+DailyReport and StokerAPI remain separate products. Lore should adopt their strongest patterns through narrow contracts, without inheriting their accumulated breadth.
+
+### Snapshot caveat
+
+Lore is not currently a Git worktree. There is no .git directory from which to establish a committed baseline or distinguish existing work from newly generated work. Files were also changing during this review. The latest observed changes included:
+
+- real BullMQ dispatch selection for the non-demo API and dispatcher cleanup on API close;
+- expanded PHP and TypeScript relationship extraction;
+- repository-level placeholder reconciliation;
+- context-service and web/API refinements.
+
+The implementation prompt therefore requires a fresh source audit before every phase. Do not assume line numbers or hashes in an older review still describe the current tree, and do not overwrite concurrent work.
+
+DailyReport and StokerAPI were inspected read-only. Both have existing local changes:
+
+- DailyReport currently has large generated/runtime JSON changes, not a source-code feature diff.
+- StokerAPI currently has a focused deployment freshness and refresh-lifecycle change in progress.
+
+Those changes are useful evidence, but neither repository is an implementation target for this plan.
+
+## 2. Executive conclusion
+
+Lore already has the right product centre. Its modular shape and core lifecycle are stronger than either source project for this specific problem:
+
+    evidence -> proposal -> candidate -> human decision -> knowledge
+       -> task context -> observed change -> verification -> new evidence
+
+The main risk is not a missing feature. The main risk is that the polished demo path currently hides breaks between real persistence, real jobs, local repository access, CLI/MCP consumers, GitHub ingestion, session lifecycle, and the web UI.
+
+The next work must make one honest persistent vertical slice reliable before adding more integrations or dashboard breadth.
+
+The recommended product definition is:
+
+> Lore is an evidence-backed context and change-safety service for coding agents. It gives an agent the smallest relevant set of rules, decisions, regressions, affected code, and tests; then verifies and records what the agent actually changed.
+
+DailyReport contributes the memory of work. StokerAPI contributes operational discipline. Lore remains the authority for development knowledge and change evidence.
+
+## 3. Current Lore architecture
+
+| Area | Current responsibility | Current reality |
+| --- | --- | --- |
+| apps/web | React control surface for onboarding, knowledge, repositories, sessions, and safety | Strong visual vertical slice, but demo fallback and several non-functional controls make mode and capability truth unclear |
+| apps/api | Fastify tenant API, auth hooks, GitHub routes, task preparation, review, policies, sessions, and verification | Broad route surface; non-demo now selects BullMQ, but auth, readiness, lifecycle persistence, and tenant coherence need production proof |
+| apps/worker | Repository indexing, GitHub import, knowledge extraction, and health jobs | Useful job vocabulary, but incomplete chaining, observability, durability, and lane separation |
+| apps/cli | Local repository setup, preparation, agent launch, verification, and search | Good intended workflow, but most knowledge/evidence comes from demo fixtures rather than the service |
+| apps/mcp | Agent-facing tools built around CLI helpers | Useful contract shape, but inherits the CLI demo-data split |
+| packages/analysis | TypeScript, JavaScript, PHP, git-history analysis, entity construction, indexing | Recently improved calls/imports/inheritance extraction; cross-file resolution and acceptance evidence remain limited |
+| packages/impact | Bounded traversal, co-change scoring, test lookup | One of the strongest current modules; deterministic and explainable |
+| packages/context | Task parsing, scope/relevance selection, context formatting | Good bounded structure; scope semantics, ranking, budgets, and actionable rendering need correction |
+| packages/knowledge | Candidate review and knowledge lifecycle | Good human-in-the-loop direction; proposal/candidate/evidence linkage is incomplete |
+| packages/policy | Deterministic change rules | Correct architectural role; unsafe/unbounded patterns and patch-line semantics need hardening |
+| packages/reporting | Change verification and report formatting | Good separation of deterministic verification; reports are not yet a complete session outcome record |
+| packages/github | GitHub provider, historical import, webhook verification and evidence conversion | Useful start; installation ownership, pagination, resumability, edits, identity, and transactional dispatch need work |
+| packages/database | In-memory and Prisma stores plus queue dispatchers | The in-memory path masks incompatible IDs and untested Prisma behaviour |
+| prisma | Multi-tenant relational model and demo seed | Good foundation, but the seed translates IDs in ways normal runtime code does not |
+
+### Explicit runtime modes are required
+
+Lore currently behaves like two systems:
+
+1. A coherent in-memory demo with rich fixture data.
+2. A partially connected PostgreSQL, Redis, GitHub, local-checkout, CLI, and MCP system.
+
+That distinction must become a first-class contract:
+
+- demo: fixture-backed, visibly labelled, safe to reset, never presented as persisted;
+- local: real local repositories and durable state, bound to loopback by default;
+- service: authenticated multi-user API with a trusted local node for repository access.
+
+No mode may silently fall back to another.
+
+## 4. What is already worth preserving
+
+The implementation should build on these strengths rather than redesigning them:
+
+- a modular monolith with clear package boundaries;
+- strict TypeScript and Zod validation at many boundaries;
+- deterministic impact traversal with explicit confidence and bounds;
+- Wilson-scored co-change confidence rather than raw occurrence counts;
+- subprocess Git execution through argument arrays and shell disabled;
+- AI isolated behind a provider contract and treated as untrusted structured output;
+- human approval before proposed knowledge becomes active;
+- knowledge status, confidence, challenges, revisions, and audit concepts;
+- HMAC verification and delivery receipt concepts for GitHub webhooks;
+- raw source content intended to remain close to the source;
+- a context package that distinguishes files, symbols, rules, decisions, regressions, tests, warnings, and unknowns;
+- a verification service kept separate from generative AI;
+- recent non-demo BullMQ selection and API shutdown cleanup;
+- recent analyzer work that adds PHP calls, instantiation, extends and implements relationships, plus TypeScript calls, imports, tests, and implements relationships;
+- passing unit tests, typecheck, lint, and production build.
+
+At the reviewed snapshot:
+
+- 8 test files passed;
+- 18 tests passed;
+- TypeScript typecheck passed;
+- ESLint passed;
+- the API, CLI, MCP, worker, and web production builds passed;
+- coverage was 56.16% statements, 48.62% branches, 56.21% functions, and 57.83% lines;
+- PrismaLoreStore coverage was 1.98% statements, which is the most important coverage warning.
+
+Passing checks show that the tested in-memory contracts are internally consistent. They do not yet prove the production topology.
+
+## 5. Reality gaps and required outcomes
+
+### P0: persistent identifier contract is incompatible
+
+Evidence:
+
+- Prisma primary and foreign-key identifiers use PostgreSQL UUID columns.
+- runtime code constructs identifiers such as entity_<hash>, relationship_<hash>, evidence_<hash>, evidence_delivery_<id>, session_<uuid>, report_<uuid>, and context_<uuid>;
+- some git-history relationship identifiers are bare hash strings rather than UUID text;
+- the demo seed converts friendly IDs to UUIDs, masking the mismatch;
+- the in-memory store accepts the non-UUID identifiers.
+
+Impact:
+
+The same business operation can pass every in-memory test and fail when persisted.
+
+Required outcome:
+
+- define one canonical persistent ID policy;
+- retain UUID database columns;
+- use random UUIDs for new lifecycle records;
+- use deterministic namespace UUIDs for stable derived records such as code entities, relationships, or imported source events;
+- keep friendly prefixes only in separate display/public-key fields if needed;
+- use the same IDs in demo fixtures, memory-store contract tests, and Prisma tests.
+
+### P0: the production persistence path has no meaningful proof
+
+Evidence:
+
+- PrismaLoreStore is almost entirely uncovered;
+- no reviewed test ran the end-to-end flow against PostgreSQL and Redis;
+- fixture seeding contains translation logic not exercised by ordinary runtime operations.
+
+Required outcome:
+
+Add a real integration harness that proves, at minimum:
+
+    connect repository
+      -> index graph
+      -> import evidence
+      -> extract proposal
+      -> create/review candidate
+      -> persist active knowledge
+      -> prepare and persist context
+      -> verify a change
+      -> persist a report linked to its session
+      -> restart
+      -> read the same state
+
+Run the same store contract suite against both memory and Prisma adapters.
+
+### P0: CLI and MCP are a separate demo-backed universe
+
+Evidence:
+
+- .lore/config.json records an apiUrl, but the reviewed CLI flow does not use it as the authority;
+- prepare, verify, explain, search, and knowledge paths rely on demo snapshots/evidence or a local-only graph;
+- MCP wraps those helpers and inherits their fixture data;
+- unrelated repositories can therefore receive sample knowledge from the demo organisation.
+
+Required outcome:
+
+- introduce a single LoreClient port;
+- implement an authenticated HTTP adapter and an explicit fixture adapter;
+- require the caller to choose demo or real mode;
+- make repository and organisation provenance visible in every response;
+- refuse to mix fixture knowledge with a real checkout;
+- make CLI, MCP, web, and agent wrapper consume the same API contracts.
+
+### P0: the agent wrapper does not guarantee context delivery or lifecycle closure
+
+Evidence:
+
+- lore agent writes a context file and exports LORE_CONTEXT_FILE;
+- supported agents are not guaranteed to read that environment variable;
+- generated .lore/AGENT_INSTRUCTIONS.md is not necessarily an instruction file the agent discovers;
+- the watcher rewrites the file but does not inject refreshed context into the active child;
+- completing the child process does not fully close and persist the service-side session lifecycle.
+
+Required outcome:
+
+- define an AgentAdapter contract;
+- prove one agent integration end to end before claiming support for several;
+- deliver initial context using that agent's supported mechanism;
+- record started, context_prepared, file_changed, context_refreshed, verification_started, verification_finished, completed, failed, and abandoned session events;
+- make final verification an explicit completion gate;
+- retain failure and cancellation outcomes.
+
+### P0: Git change discovery is incomplete
+
+Evidence:
+
+- ordinary git diff does not include untracked files;
+- staged, unstaged, renamed, deleted, and untracked states are not treated as one bounded change set;
+- new symbols may not exist in the pre-edit graph;
+- deleted entities can remain in the old graph used for verification.
+
+Required outcome:
+
+- use a robust porcelain-v2, NUL-delimited status/change collector;
+- handle staged, unstaged, renamed, deleted, and untracked files;
+- enforce file-count and byte limits;
+- collect bounded patches or content without invoking a shell;
+- refresh or overlay the graph for new/changed/deleted files before impact verification.
+
+### P0: sessions, context revisions, and reports are not one durable lifecycle
+
+Evidence:
+
+- a context-record model exists, but task preparation does not persist the returned package;
+- the UI says context is saved to a session when that is not consistently true;
+- sessions do not have a complete transition API;
+- refresh relies on filesChanged that is not maintained through the API;
+- reports are saved without a guaranteed session link or atomic session completion;
+- CLI sessions and service sessions can diverge.
+
+Required outcome:
+
+- define and enforce a session state machine;
+- persist immutable ContextPackageRecord revisions;
+- persist append-only SessionEvent records;
+- link every safety report to organisation, repository, session, base commit, current commit, and context revision;
+- update session state and report creation transactionally;
+- add optimistic revision checks and idempotency keys;
+- never label context or a report saved unless the persistence operation succeeded.
+
+### P0: local repository paths cross the wrong trust boundary
+
+Evidence:
+
+- a browser request can submit localPath;
+- a worker can read that arbitrary path;
+- an index job can be queued with no usable path;
+- the Docker topology does not establish that browser-supplied host paths are mounted and trusted.
+
+Required outcome:
+
+Choose an explicit topology:
+
+- recommended: a trusted developer-local node reads Git and source, then uploads only a sanitized graph/change envelope through a scoped token;
+- acceptable initial single-node mode: configured repository roots and a trusted local CLI register canonical paths, while browser input may only choose registered repositories.
+
+Never let an untrusted web request select an arbitrary server filesystem path.
+
+### P0: authentication and tenant isolation are not production-ready
+
+Evidence:
+
+- the signed session cookie contains user and organisation data rather than an opaque server-side session identifier;
+- tenant context does not prove current membership on each authenticated session;
+- local development auth is based on configuration assumptions rather than the actual bind and request boundary;
+- CSRF is only partially wired and the web client does not have a complete token bootstrap;
+- several mutations accept repository/session relationships without proving every related record belongs to the same tenant;
+- GitHub repository resolution can become ambiguous across installations or tenants.
+
+Required outcome:
+
+- opaque, expiring, revocable server sessions with hashed token material;
+- durable Membership validation;
+- scoped API/device tokens for CLI, MCP, and local nodes;
+- CSRF on browser mutations;
+- exact Host and Origin validation;
+- loopback bind by default;
+- explicit network opt-in and HTTPS for non-loopback;
+- organisation-scoped lookups and composite constraints or service checks for every association;
+- installation-scoped GitHub repository resolution.
+
+### P1: GitHub ingestion is not yet a durable evidence pipeline
+
+Evidence:
+
+- OAuth callback validates state but does not establish a complete durable installation/source connection;
+- clients can supply an arbitrary installationId;
+- historical import does not preserve every useful review submission body/state and lacks complete pagination;
+- the import worker ingests evidence but does not reliably enqueue knowledge extraction;
+- duplicate external IDs skip edited content rather than creating evidence revisions;
+- webhook receipt can be committed before downstream enqueue succeeds, preventing safe replay;
+- long imports lack checkpoints, rate-limit handling, and resumability.
+
+Required outcome:
+
+- model GitHubInstallation and SourceConnection explicitly;
+- persist immutable source deliveries/events before normalisation;
+- version evidence by content hash;
+- transactionally write receipt/event plus a durable outbox item;
+- have a dispatcher drain the outbox idempotently;
+- checkpoint every bounded import page;
+- record rate-limit and retry state;
+- preserve PR, review, comment, commit, actor, file, timestamp, and source URL provenance;
+- enqueue extraction from both historical and webhook evidence through the same contract.
+
+### P1: observation, evidence, proposal, and knowledge lineage is incomplete
+
+Evidence:
+
+- architecture documentation describes an observation stage that is not a first-class stored concept;
+- an ingestion receipt is not enough to retain source-event history;
+- edited evidence is not versioned;
+- proposals are not consistently linked to resulting candidates and knowledge;
+- proposal state is not completed when a candidate is approved or rejected;
+- regression evidence is partly embedded as JSON rather than normalised links.
+
+Required outcome:
+
+Store and expose an auditable lineage:
+
+    SourceEvent
+      -> EvidenceArtifact
+      -> EvidenceRevision
+      -> KnowledgeProposal
+      -> KnowledgeCandidate
+      -> KnowledgeItem
+      -> KnowledgeRevision / Challenge
+      -> KnowledgeUsage and verification outcome
+
+Each transition must record provenance, actor, timestamps, content hash, and idempotency key.
+
+### P1: scope and retrieval can return irrelevant knowledge
+
+Evidence:
+
+- scopeApplies enforces only a subset of the declared scope dimensions;
+- a path- or symbol-scoped item can pass when the caller supplies no paths or symbols;
+- organisation/repository-scoped knowledge can pass regardless of task relevance and crowd the fixed cap;
+- unsupported team, language, framework, subsystem, integration, and ticket-type fields create a false precision;
+- rendered agent context shows a title and selection reason but can omit the actual knowledge statement.
+
+Required outcome:
+
+- define true, false, and unknown compatibility semantics;
+- a required scope dimension must not match when its input dimension is unknown;
+- implement every accepted scope dimension or remove it from the public schema;
+- select mandatory policy separately from ranked knowledge;
+- rank by scope specificity, task relevance, confidence, recency, challenge state, and evidence quality;
+- enforce entry and token budgets with deterministic tie-breaking;
+- include the actionable rule/decision statement and a short provenance excerpt;
+- explain why every item was included and why lower-ranked items were omitted.
+
+### P1: static-analysis claims need realistic acceptance proof
+
+Current improvement:
+
+- PHP now emits calls, instantiates, extends, implements, and containment;
+- TypeScript/JavaScript now emit imports, calls/tests, implements, and containment;
+- repository indexing now attempts to replace placeholder targets with canonical entities by type and qualified name.
+
+Remaining risks:
+
+- placeholder module/symbol names are often not canonical file or exported-symbol identities;
+- duplicate names and namespaces can resolve incorrectly;
+- method caller inference is approximate;
+- PHP use/import/name resolution is incomplete;
+- dynamic containers, aliases, generated code, and runtime wiring remain unknown.
+
+Required outcome:
+
+- add multi-file fixture repositories for TypeScript and PHP;
+- assert exact entities and edges across imports, namespaces, inheritance, calls, tests, aliases, and duplicate names;
+- measure precision/recall on a small labelled fixture;
+- keep unknown relationships explicit;
+- describe verification as proven, inferred, recommended, or unavailable.
+
+### P1: policy evaluation needs bounded and source-aware semantics
+
+Evidence:
+
+- user-supplied regular expressions are not protected by a complete complexity/length policy;
+- invalid expressions can be ignored instead of rejecting policy creation;
+- import scanning can inspect removed diff lines and produce false positives;
+- reported line numbers can describe patch positions rather than source positions.
+
+Required outcome:
+
+- strict bounded schemas for patterns and arrays;
+- a safe regex engine or conservative validator;
+- reject invalid policies at creation;
+- scan added lines or reconstructed source as appropriate;
+- report real file/source locations;
+- test pathological patterns and large patches;
+- keep AI unable to create or silently relax a policy.
+
+### P1: jobs need operational truth, not only dispatch
+
+Current improvement:
+
+- non-demo API construction now selects BullMqJobDispatcher;
+- API shutdown now closes the dispatcher when supported.
+
+Remaining gaps:
+
+- readiness reports configured components rather than proving PostgreSQL and Redis are reachable;
+- health work calculates values without a durable health record;
+- job state, progress, retries, errors, cancellation, dead letters, and reconciliation are not a complete product surface;
+- local Git/index work and external GitHub/AI work share insufficiently explicit concurrency lanes;
+- demo jobs can report queued without an executor.
+
+Required outcome:
+
+- durable JobRun records;
+- real readiness checks with tight timeouts;
+- distinct bounded lanes, with serialized or repository-locked local mutations;
+- idempotency, retries, dead letters, cancellation, and reconciliation;
+- progress and terminal events consumed by API/UI;
+- no queued success response in a mode that cannot execute the job.
+
+### P1: the web UI must fail honestly
+
+Evidence:
+
+- an API failure can silently switch the UI to a rich demo snapshot;
+- some failed writes can be represented by local fake records or success-style messages;
+- several controls are present without a durable backend capability;
+- identity and organisation values are partly hardcoded;
+- authentication and CSRF flows are incomplete;
+- task context can be labelled saved when it was only calculated;
+- there are no meaningful component/browser end-to-end tests in the reviewed coverage.
+
+Required outcome:
+
+- persistent, demo, disconnected, loading, stale, and error modes must be explicit;
+- disconnected real mode is read-only and must never fabricate mutation success;
+- capability-gate or hide inactive controls;
+- surface job freshness and source metadata;
+- refresh stable readers on job terminal events, not by remounting entire pages;
+- add component and browser tests for the actual MVP journey.
+
+### P1: local state files need Stoker-grade durability
+
+Evidence:
+
+- .lore files are written directly;
+- atomic replace, owner/mode/symlink checks, schema bounds, corruption recovery, and retention are incomplete.
+
+Required outcome:
+
+- private directories at mode 0700 and files at 0600;
+- reject symlinks and unexpected ownership;
+- bounded JSON schema validation;
+- write temporary file, flush where practical, atomically rename;
+- retain a bounded number of context, report, and session artifacts;
+- make corruption explicit and recoverable.
+
+### P2: real AI extraction should follow, not lead, the foundation work
+
+Evidence:
+
+- the worker currently uses a deterministic mock provider;
+- a provider registry exists but is not the active production extraction route;
+- the mock recognises a narrow fixture pattern.
+
+Required outcome:
+
+- retain mock extraction for deterministic contracts;
+- only add a real provider after durable ingestion, lineage, budgets, and review gates pass;
+- validate provider output against strict schemas;
+- record model/provider/prompt version, cost, latency, and source evidence;
+- run an evaluation set and never let a model create policy directly.
+
+## 6. What to take from DailyReport
+
+DailyReport demonstrates why the problem matters. It has accumulated extensive development context and workflow history, but the current data shape also shows the cost of storing several overlapping mutable views.
+
+At the reviewed snapshot, nine representative data files totalled roughly 17.7 MB and 166,000 lines. The largest file, ai-runs.json, was about 12.9 MB and 66,000 lines. Projects, review intelligence, usage events, work-data cache, and work-item updates duplicate parts of the same operational story.
+
+### Adopt these ideas
+
+- Original task as a durable root record.
+- A run/session with explicit progress, completion, failure, and next action.
+- Work-item memory containing a compact summary, status, next action, completed prompt IDs, and relevant context.
+- Review Intelligence lifecycle: candidate, confirmed, ignored, conflicted, used.
+- Narrow reviewer/repository/path scope for learned preferences.
+- Prompt contracts that are copyable and human-scale.
+- Dependency-aware queue fan-out with one finalizer/outcome record.
+- A repository/project registry with explicit source provenance.
+- Usage and outcome feedback so selected context can become more or less trusted.
+- Strong UI contracts and rendered regression proof for user-visible flows.
+
+### Do not copy these patterns
+
+- large tracked mutable JSON files;
+- whole-file rewrites for append-like event data;
+- multiple partially overlapping caches as competing sources of truth;
+- a broad Mission Control screen combining every external system;
+- giant callback payloads and prompt bureaucracy;
+- raw click telemetry as the product's core evidence.
+
+### Normalised Lore equivalent
+
+| DailyReport idea | Lore-owned equivalent |
+| --- | --- |
+| AI run | AgentSession plus append-only SessionEvent |
+| Prompt/run context | immutable ContextPackageRecord revision |
+| Completion callback | linked ChangeSafetyReport and terminal SessionEvent |
+| Work item summary | WorkItemReference adapter payload, not a copied ticket database |
+| Review Intelligence candidate | KnowledgeProposal and KnowledgeCandidate |
+| Confirmed intelligence | active KnowledgeItem and KnowledgeRevision |
+| Usage events | KnowledgeUsage tied to session/report outcome |
+| Queue finalizer | durable JobRun plus outbox and terminal outcome |
+
+DailyReport should eventually integrate through a small WorkItemProvider and a one-off knowledge migration tool. Lore should not dual-write DailyReport's JSON stores forever.
+
+## 7. What to take from StokerAPI
+
+StokerAPI is the stronger reference for safely operating on a developer machine and showing the truth about remote operations.
+
+Its current in-progress change is particularly relevant: deployments can opt into fresh-on-mount reads, refresh on a bounded interval, and refresh when a mutation reaches a terminal state, while favourites preserve cached-first behaviour. The data hook keeps a stable reader and cleans up interval/request lifecycle. This is a better model for Lore jobs than remounting pages or silently showing stale fixture state.
+
+### Adopt these ideas
+
+- mock mode is explicit, never a hidden fallback;
+- loopback bind by default;
+- exact Host and Origin checks;
+- explicit network access opt-in and TLS outside loopback;
+- opaque server sessions, hashed token material, revocation, and CSRF;
+- strict Zod objects and bounded arrays/strings;
+- a fixed read catalogue and named mutation operations rather than a generic command channel;
+- typed, bounded queues with a serialized local-operation lane;
+- private atomic JSON stores with owner, mode, symlink, and size checks;
+- idempotency keys, exact preconditions, and postcondition verification;
+- an operation journal that distinguishes local completion from remote evidence;
+- explicit ambiguous outcomes and reconciliation;
+- capability-gated UI and a route/capability inventory;
+- stable cached readers with requested freshness, obtained freshness, source, and age;
+- terminal-operation refresh and cleanup of timers/requests;
+- feature slices that include a manifest, acceptance tests, and documentation truth checks.
+
+### Do not copy these patterns
+
+- a staging control-plane UI inside Lore;
+- generic shell execution;
+- credentials, raw command output, host paths, or deployment secrets as Lore evidence;
+- every Stoker operation as a new Lore action.
+
+### Future Stoker-to-Lore contract
+
+After the GitHub-first MVP is reliable, Stoker may emit a redacted operation outcome:
+
+- external operation ID;
+- repository identity;
+- branch and commit;
+- environment class;
+- local state;
+- remote evidence state;
+- success, failure, ambiguous, or reconciled outcome;
+- start, terminal, and reconciliation timestamps;
+- a safe source link or external reference.
+
+It must not send credentials, raw shell commands, full logs, or host filesystem paths.
+
+## 8. Product ownership and integration boundaries
+
+### Lore owns
+
+- repository identity and code-index metadata;
+- code entities and relationships;
+- immutable source events and normalised evidence revisions;
+- knowledge proposals, candidates, items, revisions, challenges, and usage;
+- explicit policies;
+- task context packages;
+- agent sessions and session events;
+- change observations and safety reports;
+- evidence lineage, job state, and audit history.
+
+### DailyReport owns
+
+- broad work queue and work-item coordination;
+- cross-project daily reporting;
+- human-facing work summaries and handover cadence;
+- integrations that are unrelated to Lore's evidence lifecycle.
+
+### StokerAPI owns
+
+- staging platform inventory and actions;
+- Vagrant/container/deployment operation execution;
+- credentials and host-specific operational details;
+- remote reconciliation for its own commands.
+
+### Narrow contracts
+
+DailyReport -> Lore:
+
+- task reference and description;
+- repository hint;
+- compact prior work summary;
+- status and next action;
+- optional confirmed knowledge migration with source provenance.
+
+Lore -> DailyReport:
+
+- context-package reference;
+- session state;
+- verification outcome;
+- compact safety/report summary;
+- unresolved unknowns or blockers.
+
+StokerAPI -> Lore:
+
+- redacted deployment/operation outcome evidence only.
+
+Lore -> StokerAPI:
+
+- no command execution;
+- optionally a read-only link to relevant knowledge or a verification reference.
+
+## 9. Recommended target architecture
+
+    GitHub App / webhooks
+             |
+             v
+    SourceEvent -> EvidenceRevision -> outbox -> extraction jobs
+                                             |
+                                             v
+                                     human knowledge review
+                                             |
+                                             v
+    DailyReport task hint -> TaskPreparationService <- code graph/history
+                                             |
+                                             v
+                                   ContextPackageRecord
+                                             |
+                       +---------------------+---------------------+
+                       |                                           |
+                       v                                           v
+              Web/API control surface                   trusted local Lore node
+                                                               |
+                                                   Git + agent adapter + watcher
+                                                               |
+                                                               v
+                                                       ChangeObservation
+                                                               |
+                                                               v
+                                                deterministic verification
+                                                               |
+                                                               v
+                              SessionEvent <- ChangeSafetyReport -> KnowledgeUsage
+
+### Trust boundary
+
+The service owns knowledge, evidence, tenancy, sessions, jobs, and audit state.
+
+The trusted local node owns:
+
+- canonical checkout registration;
+- source parsing;
+- Git status/diff collection;
+- agent process integration;
+- local test execution when authorised;
+- upload of sanitised graph/change/report envelopes.
+
+The browser never submits an arbitrary path for the service to read.
+
+For an initial single-machine deployment, these components may run together, but their contracts should still preserve this boundary.
+
+## 10. Recommended persistent model changes
+
+The exact Prisma names can change, but the responsibilities cannot.
+
+### Identity and access
+
+- Membership: organisationId, userId, role, state, timestamps.
+- AuthSession: opaque ID, tokenHash, userId, organisationId, expiresAt, revokedAt, lastSeenAt.
+- ApiToken: tokenHash, actor, organisationId, scopes, expiresAt, revokedAt.
+- LocalNode: organisationId, public identity, scopes, lastSeenAt, revokedAt.
+
+### Source and ingestion
+
+- SourceConnection: provider, organisationId, installation/account identity, state.
+- GitHubInstallation: installation ID, account identity, permission snapshot, suspension state.
+- RepositoryConnection: organisation, repository, source connection, provider repository ID.
+- SourceEvent: immutable delivery/import event, external ID, type, receivedAt, raw-content hash, redacted metadata.
+- EvidenceArtifact: stable logical source identity.
+- EvidenceRevision: immutable content, content hash, actor, timestamps, source URL, supersedes revision.
+- SyncCheckpoint: connection/repository stream, cursor, watermark, state, rate-limit metadata.
+- OutboxMessage: event type, payload, idempotency key, attempts, availableAt, terminal state.
+
+### Jobs and operations
+
+- JobRun: type, lane, organisation, repository, status, progress, attempts, idempotency key, startedAt, finishedAt, error code, reconciliation state.
+- JobEvent: append-only progress and terminal events.
+
+### Agent lifecycle
+
+- AgentSession: organisation, repository, actor, agent adapter, task, base commit, current commit, state, revision.
+- SessionEvent: immutable event type, sequence, data, actor, timestamp, idempotency key.
+- ContextPackageRecord: session, revision, input hash, complete package, generatedAt.
+- ChangeObservation: session, base/current commit, changed-file manifest, content hash, capturedAt.
+- ChangeSafetyReport: session, context revision, observation, verdict, checks, evidence, generatedAt.
+
+### Knowledge lineage
+
+- KnowledgeProposal: source evidence revisions, extractor/version, proposed structured item, status.
+- KnowledgeCandidate: proposal link, dedup key, reviewer decision and rationale.
+- KnowledgeItem: current active identity and status.
+- KnowledgeRevision: immutable statement/scope/rationale version.
+- KnowledgeChallenge: conflicting evidence and resolution.
+- KnowledgeUsage: item revision, context revision, session, inclusion reason/rank, later outcome.
+
+### Code graph
+
+- CodeIndex: repository, commit, analyzer versions, status, counts, diagnostics, createdAt.
+- CodeEntity and CodeRelationship linked to an index or carrying valid-from/current semantics.
+- deterministic UUID generation for stable graph identities;
+- separate content/fingerprint fields for deduplication and explanation.
+
+## 11. Phased implementation plan
+
+Each phase has a hard acceptance gate. Do not start broad integrations while an earlier gate is red.
+
+### Phase 0: establish a truthful baseline and decisions
+
+Work:
+
+- re-read .ideas2, .idea, README, docs/architecture.md, docs/security.md, docs/api.md, Prisma schema, package contracts, API, worker, CLI, MCP, web API layer, and current tests;
+- confirm whether Lore has become a Git repository;
+- if it is still not a Git repository, do not initialise Git without explicit user approval;
+- inventory current runtime modes, routes, jobs, stores, and UI capabilities;
+- add short architecture decision records for ID policy, topology/path trust, auth/session model, event/outbox model, and session state machine;
+- correct documentation claims that are stronger than executed proof;
+- preserve all active changes.
+
+Gate:
+
+- baseline tests, typecheck, lint, and build pass;
+- every supported mode and unimplemented capability is stated truthfully;
+- decisions are explicit enough that Phase 1 has no architectural ambiguity.
+
+### Phase 1: make persistent contracts real
+
+This is the first implementation slice.
+
+Work:
+
+1. Canonical IDs
+   - implement random and deterministic UUID helpers;
+   - migrate all persistent runtime IDs;
+   - update demo fixtures and seed to use the same contract;
+   - add validation and collision/determinism tests.
+
+2. Store contract
+   - define adapter-neutral store conformance tests;
+   - run them against InMemoryLoreStore and PrismaLoreStore;
+   - prove tenant isolation and cross-tenant rejection;
+   - add an actual PostgreSQL integration profile.
+
+3. Redis/job composition
+   - retain the current BullMQ non-demo selection;
+   - test dispatch and worker consumption against Redis;
+   - make readiness ping PostgreSQL and Redis;
+   - record durable JobRun status.
+
+4. Session persistence
+   - implement the state machine and append-only SessionEvent;
+   - persist ContextPackageRecord revisions;
+   - link ChangeObservation and ChangeSafetyReport to the session;
+   - complete or fail the session transactionally with the report.
+
+5. Minimum import chain
+   - make one bounded historical GitHub import persist evidence and durably request extraction;
+   - prove duplicate delivery/import replay is safe.
+
+Gate:
+
+- a non-demo PostgreSQL and Redis test performs the persistent lifecycle and passes after process restart;
+- no UUID-column write receives a prefixed or hash-only identifier;
+- a report can always be traced to its session, context revision, observation, repository, and tenant;
+- no job is described as queued unless it has a runnable executor.
+
+### Phase 2: secure the local and tenant boundaries
+
+Work:
+
+- loopback bind by default;
+- exact Host and Origin allowlists;
+- explicit non-loopback plus TLS configuration;
+- opaque durable sessions, membership lookup, expiry, and revocation;
+- CSRF bootstrap and browser mutation wiring;
+- scoped CLI/MCP/local-node tokens;
+- strict request schemas and bounded collections;
+- tenant-coherent service checks and constraints;
+- remove browser-controlled arbitrary localPath;
+- add trusted checkout registration and allowed roots or local-node registration;
+- harden .lore writes with permissions, ownership, symlink rejection, bounds, atomic replacement, and retention.
+
+Gate:
+
+- negative tests prove cross-tenant IDs, foreign installation IDs, forged cookies, missing CSRF, invalid Origin/Host, unregistered paths, symlinks, and over-limit payloads fail closed;
+- local mode remains usable on loopback;
+- no secret or raw source is logged.
+
+### Phase 3: unify CLI, MCP, and the agent workflow
+
+Work:
+
+- create LoreClient with HTTP and explicit demo adapters;
+- make apiUrl and authentication real;
+- make every response identify organisation, repository, mode, source, and freshness;
+- remove implicit fixture fallback;
+- register and upload a sanitised local graph or use the trusted local-node channel;
+- implement complete Git change collection;
+- define AgentAdapter and fully support one agent;
+- deliver context using a proven supported mechanism;
+- record session events and context refreshes;
+- enforce final verification and session closure;
+- add CLI/MCP contract and process-level tests.
+
+Gate:
+
+- in a real temporary repository, CLI and MCP retrieve the same persisted context as the web/API;
+- no demo knowledge appears unless demo mode was explicitly selected;
+- staged, unstaged, renamed, deleted, and untracked changes appear in the observation;
+- child success, child failure, interruption, and abandoned sessions have correct terminal state.
+
+### Phase 4: make ingestion and knowledge lineage durable
+
+Work:
+
+- add SourceConnection, GitHubInstallation, RepositoryConnection, SourceEvent, EvidenceArtifact/Revision, SyncCheckpoint, and OutboxMessage;
+- installation-scoped repository resolution;
+- transactional receipt/event/outbox creation;
+- idempotent outbox dispatch;
+- paginated, bounded, resumable history import;
+- preserve review bodies/states and actor identity;
+- version edited PR/comment/review evidence;
+- track rate limits, backoff, retry, dead letter, and resume;
+- link proposal to candidate to reviewed knowledge;
+- deduplicate semantically and retain reviewer rationale;
+- keep mock extraction deterministic.
+
+Gate:
+
+- webhook replay, enqueue failure, worker retry, edited source content, import restart, and rate-limit pause all preserve exactly-once business effects with at-least-once delivery;
+- every active knowledge item can be traced to immutable source evidence and a human decision.
+
+### Phase 5: improve context quality and verification truth
+
+Work:
+
+- fix scope compatibility and remove unsupported scope dimensions;
+- rank with deterministic relevance/specificity/confidence/recency/evidence scoring;
+- separate mandatory policies from ranked context;
+- enforce item and token budgets;
+- include actionable statements and bounded provenance excerpts;
+- explain inclusion, omission, challenge, and unknown state;
+- add WorkItemProvider interface without importing DailyReport storage;
+- add realistic multi-file TypeScript and PHP analyzer fixtures;
+- overlay/re-index changed code before verification;
+- harden policy regex and source-line semantics;
+- distinguish tests executed by Lore from tests merely recommended;
+- record base/current commit and incomplete-proof reasons;
+- record KnowledgeUsage and post-verification outcomes.
+
+Gate:
+
+- labelled retrieval fixtures meet an agreed relevance/noise threshold;
+- scoped items do not leak when required dimensions are unknown;
+- analyzer fixtures prove the relationships claimed by the UI/report;
+- the report never calls an unexecuted test passed.
+
+### Phase 6: make the web a truthful MVP control surface
+
+Work:
+
+- explicit demo, persistent, disconnected, stale, loading, and error presentation;
+- remove all fake write success;
+- wire auth and CSRF;
+- capability-gate or hide inert controls;
+- display job state, progress, failure, retry, and source freshness;
+- keep reader functions stable and refresh on terminal job events;
+- avoid page remount as a refresh mechanism;
+- show context revisions and report/session linkage;
+- implement focused component tests and a real browser journey.
+
+Minimum screens:
+
+- onboarding/source connection;
+- repository/index/import status;
+- candidate review;
+- active knowledge with provenance;
+- prepare task/context inspection;
+- session progress;
+- safety report.
+
+Gate:
+
+- a browser test completes the real PostgreSQL/Redis/GitHub-fixture lifecycle;
+- deliberate API failure cannot produce fixture data or a false success toast;
+- every visible mutation has a working backend capability and audit result.
+
+### Phase 7: integrate the useful edges of DailyReport and StokerAPI
+
+DailyReport:
+
+- implement WorkItemProvider for task text/status/compact memory;
+- create a dry-run migration for confirmed Review Intelligence;
+- redact, deduplicate, scope, and preserve provenance;
+- require human review before migrated knowledge becomes active;
+- return compact session/report references to DailyReport;
+- avoid ongoing dual writes.
+
+StokerAPI:
+
+- define a versioned redacted operation-outcome schema;
+- ingest it through the normal SourceEvent/EvidenceRevision path;
+- never expose an execution endpoint from Lore;
+- exclude commands, credentials, raw output, and paths.
+
+Gate:
+
+- connectors can be disabled without weakening Lore's GitHub/local MVP;
+- replay and version upgrades are tested;
+- imported content retains source and consent/audit provenance.
+
+### Phase 8: operational hardening and product validation
+
+Work:
+
+- backup, restore, retention, export, and deletion;
+- OpenAPI generation and contract drift checks;
+- graceful API/worker/database/queue shutdown;
+- dead-letter review and reconciliation;
+- metrics for context size, irrelevant-item dismissals, policy findings, verification duration, stale indexes, job failures, and candidate acceptance;
+- cost/budget controls before enabling a real AI provider;
+- dogfood Lore on Lore for several complete tasks.
+
+Product success measures:
+
+- relevant context arrives before editing begins;
+- context remains small enough to read;
+- false-positive policy and impact warnings remain low;
+- accepted knowledge is reused and later outcomes are traceable;
+- verification identifies a real missed test, affected area, or policy often enough to justify its cost;
+- the system can explain what it does not know.
+
+Kill or redesign signals:
+
+- users routinely ignore the context package;
+- demo/persistent mode remains confusing;
+- most selected knowledge is irrelevant;
+- verification mostly repeats generic lint advice;
+- maintaining connectors consumes more work than improving core evidence quality.
+
+## 12. MVP acceptance definition
+
+Lore reaches its first honest MVP only when this exact journey works:
+
+1. Start Lore in non-demo mode with PostgreSQL and Redis.
+2. Authenticate a real tenant and connect a GitHub installation owned by that tenant.
+3. Register a repository without granting the browser arbitrary filesystem access.
+4. Import a bounded page of pull requests, reviews, comments, commits, and files.
+5. Persist immutable source/evidence revisions.
+6. Durably dispatch extraction and create reviewable candidates.
+7. Approve one candidate and persist active knowledge with complete lineage.
+8. Index a real temporary checkout at a known commit.
+9. Prepare and persist a context revision for a real task.
+10. Retrieve the same context through API, CLI, and MCP.
+11. Launch one proven agent adapter and observe all kinds of Git changes.
+12. Refresh context when meaningful change broadens the impact scope.
+13. Verify policies, impact, recommended versus executed tests, and unknowns.
+14. Persist a report and atomically close the session.
+15. Restart API and worker and retrieve the same session, context, knowledge, evidence, jobs, and report.
+16. Replay the same webhook/import/job and observe no duplicate business effect.
+17. Render the complete journey in the web UI without fixture fallback.
+
+Jira, Slack, Stoker operations, Harvest reporting, a broad command centre, and a real AI provider are not required for this MVP.
+
+## 13. Verification matrix
+
+| Risk | Required proof |
+| --- | --- |
+| ID drift | unit property tests plus memory/Prisma store contract |
+| Prisma drift | PostgreSQL integration and restart test |
+| queue composition | Redis dispatch/consume/retry/dead-letter test |
+| tenant leakage | negative cross-tenant API/store tests |
+| path escape | registered-root, traversal, symlink, owner, and permission tests |
+| webhook replay | receipt plus transactional outbox failure/replay test |
+| import gaps | multi-page checkpoint/resume fixture |
+| edited evidence | new EvidenceRevision with stable artifact identity |
+| scope leakage | table-driven true/false/unknown tests |
+| analyzer overclaim | labelled multi-file TS/PHP fixtures |
+| untracked files | real temporary Git repository process test |
+| agent lifecycle | success/failure/interrupt/abandon process tests |
+| false UI success | browser test with forced API and job failures |
+| stale UI | cache-age/source display plus terminal-event refresh test |
+| policy ReDoS | bounded/adversarial policy tests |
+| documentation drift | route/job/capability inventory checked in CI |
+
+Core commands at the reviewed snapshot:
+
+~~~sh
+npm test -- --run
+npm run test:coverage
+npm run typecheck
+npm run lint
+npm run build
+~~~
+
+Add explicit integration and browser commands rather than hiding those suites inside a unit command that can silently skip unavailable infrastructure.
+
+## 14. Non-goals and guardrails
+
+- Do not turn Lore into DailyReport Mission Control.
+- Do not turn Lore into a Stoker staging operations panel.
+- Do not add a generic shell or arbitrary command endpoint.
+- Do not ingest secrets, credentials, full raw logs, or unnecessary source.
+- Do not let AI create, relax, or enforce policy.
+- Do not silently switch from persistent state to demo fixtures.
+- Do not claim a test ran when it was only recommended.
+- Do not claim impact is proven when it is inferred.
+- Do not add more providers before the GitHub path is durable.
+- Do not maintain two permanent knowledge stores through dual writes.
+- Do not initialise Git, delete files, reset work, or rewrite concurrent changes without explicit approval.
+- Do not edit DailyReport or StokerAPI while implementing this plan unless separately requested.
+
+## 15. Recommended decisions
+
+These defaults allow implementation to proceed without reopening broad design questions:
+
+1. Persistent IDs: PostgreSQL UUIDs, random UUID for lifecycle records, namespace UUID for deterministic derived records.
+2. Product shape: modular monolith plus worker and trusted local node, not microservices.
+3. Initial provider: GitHub only.
+4. Initial agent: choose one adapter based on a documented supported context mechanism; expose other agents only after equivalent proof.
+5. Runtime modes: explicit demo, local, and service modes with no fallback.
+6. Repository access: trusted local node or configured local roots; never arbitrary browser paths.
+7. Event delivery: database transaction plus durable outbox; workers are idempotent.
+8. Evidence: immutable source events and revisions, with raw content retained minimally and redacted.
+9. Retrieval: deterministic and bounded; AI may extract candidates but does not decide applicability or policy.
+10. Integration order: persistent GitHub/local MVP, then DailyReport, then redacted Stoker outcomes.
+11. UI rule: if a capability is not real in the active mode, hide it or label it unavailable.
+12. Git baseline: ask before initialising a repository if Lore still lacks .git.
+
+---
+
+# Comprehensive implementation prompt
+
+Copy the entire prompt below into a new implementation session.
+
+~~~text
+You are implementing the next reliable version of Lore.
+
+Workspace:
+- Primary and only writable product target: /Users/dev/Lore
+- Read-only reference: /Users/dev/DailyReport
+- Read-only reference: /Users/dev/StokerAPI
+
+Primary source of implementation intent:
+- /Users/dev/Lore/.ideas2
+
+Product objective:
+Make Lore an evidence-backed context and change-safety service for coding agents. Build one honest, persistent GitHub/local repository vertical slice before adding integration breadth. Reuse DailyReport's durable work-memory and outcome ideas and StokerAPI's secure local-operation and truthful freshness patterns, but do not merge either product into Lore.
+
+Critical operating constraints:
+1. Lore had no .git directory at the time .ideas2 was written, and its files were changing concurrently during the review. Begin by refreshing the current tree. Preserve all current work. Never assume the prior snapshot is a clean baseline.
+2. Do not initialise Git without explicit user approval.
+3. Do not edit DailyReport or StokerAPI.
+4. Do not read, print, copy, or expose .env values or secrets.
+5. Do not use destructive Git or filesystem commands.
+6. Do not post to GitHub or mutate external services unless explicitly requested.
+7. Use apply_patch for source edits and keep changes phase-scoped.
+8. No hidden demo fallback is allowed.
+9. Do not broaden the product into a generic dashboard or command runner.
+10. Distinguish executed proof, inferred behaviour, recommended actions, and unknowns in code, UI, docs, and the final report.
+
+First action: refresh and protect the baseline
+- Confirm the working directory.
+- Check whether .git now exists.
+- Read .ideas2 completely.
+- Read .idea, README.md, docs/architecture.md, docs/security.md, docs/api.md, docs/onboarding.md, package.json, docker-compose.yml, prisma/schema.prisma, prisma/seed.ts, and any AGENTS.md files.
+- Inspect apps/api, apps/worker, apps/cli, apps/mcp, apps/web, packages/core, packages/shared, packages/database, packages/github, packages/analysis, packages/context, packages/knowledge, packages/policy, and packages/reporting.
+- Inspect all current tests and scripts.
+- Record the current runtime mode, route, job, store, and visible-capability inventory.
+- Check file timestamps or hashes before editing so you notice concurrent changes.
+- Run the current baseline:
+
+  npm test -- --run
+  npm run test:coverage
+  npm run typecheck
+  npm run lint
+  npm run build
+
+- If a baseline check fails, determine whether it is an existing/concurrent failure before changing code. Report the distinction.
+
+Architecture rules:
+- Lore owns evidence, knowledge, context, session, verification, jobs, and audit state.
+- A trusted local node owns checkout paths, Git collection, source parsing, agent integration, and authorised local test execution.
+- The browser may select a registered repository but may not send an arbitrary filesystem path for the server to read.
+- GitHub is the only provider needed for the first MVP.
+- AI output is untrusted input. It may propose knowledge. It may not create policy or decide deterministic enforcement.
+- PostgreSQL is the durable source of truth. Redis/BullMQ is job transport, not the source of truth.
+- Every asynchronous business effect must be represented durably before acknowledgement.
+- Demo, local, and service modes are explicit and never substitute for one another.
+
+Implement in phases and keep every phase green. Start with Phase 0 and Phase 1 from .ideas2. Do not jump to DailyReport/Stoker connectors.
+
+PHASE 0: truthful baseline and decisions
+
+Deliver:
+- A current architecture/capability inventory.
+- Small ADRs for:
+  a. persistent ID policy;
+  b. service versus trusted-local-node topology;
+  c. authentication and tenant/session model;
+  d. SourceEvent/EvidenceRevision plus outbox delivery;
+  e. AgentSession state machine and event sequence.
+- Documentation corrections for any claim not supported by current executable proof.
+- A test plan mapped to the verification matrix in .ideas2.
+
+Gate:
+- Existing tests, typecheck, lint, and build pass.
+- The active mode and every visible capability are represented truthfully.
+- Do not treat documentation alone as proof.
+
+PHASE 1: persistent-contract vertical slice
+
+A. Canonical ID contract
+- Find every persistent ID producer.
+- Add shared helpers for random UUIDs and deterministic namespace UUIDs.
+- Use random UUIDs for organisations, users, memberships, sessions, context records, observations, reports, jobs, proposals, candidates, knowledge lifecycle records, and tokens.
+- Use deterministic namespace UUIDs for stable imported events/evidence identities and graph entities/relationships where stable identity is needed.
+- Keep fingerprints and external IDs in their own fields.
+- Remove prefixed or bare-hash values from UUID columns.
+- Make fixtures, seed, in-memory store, API, CLI, worker, and Prisma use the same rules.
+- Add table-driven validity, determinism, isolation, and collision tests.
+
+Acceptance:
+- Every generated persistent identifier parses as a UUID.
+- The same deterministic input and namespace returns the same UUID.
+- Different tenant/repository namespaces cannot collide by construction.
+- Demo data does not need an ID translation layer that production code lacks.
+
+B. Store conformance and real infrastructure proof
+- Define one store-contract suite and run it against InMemoryLoreStore and PrismaLoreStore.
+- Add a deliberate PostgreSQL plus Redis integration profile and command.
+- Do not silently skip the integration gate when infrastructure is absent; report it as not run.
+- Prove create/read/update/replay and tenant-isolation behaviour.
+- Prove restart durability.
+- Exercise transactions and unique/idempotency constraints.
+
+Acceptance:
+- PrismaLoreStore has meaningful exercised coverage for the MVP operations.
+- Cross-tenant repository, session, evidence, candidate, policy, and report references fail.
+- In-memory behaviour does not mask database-invalid values.
+
+C. Durable jobs and readiness
+- Preserve the current non-demo BullMQ dispatcher selection and close hook if still present.
+- Add JobRun and, if useful, append-only JobEvent.
+- Dispatch with an idempotency key.
+- Record queued, running, progress, retrying, succeeded, failed, cancelled, dead_letter, and ambiguous/reconciling states as applicable.
+- Make API readiness ping PostgreSQL and Redis with bounded timeouts.
+- Ensure demo mode either executes in-memory jobs or returns a truthful unsupported/immediate result; never return a queued job that has no consumer.
+- Separate local/repository-locked work from bounded external network/AI lanes.
+
+Acceptance:
+- A Redis-backed job is consumed and its durable terminal state is visible after restart.
+- Dispatch replay has one business effect.
+- Readiness fails when either required dependency is unavailable.
+- API and worker close queue/database resources cleanly.
+
+D. Complete session/context/report lifecycle
+- Specify and enforce states such as preparing, ready, active, verifying, completed, failed, and abandoned.
+- Add append-only SessionEvent with a monotonically increasing sequence and idempotency key.
+- Persist ContextPackageRecord revisions rather than only returning calculated JSON.
+- Add ChangeObservation for the bounded changed-file manifest.
+- Link ChangeSafetyReport to organisation, repository, session, context revision, observation, base commit, and current commit.
+- Update terminal report and session state atomically.
+- Reject invalid transitions and stale optimistic revisions.
+- Correct any UI copy that says saved/completed before persistence succeeds.
+
+Acceptance:
+- The complete event sequence can be replayed to explain session state.
+- Repeating the same request is idempotent.
+- Every report has complete provenance.
+- A failed/abandoned agent run remains visible and cannot be mistaken for success.
+
+E. Minimum GitHub import-to-extraction chain
+- Persist the tenant-owned GitHub installation/source connection rather than accepting an arbitrary installation ID as authority.
+- Import one bounded fixture page.
+- Persist source/evidence data.
+- Durably request knowledge extraction through an outbox or equivalent transactionally safe mechanism.
+- Retain the deterministic mock provider for the first proof.
+- Create a candidate linked to its proposal and evidence.
+- Human approval creates active knowledge and closes the candidate/proposal state.
+
+Acceptance:
+- Import produces a reviewable candidate in non-demo mode.
+- Replaying import/delivery/worker execution does not duplicate evidence, candidates, or knowledge.
+- A dispatch failure after persistence is recovered by the outbox.
+
+Phase 1 end-to-end gate:
+1. Start non-demo PostgreSQL and Redis.
+2. Create a tenant and authenticated actor.
+3. Persist a GitHub installation and repository.
+4. Import bounded fixture evidence.
+5. Extract and approve knowledge.
+6. Index a temporary checkout.
+7. Prepare and persist context.
+8. Create/activate a session.
+9. Persist a change observation.
+10. Verify and persist the linked report.
+11. Restart processes.
+12. Read the complete lineage and session state.
+13. Replay the asynchronous inputs and prove no duplicate business effect.
+
+Only after this gate is green, implement the remaining phases in .ideas2 in order:
+- Phase 2: secure local and tenant boundaries.
+- Phase 3: unified LoreClient, CLI, MCP, and one real agent adapter.
+- Phase 4: complete ingestion, versioned evidence, checkpoints, and lineage.
+- Phase 5: retrieval, scope, analyzer, policy, and verification quality.
+- Phase 6: truthful web MVP.
+- Phase 7: narrow DailyReport and Stoker connectors.
+- Phase 8: operations and dogfooding.
+
+Security requirements for all phases:
+- Bind loopback by default.
+- Require explicit configuration and HTTPS for non-loopback.
+- Validate exact Host and Origin.
+- Use opaque, expiring, revocable server sessions and hashed API/device tokens.
+- Validate current Membership, not only signed organisation/user claims.
+- Use CSRF for browser writes.
+- Strictly validate and bound object fields, arrays, content, paths, imports, and regular expressions.
+- Reject symlinks and unexpected file ownership for private local state.
+- Use 0700 directories, 0600 files, bounded JSON, and atomic replace.
+- Never log authorisation headers, cookies, tokens, raw source, or evidence content.
+- Enforce tenant coherence for every related ID.
+
+Git and agent requirements:
+- Execute Git with explicit argument arrays and shell disabled.
+- Parse NUL-delimited porcelain/status output.
+- Include staged, unstaged, renamed, deleted, and untracked files.
+- Bound file count, individual size, total bytes, and patch bytes.
+- Refresh or overlay changed/new/deleted entities before verification.
+- Add an AgentAdapter interface and prove one adapter's real supported context-delivery mechanism.
+- Record session events for start, context, file changes, refresh, verification, success, failure, interruption, and abandonment.
+- Do not claim unsupported agents work.
+
+Context and verification requirements:
+- Missing required scope dimensions mean unknown/non-match, never an automatic match.
+- Support every public scope dimension or remove it.
+- Mandatory policy is separate from ranked knowledge.
+- Ranking is deterministic and bounded by entries and tokens.
+- Agent output includes the actual rule/decision statement, confidence, challenge state, inclusion reason, and a short provenance excerpt.
+- Report whether impact is proven, inferred, recommended, or unavailable.
+- Distinguish tests executed from tests recommended.
+- Reject invalid/unsafe policies at creation.
+- Scan the correct added/source lines and report real source locations.
+- Track KnowledgeUsage and later verification outcome.
+
+Web requirements:
+- Demo, persistent, disconnected, stale, loading, and error states are explicit.
+- API failure must never load fixture data or fabricate write success.
+- Hide or capability-gate inactive controls.
+- Display job status, source, age, requested freshness, and obtained freshness.
+- Use stable readers and refresh when a mutation/job reaches a terminal state.
+- Clean up timers and in-flight requests.
+- Add component tests and a real browser end-to-end MVP journey.
+
+Integration boundaries:
+- DailyReport integration is a narrow WorkItemProvider and an optional, dry-run, provenance-preserving migration of confirmed Review Intelligence.
+- StokerAPI integration is a versioned, redacted operation-outcome evidence envelope.
+- Do not edit either repository.
+- Do not copy DailyReport's mutable JSON stores.
+- Do not add Stoker command execution to Lore.
+- Do not send credentials, commands, raw logs, or host paths to Lore.
+
+Testing rules:
+- Write the failing contract/regression test before each repair where practical.
+- Run focused tests after each small change.
+- At every phase gate run:
+
+  npm test -- --run
+  npm run test:coverage
+  npm run typecheck
+  npm run lint
+  npm run build
+
+- Add named commands for integration and browser suites.
+- A skipped or infrastructure-blocked test is not a pass.
+- Use real temporary Git repositories for Git behaviour.
+- Use labelled multi-file fixture repositories for TypeScript and PHP analysis.
+- Test adverse paths: replay, retry, edited evidence, dependency loss, forged tenancy, invalid transitions, path escape, unsafe regex, API failure, worker failure, and process restart.
+
+Documentation rules:
+- Update README, architecture, security, API, onboarding, and operating docs in the same phase as behaviour.
+- Document only behaviour that is implemented and executed.
+- Maintain a route/job/capability inventory.
+- Mark future adapters and providers clearly.
+- Include migration and rollback notes for schema changes.
+
+Stop and ask for authority if:
+- Git initialisation is required;
+- a destructive migration would discard existing user data;
+- external credentials or live service mutation are required;
+- the current concurrent changes conflict with the phase and intent cannot be safely inferred;
+- implementation would require editing DailyReport or StokerAPI.
+
+Final handoff format:
+1. Outcome first.
+2. Phase and acceptance gate completed.
+3. Files and migrations changed.
+4. Behaviour now proven.
+5. Exact commands run and results.
+6. Integration/browser proof and any environment boundary.
+7. Security and data-migration notes.
+8. Remaining gaps in priority order.
+9. Any concurrent/pre-existing changes left untouched.
+
+Do not declare the MVP complete until every item in the MVP acceptance definition in .ideas2 has executable proof.
+~~~
+
+## 16. Handoff summary
+
+The best next move is not another UI feature or provider. It is Phase 1: canonical IDs, real store contracts, durable jobs, linked session/context/report state, and one import-to-extraction proof against PostgreSQL and Redis.
+
+That slice turns Lore from a convincing demo and collection of good modules into a trustworthy platform on which the agent wrapper, web UI, DailyReport adapter, and Stoker outcome connector can safely depend.
