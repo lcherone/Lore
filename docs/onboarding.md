@@ -1,3 +1,14 @@
+<p align="center">
+  <a href="../README.md"><img src="assets/lore-docs-header.svg" alt="Lore documentation — engineering memory, evidence, and governance" width="100%" /></a>
+</p>
+
+<p align="center">
+  <a href="../README.md"><strong>Project home</strong></a> ·
+  <a href="README.md"><strong>Documentation</strong></a> ·
+  <a href="features.md"><strong>Features</strong></a> ·
+  <a href="onboarding.md"><strong>Setup</strong></a>
+</p>
+
 # Lore onboarding
 
 This guide takes a new developer from an empty checkout to useful task context and a safety report.
@@ -7,14 +18,16 @@ This guide takes a new developer from an empty checkout to useful task context a
 Use demo mode for UI and workflow exploration. It is in-memory, needs no infrastructure, and resets when the API restarts.
 
 ```bash
-npm install
-npm run dev
+npm run demo
 ```
+
+The demo wrapper installs dependencies when they are missing, forces the safe in-memory mode, and prints the URL. Use `npm run demo:check` for a temporary automated API/web readiness proof.
 
 Use Docker mode to exercise PostgreSQL, migrations, seed data, Redis, queued jobs, API, worker, and the production-built web assets.
 
 ```bash
 cp .env.example .env
+npm run setup:check -- --docker
 docker compose up --build
 ```
 
@@ -93,7 +106,14 @@ Lore currently has one verified interactive adapter: Codex. It passes initial co
 
 ## GitHub history
 
-After installing the GitHub App, connect a provider repository and queue a bounded import. Start with 100 PRs; expand to 250 or 500 if the repository has long-lived conventions.
+Choose one authentication mode before connecting a provider repository:
+
+- `GITHUB_AUTH_MODE=token` for a fine-grained, selected-repository PAT during the first local evaluation.
+- `GITHUB_AUTH_MODE=app` for repository installations and signed live webhooks.
+
+The secret stays in the worker environment. Token mode does not ask for an installation ID. App mode records the installation ID on the repository, so jobs and webhook routing cannot switch installations per request. Follow the complete [GitHub integration guide](github.md), including organisation approval and SSO notes.
+
+Start with 100 merged PRs. Expand to 250–1,000 after checking retention and evidence quality, or use `"all"` deliberately for the entire available merged history.
 
 ```bash
 curl -X POST http://127.0.0.1:3001/api/repositories/REPOSITORY_ID/github-import \
@@ -101,7 +121,7 @@ curl -X POST http://127.0.0.1:3001/api/repositories/REPOSITORY_ID/github-import 
   -d '{"limit":100}'
 ```
 
-The GitHub App installation ID is recorded when the repository is connected, so import and webhook routing cannot switch installations per request.
+For a mature repository, `{"limit":"all"}` paginates every merged PR plus its submitted reviews, inline and conversation comments, commits, and files. It can take a long time and consume substantial GitHub API quota, so bounded batches are the safer first run.
 
 Open the Candidates screen. Approve only statements whose evidence, class, and scope are accurate. Edit over-broad scope before approval. Reject noisy inferences with a reason; the audit trail records both decisions.
 
@@ -139,7 +159,7 @@ The worker intentionally refuses an in-memory production path. Set `DATABASE_URL
 
 ### GitHub import is queued but nothing changes
 
-Run the worker, check `GITHUB_APP_ID` and `GITHUB_PRIVATE_KEY`, confirm the installation can access the repository, and inspect structured `job.failed` output without printing the key.
+Run the worker and `npm run setup:check`. In token mode, confirm the token path, owner-only permissions, selected repository, Pull requests/Issues read permissions, organisation approval, and SAML access. In App mode, check the App ID/private key and installation access. Inspect structured `job.failed` output without printing any credential.
 
 ### A candidate remains weak
 

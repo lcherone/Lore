@@ -1,0 +1,276 @@
+<p align="center">
+  <a href="../README.md"><img src="assets/lore-docs-header.svg" alt="Lore documentation — engineering memory, evidence, and governance" width="100%" /></a>
+</p>
+
+<p align="center">
+  <a href="../README.md"><strong>Project home</strong></a> ·
+  <a href="README.md"><strong>Documentation</strong></a> ·
+  <a href="onboarding.md"><strong>Setup</strong></a> ·
+  <a href="github.md"><strong>GitHub</strong></a>
+</p>
+
+# Feature guide
+
+This guide explains what every user-facing Lore feature does, what data it uses, how it works, how to exercise it, and where its current boundary lies. All screenshots below come from the runnable local demo.
+
+## One-command demo
+
+**What it does.** Starts a realistic Lore organisation, repository, graph, knowledge registry, candidate queue, reviewer directory, sessions, and safety reports without external services or credentials.
+
+**How it works.** `scripts/lore-demo.sh` verifies Node.js 22+, installs dependencies only when missing, forces `DEMO_MODE=true`, disables GitHub credentials, and starts the Fastify API plus Vite UI. Demo writes stay in memory and reset when the API stops.
+
+```bash
+npm run demo
+```
+
+Open [http://localhost:5173](http://localhost:5173). For an automated readiness proof:
+
+```bash
+npm run demo:check
+```
+
+<p align="center">
+  <img src="assets/lore-demo-terminal.svg" alt="Lore demo readiness output" width="100%" />
+</p>
+
+**Boundary.** Demo imports and queued jobs are simulated honestly. Use persistent mode for real GitHub history, durable knowledge, Redis jobs, and multi-process workers.
+
+## Dashboard and knowledge pulse
+
+**What it does.** Gives reviewers one operating view of knowledge health, pending candidates, recent verification results, and the task-context entry point.
+
+**How it works.** The API returns an organisation-scoped snapshot. The UI calculates active, challenged, stale, and candidate totals from that snapshot and links each attention row to the relevant review surface.
+
+**Use it.** Run the demo and open **Dashboard**. Select a repository, describe a task, and choose **Prepare context**.
+
+<p align="center">
+  <img src="assets/screenshots/lore-dashboard.png" alt="Lore dashboard with task preparation, knowledge health, candidate attention, and safety reports" width="100%" />
+</p>
+
+<details>
+  <summary><strong>Responsive mobile dashboard</strong></summary>
+  <br />
+  <p align="center"><img src="assets/screenshots/lore-dashboard-mobile.png" alt="Lore dashboard at a 390 pixel mobile viewport" width="390" /></p>
+</details>
+
+## Task context preparation
+
+**What it does.** Turns a task description into a bounded context package before an engineer or agent changes code.
+
+**How it works.** Deterministic retrieval identifies matching files and symbols, traverses the impact graph within depth/node/confidence limits, resolves applicable policies and approved knowledge by scope, ranks evidence, recommends tests, and preserves unknowns. AI is not required for this path.
+
+**Output.** Candidate files, affected areas, policies, rules, decisions, reviewer preferences, evidence citations, recommended tests, and explicit unknowns.
+
+**Use it in the UI.** Enter a task on **Dashboard** and choose **Prepare context**.
+
+<p align="center">
+  <img src="assets/screenshots/lore-context-package.png" alt="Lore context package showing relevant code, impact, knowledge, tests, and a known unknown" width="100%" />
+</p>
+
+**Use it from a checkout.** From an initialised target repository:
+
+```bash
+lore prepare "TICKET-123 Update refund address mapping"
+lore context
+```
+
+For automation, place `--json` before the command:
+
+```bash
+lore --json prepare "TICKET-123 Update refund address mapping"
+```
+
+## Repository connection, indexing, and retention
+
+**What it does.** Connects provider identity and local source structure without asking the browser to read a filesystem checkout.
+
+**How it works.** A repository record holds provider owner/name, default branch, optional GitHub App installation identity, status, and retention configuration. Trusted local CLI analysis uploads only the sanitised entity/relationship graph in service mode. Raw source stays local.
+
+**Use it.** Open **Repositories → Connect repository**, enter `owner/name`, then import provider history and index the local checkout.
+
+<p align="center">
+  <img src="assets/screenshots/lore-connect-repository.png" alt="Lore repository connection dialog" width="100%" />
+</p>
+
+From the target checkout:
+
+```bash
+lore init --repository OWNER/NAME --organisation ORGANISATION_SLUG
+lore index
+```
+
+To bind that checkout to a persistent Lore repository:
+
+```bash
+lore connect \
+  --repository-id REPOSITORY_UUID \
+  --organisation-id ORGANISATION_UUID \
+  --api-url http://127.0.0.1:3001
+lore index
+```
+
+**Retention.** Configure summary-only storage, review-comment retention, raw patch retention, and source-snippet retention before importing. Repository deletion requires typing the exact `owner/name` and removes repository-scoped evidence, graph, sessions, reports, candidates, policies, and knowledge.
+
+## GitHub history import
+
+**What it does.** Converts accepted repository history into evidence for candidate extraction and future context.
+
+**How it works.** The worker authenticates with either a fine-grained PAT or GitHub App installation. It paginates merged PRs plus submitted review bodies, inline review comments, PR conversation comments, commits, changed paths, and available bounded patches. Stable provider IDs make ingestion idempotent.
+
+**Use it.** Follow the [GitHub guide](github.md) for the PAT/App permissions and secret-file setup. Start with a bounded import:
+
+```bash
+curl -X POST http://127.0.0.1:3001/api/repositories/REPOSITORY_UUID/github-import \
+  -H 'content-type: application/json' \
+  -d '{"limit":100}'
+```
+
+After validating access and retention, import the entire available merged history with `{"limit":"all"}`. “All” is intentionally not the first-run default because mature repositories can require thousands of API calls and significant memory.
+
+## Local AST and Git impact graph
+
+**What it does.** Builds structural context that prose search cannot reliably recover.
+
+**How it works.** TypeScript/JavaScript and PHP adapters parse symbols and relationships. Bounded Git history contributes commit and statistically supported co-change edges. Traversal applies maximum depth, node count, confidence thresholds, and stable ordering.
+
+```bash
+lore index
+lore impact AddressCode::fromRole
+lore explain AddressCode::fromRole
+```
+
+The local graph is stored under owner-only `.lore/` state and excluded from verification. In service mode, only its bounded graph envelope is uploaded.
+
+## Knowledge registry
+
+**What it does.** Maintains typed engineering facts, decisions, rules, preferences, regressions, warnings, and policies with scope, confidence, health, and provenance.
+
+**How it works.** Active knowledge is revisioned rather than overwritten. Contradictory or stale evidence challenges an item. Repository/path/symbol scope prevents a narrow rule from silently becoming organisation-wide authority.
+
+<p align="center">
+  <img src="assets/screenshots/lore-knowledge.png" alt="Lore knowledge registry with status, scope, confidence, and health" width="100%" />
+</p>
+
+```bash
+lore knowledge list
+lore knowledge show KNOWLEDGE_UUID
+lore knowledge export --format markdown --output lore-knowledge.md
+lore knowledge import AGENTS.md
+lore knowledge import docs/adr/0007-tax-boundary.md
+```
+
+Markdown imports split on headings and retain their source filename. They enter as explicit human confirmation, not model-generated certainty.
+
+## Candidate review and human approval
+
+**What it does.** Keeps extracted engineering knowledge advisory until a person verifies its statement, type, evidence, confidence, contradictions, and scope.
+
+**How it works.** Candidate confidence is calculated server-side from independent observations, PRs, reviewers, recency, explicitness, reliability, contradictions, human confirmation, scope stability, and current code match. A reviewer can edit, narrow, change type, merge, approve, or reject. Every decision is audited.
+
+<p align="center">
+  <img src="assets/screenshots/lore-candidate-review.png" alt="Lore candidate review with statement, scope, evidence, confidence factors, contradictions, and approval actions" width="100%" />
+</p>
+
+**Boundary.** Model output can propose a candidate but cannot approve itself, create policy, calculate its own authority, or write directly to the knowledge store.
+
+## Deterministic policies
+
+**What it does.** Applies explicit human-owned rules such as forbidden secret logging, required tests, or path-specific review constraints.
+
+**How it works.** Policies have owners, severity, scope, enabled state, and deterministic detectors. Verification evaluates changed paths and added patch lines rather than asking an AI model whether a rule passed.
+
+<p align="center">
+  <img src="assets/screenshots/lore-policies.png" alt="Lore policy list showing owner, severity, scope, and enabled state" width="100%" />
+</p>
+
+Policies can block completion; inferred preferences cannot silently promote themselves into mandatory enforcement.
+
+## Agent sessions and change observation
+
+**What it does.** Records who or what performed a task, the initial context, the changing file set, refreshes, and the terminal verification state.
+
+**How it works.** The verified Codex wrapper prepares context, writes `.lore/LORE_CONTEXT.md`, observes changed paths, refreshes context when the working set expands, then verifies the final diff. Non-zero agent exits remain visible as abandoned sessions.
+
+```bash
+lore session start "Update refund address mapping" --agent codex
+lore session status
+lore session stop
+
+lore agent codex "TICKET-123 Update refund address mapping"
+```
+
+<p align="center">
+  <img src="assets/screenshots/lore-sessions.png" alt="Lore sessions showing agent, task, changed files, context refreshes, and state" width="100%" />
+</p>
+
+**Boundary.** The wrapper currently has one verified interactive adapter: Codex. Other agents use the same deterministic capabilities through MCP.
+
+## Safety reports
+
+**What it does.** Independently evaluates the final Git change and creates a durable evidence-backed completion report.
+
+**How it works.** Lore discovers staged, unstaged, renamed, deleted, and untracked changes; maps changed paths/symbols into bounded impact; resolves policy and regression evidence; identifies related tests; and separates blockers, warnings, passes, and unknowns.
+
+```bash
+lore verify
+lore --json verify
+```
+
+<p align="center">
+  <img src="assets/screenshots/lore-safety-report.png" alt="Lore safety report showing risk, changed files, impact, tests, policies, and historical regression evidence" width="100%" />
+</p>
+
+Passing a report is not a claim that no defect exists. It means the implemented deterministic checks found no unresolved blocker in the evidence and scope available to that run.
+
+## Reviewer knowledge and routing
+
+**What it does.** Preserves evidence-backed review expertise and preferences so a task can find relevant people and conventions.
+
+**How it works.** Reviewer observations retain source PRs, scope, confirmation state, and confidence. Preferences remain advisory and can be challenged; they are not employee performance scores.
+
+<p align="center">
+  <img src="assets/screenshots/lore-reviewers.png" alt="Lore reviewer profiles with scoped preferences, confidence, and recent confirmation" width="100%" />
+</p>
+
+**Boundary.** Do not use reviewer inference for automated employment, promotion, retention, or task-allocation decisions. External deployment requires the privacy and AI-governance controls in [SaaS readiness](saas-readiness.md).
+
+## MCP tools for coding agents
+
+**What it does.** Exposes Lore’s deterministic retrieval and verification boundary over stdio MCP.
+
+**Available tools.** `lore_prepare_task`, `lore_get_context`, `lore_search`, `lore_lookup_symbol`, `lore_find_history`, `lore_get_rules`, `lore_get_decisions`, `lore_get_impact`, `lore_verify_change`, `lore_explain`, and validation-only `lore_propose_knowledge`.
+
+Build Lore and configure the absolute paths:
+
+```json
+{
+  "mcpServers": {
+    "lore": {
+      "command": "node",
+      "args": ["/absolute/path/to/Lore/dist/mcp.js"],
+      "env": {
+        "LORE_REPOSITORY_PATH": "/absolute/path/to/target/repository"
+      }
+    }
+  }
+}
+```
+
+Use preparation before edits and verification before completion. See the complete [MCP guide](mcp.md).
+
+## Search and command palette
+
+Press <kbd>⌘K</kbd> or <kbd>Ctrl+K</kbd> anywhere in the web app. The palette navigates product areas and keeps the UI usable on dense repositories. The same retrieval services back CLI/MCP search; product chrome never substitutes browser-only state for authoritative records.
+
+## Security and data boundaries
+
+- Browsers never submit local checkout paths.
+- GitHub PATs and App keys are resolved only by workers and never enter queue payloads or browser responses.
+- Repository text, reviews, tickets, and model output are untrusted data.
+- Git processes use argument arrays with `shell: false`; revisions and paths are validated and bounded.
+- Organisation and repository ownership are checked at persistent store boundaries.
+- Secret, cookie, token, and key-shaped log fields are redacted.
+- AI is optional; the bundled provider is deterministic mock data, while enforcement remains deterministic.
+
+Read [Security](security.md), [AI safety](ai-safety.md), and [SaaS readiness](saas-readiness.md) before connecting sensitive customer repositories or exposing Lore externally.
+

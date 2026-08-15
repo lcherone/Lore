@@ -1,3 +1,14 @@
+<p align="center">
+  <a href="../README.md"><img src="assets/lore-docs-header.svg" alt="Lore documentation — engineering memory, evidence, and governance" width="100%" /></a>
+</p>
+
+<p align="center">
+  <a href="../README.md"><strong>Project home</strong></a> ·
+  <a href="README.md"><strong>Documentation</strong></a> ·
+  <a href="features.md"><strong>Features</strong></a> ·
+  <a href="onboarding.md"><strong>Setup</strong></a>
+</p>
+
 # Design decisions
 
 These decisions explain the product boundaries a new maintainer is most likely to question.
@@ -37,4 +48,3 @@ Liveness and readiness are different. Readiness checks the configured database a
 ## Local auth is not production identity
 
 The bundled signed session and loopback local-development identity make the release runnable and testable. Production SSO, user provisioning, and membership administration are deployment integrations still to be supplied; documentation and UI do not represent them as shipped.
-

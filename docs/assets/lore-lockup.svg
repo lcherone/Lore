@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 150" role="img" aria-labelledby="title desc">
+  <title id="title">Lore</title>
+  <desc id="desc">Engineering memory that can show its work.</desc>
+  <g fill="none" stroke="#f04e3e" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" transform="translate(26 20)">
+    <path d="M54 2 104 30 54 58 4 30 54 2Z"/>
+    <path d="m4 55 50 28 50-28M4 80l50 28 50-28M4 30v50M104 30v50"/>
+  </g>
+  <text x="158" y="78" fill="#071522" font-family="Inter, Avenir Next, Segoe UI, Arial, sans-serif" font-size="76" font-weight="650" letter-spacing="-3">Lore</text>
+  <text x="162" y="116" fill="#5e6c78" font-family="Inter, Avenir Next, Segoe UI, Arial, sans-serif" font-size="23" font-weight="500" letter-spacing=".2">ENGINEERING MEMORY THAT CAN SHOW ITS WORK</text>
+</svg>

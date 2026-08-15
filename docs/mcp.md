@@ -1,3 +1,14 @@
+<p align="center">
+  <a href="../README.md"><img src="assets/lore-docs-header.svg" alt="Lore documentation — engineering memory, evidence, and governance" width="100%" /></a>
+</p>
+
+<p align="center">
+  <a href="../README.md"><strong>Project home</strong></a> ·
+  <a href="README.md"><strong>Documentation</strong></a> ·
+  <a href="features.md"><strong>Features</strong></a> ·
+  <a href="onboarding.md"><strong>Setup</strong></a>
+</p>
+
 # MCP integration
 
 Lore exposes the same bounded context and verification semantics used by the CLI as a local stdio MCP server.
@@ -41,4 +52,3 @@ Available tools are `lore_prepare_task`, `lore_get_context`, `lore_search`, `lor
 `lore_propose_knowledge` validates a proposal against the local fixture only in explicit demo mode. In service mode, proposals enter through the evidence/extraction worker and human review workflow; MCP cannot directly mutate active knowledge.
 
 MCP is a deeper-query surface, not the enforcement boundary. Use `lore agent codex "task"` for the verified interactive wrapper, or have another agent call prepare before edits and verify before completion.
-

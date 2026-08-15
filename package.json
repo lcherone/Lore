@@ -12,6 +12,8 @@
     "dev": "concurrently -n api,web -c blue,red \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch apps/api/src/server.ts",
     "dev:web": "vite --config apps/web/vite.config.ts",
+    "demo": "bash scripts/lore-demo.sh",
+    "demo:check": "bash scripts/lore-demo.sh check",
     "build": "npm run db:generate && npm run typecheck && tsup && vite build --config apps/web/vite.config.ts",
     "start": "node dist/api.js",
     "preview": "vite preview --config apps/web/vite.config.ts",

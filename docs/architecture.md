@@ -1,10 +1,21 @@
+<p align="center">
+  <a href="../README.md"><img src="assets/lore-docs-header.svg" alt="Lore documentation — engineering memory, evidence, and governance" width="100%" /></a>
+</p>
+
+<p align="center">
+  <a href="../README.md"><strong>Project home</strong></a> ·
+  <a href="README.md"><strong>Documentation</strong></a> ·
+  <a href="features.md"><strong>Features</strong></a> ·
+  <a href="onboarding.md"><strong>Setup</strong></a>
+</p>
+
 # Lore architecture
 
 Lore is a strict-TypeScript modular monolith with five executable surfaces around one deterministic domain core. It is runnable on one machine while keeping the trust boundary required for a later private-node/control-plane split.
 
 ```mermaid
 flowchart LR
-  GH[GitHub App] --> API[Fastify API]
+  GH[GitHub PAT or App] --> API[Fastify API]
   WEB[React control plane] --> API
   CLI[CLI / Codex wrapper] --> NODE[Trusted local runtime]
   MCP[MCP stdio server] --> NODE
@@ -26,7 +37,7 @@ The browser cannot choose a server filesystem path. A local CLI indexes its own 
 ## Executable surfaces
 
 - `apps/api` authenticates, revalidates membership, applies CSRF to cookie writes, validates HTTP input, and calls application services.
-- `apps/worker` performs trusted-path indexing, installation-scoped GitHub imports, proposal extraction, and knowledge-health jobs.
+- `apps/worker` performs trusted-path indexing, local PAT or installation-scoped App imports, proposal extraction, and knowledge-health jobs. Credentials are resolved in the worker and never travel in queue payloads.
 - `apps/cli` provides explicit local, demo, and service authority plus machine-readable output.
 - `apps/mcp` exposes narrow read/query/verify tools to coding agents using the checkout's explicit authority.
 - `apps/web` is the human control plane for onboarding, candidates, knowledge, policies, repositories, and reports.
@@ -59,20 +70,20 @@ Context records are immutable revisions. Session events are append-only and mono
 
 ## Adapter boundaries
 
-| Boundary | Interface | Current adapter |
-| --- | --- | --- |
-| Source control | `SourceControlProvider` | GitHub App and safe local Git |
-| Code analysis | `LanguageAnalyzer` | TypeScript/JavaScript AST and PHP parser |
-| Work items | `WorkItemProvider` | GitHub issues-compatible seam |
-| AI | `AIProvider` | deterministic mock plus validated provider seam |
-| Persistence | `LoreStore` | Prisma/PostgreSQL and explicit in-memory demo |
-| Jobs | `JobDispatcher` | BullMQ and explicit in-memory test/demo adapter |
+| Boundary       | Interface               | Current adapter                                               |
+| -------------- | ----------------------- | ------------------------------------------------------------- |
+| Source control | `SourceControlProvider` | local fine-grained GitHub PAT, GitHub App, and safe local Git |
+| Code analysis  | `LanguageAnalyzer`      | TypeScript/JavaScript AST and PHP parser                      |
+| Work items     | `WorkItemProvider`      | GitHub issues-compatible seam                                 |
+| AI             | `AIProvider`            | deterministic mock plus validated provider seam               |
+| Persistence    | `LoreStore`             | Prisma/PostgreSQL and explicit in-memory demo                 |
+| Jobs           | `JobDispatcher`         | BullMQ and explicit in-memory test/demo adapter               |
 
 ## Identity and tenancy
 
 Runtime-created durable IDs are canonical UUIDs. Deterministic UUIDs are used where an external identity must map idempotently to a row; random UUIDs identify new human/runtime records. Friendly identifiers exist only inside the in-memory fixture and are translated during the demo seed.
 
-Every persistent read and mutation carries an organisation boundary. An authenticated identity is insufficient on its own: active membership is revalidated on every product route. GitHub webhook routing additionally requires the stored App installation, provider repository ID, and owner/name to match the signed payload.
+Every persistent read and mutation carries an organisation boundary. An authenticated identity is insufficient on its own: active membership is revalidated on every product route. GitHub webhook routing additionally requires the stored App installation, provider repository ID, and owner/name to match the signed payload. PAT mode is intentionally a local, on-demand bootstrap path and has no webhook receiver identity.
 
 ## Runtime modes
 
@@ -99,3 +110,4 @@ No surface silently falls back between modes. The web has explicit loading, conn
 
 See [security](security.md), [API](api.md), [knowledge model](knowledge-model.md), [impact engine](impact-engine.md), and [design decisions](decisions.md).
 
+The customer-managed node and multi-tenant control-plane boundary is a roadmap design, not a shipped security claim. Its production gates are tracked in [SaaS readiness](saas-readiness.md).

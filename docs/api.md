@@ -1,3 +1,14 @@
+<p align="center">
+  <a href="../README.md"><img src="assets/lore-docs-header.svg" alt="Lore documentation — engineering memory, evidence, and governance" width="100%" /></a>
+</p>
+
+<p align="center">
+  <a href="../README.md"><strong>Project home</strong></a> ·
+  <a href="README.md"><strong>Documentation</strong></a> ·
+  <a href="features.md"><strong>Features</strong></a> ·
+  <a href="onboarding.md"><strong>Setup</strong></a>
+</p>
+
 # REST API
 
 All product routes use `/api`. In demo mode requests receive the built-in demo tenant. Persistent deployments require a signed session or explicitly loopback-restricted local development auth.
@@ -26,6 +37,7 @@ DELETE /api/repositories/:id?confirm=OWNER%2FNAME
 GET  /api/repositories/:id/entities
 GET  /api/repositories/:id/relationships
 GET  /api/github/install
+GET  /api/github/status
 GET  /api/github/callback
 POST /api/github/webhook
 ```
@@ -56,6 +68,8 @@ GET  /api/search?q=QUERY&repositoryId=REPOSITORY_ID
 `POST /api/knowledge-import` accepts either `{ "items": [...] }` JSON or `{ "format": "markdown", "content": "...", "sourceName": "AGENTS.md", "repositoryId": "..." }`. Markdown headings become individually scoped, human-confirmed items and retain their source name as provenance. Candidate merge supersedes the duplicate, links its evidence to the target, and records both a proposal and an audit event.
 
 Retention settings are applied before GitHub evidence is written. Summary-only mode cannot also retain raw diffs or snippets. Repository deletion requires the exact `owner/name`; repository-scoped rows cascade, while organisation-wide knowledge backed by removed evidence is challenged for reconfirmation.
+
+GitHub import accepts `limit` values `50`, `100`, `250`, `500`, `1000`, or `"all"`. `/api/github/status` exposes only authentication mode and readiness booleans; it never returns a token, private key, or webhook secret.
 
 ## Tasks, sessions, policies, and reports
 

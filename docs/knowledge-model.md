@@ -1,3 +1,14 @@
+<p align="center">
+  <a href="../README.md"><img src="assets/lore-docs-header.svg" alt="Lore documentation — engineering memory, evidence, and governance" width="100%" /></a>
+</p>
+
+<p align="center">
+  <a href="../README.md"><strong>Project home</strong></a> ·
+  <a href="README.md"><strong>Documentation</strong></a> ·
+  <a href="features.md"><strong>Features</strong></a> ·
+  <a href="onboarding.md"><strong>Setup</strong></a>
+</p>
+
 # Knowledge model
 
 Lore separates what happened from what an organisation believes.
@@ -47,4 +58,3 @@ Rules and decisions require stronger evidence than reviewer preferences. Policie
 ## Evolution
 
 Each change creates a `KnowledgeRevision`. Contradictory evidence creates a `KnowledgeChallenge`. Resolutions can confirm, modify, supersede, split scope, archive, or mark a false positive. Health checks lower freshness when evidence ages, code disappears, ownership changes, or recent accepted work contradicts the item.
-

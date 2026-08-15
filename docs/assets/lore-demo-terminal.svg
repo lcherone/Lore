@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" role="img" aria-labelledby="title desc">
+  <title id="title">Lore one-command demo</title>
+  <desc id="desc">A terminal running npm run demo and showing the Lore API and web application ready.</desc>
+  <rect width="1200" height="500" rx="18" fill="#071522"/>
+  <rect x="1" y="1" width="1198" height="498" rx="17" fill="none" stroke="#263a4b" stroke-width="2"/>
+  <circle cx="37" cy="35" r="7" fill="#f04e3e"/>
+  <circle cx="61" cy="35" r="7" fill="#c98612"/>
+  <circle cx="85" cy="35" r="7" fill="#0b8f72"/>
+  <text x="110" y="41" fill="#7f92a1" font-family="SFMono-Regular, Consolas, monospace" font-size="18">lore — local demo</text>
+  <path d="M0 67h1200" stroke="#263a4b"/>
+  <g font-family="SFMono-Regular, Consolas, monospace" font-size="23">
+    <text x="40" y="120" fill="#9fcebd">$</text>
+    <text x="70" y="120" fill="#f7fafb">npm run demo</text>
+    <text x="40" y="178" fill="#f04e3e">Lore</text>
+    <text x="96" y="178" fill="#f7fafb">— engineering memory that can show its work.</text>
+    <text x="40" y="224" fill="#9fadb8">Demo:</text>
+    <text x="123" y="224" fill="#9fcebd">http://localhost:5173</text>
+    <text x="40" y="270" fill="#9fadb8">Mode:</text>
+    <text x="123" y="270" fill="#f7fafb">realistic in-memory data · no credentials required</text>
+    <text x="40" y="342" fill="#0b8f72">✓</text>
+    <text x="76" y="342" fill="#f7fafb">API ready</text>
+    <text x="255" y="342" fill="#7f92a1">http://127.0.0.1:3001/healthz</text>
+    <text x="40" y="386" fill="#0b8f72">✓</text>
+    <text x="76" y="386" fill="#f7fafb">Web ready</text>
+    <text x="255" y="386" fill="#7f92a1">http://localhost:5173</text>
+    <text x="40" y="442" fill="#c98612">→</text>
+    <text x="76" y="442" fill="#f7fafb">Prepare a task, inspect evidence, and review a candidate.</text>
+  </g>
+</svg>

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 190" role="img" aria-labelledby="title desc">
+  <title id="title">Lore documentation</title>
+  <desc id="desc">Evidence-backed engineering memory and governance.</desc>
+  <rect width="1200" height="190" rx="18" fill="#071522"/>
+  <g opacity=".26" fill="none" stroke="#9fcebd">
+    <path d="M760 42h110l55 50h114l47-39h81"/>
+    <path d="M708 146h128l42-38h109l53 32h127"/>
+    <circle cx="760" cy="42" r="5" fill="#0b8f72"/>
+    <circle cx="925" cy="92" r="5" fill="#f04e3e"/>
+    <circle cx="878" cy="108" r="5" fill="#0b8f72"/>
+    <circle cx="1040" cy="140" r="5" fill="#c98612"/>
+  </g>
+  <g fill="none" stroke="#f04e3e" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" transform="translate(45 42)">
+    <path d="M46 2 88 25 46 48 4 25 46 2Z"/>
+    <path d="m4 47 42 23 42-23M4 69l42 23 42-23M4 25v44M88 25v44"/>
+  </g>
+  <text x="164" y="100" fill="#fff" font-family="Inter, Avenir Next, Segoe UI, Arial, sans-serif" font-size="55" font-weight="650" letter-spacing="-2">Lore</text>
+  <text x="166" y="133" fill="#9fadb8" font-family="Inter, Avenir Next, Segoe UI, Arial, sans-serif" font-size="18" font-weight="500" letter-spacing="1.4">ENGINEERING MEMORY · EVIDENCE · GOVERNANCE</text>
+</svg>

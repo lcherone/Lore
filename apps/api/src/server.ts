@@ -1,7 +1,8 @@
 import { createApp } from "./app.js";
 
-const port = Number(process.env.API_PORT ?? 3001);
-const host = process.env.API_HOST ?? "127.0.0.1";
+const port = Number(process.env.PORT ?? process.env.API_PORT ?? 3001);
+const host =
+  process.env.API_HOST ?? (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
 const app = await createApp();
 
 const shutdown = async (signal: string): Promise<void> => {

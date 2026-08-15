@@ -49,9 +49,15 @@ async function importMergedPullRequests(
       pull_number: pullRequest.number,
       per_page: 100 as const
     };
-    const [reviews, comments, commits, files] = await Promise.all([
+    const [reviews, reviewComments, conversationComments, commits, files] = await Promise.all([
       octokit.paginate(octokit.rest.pulls.listReviews, common),
       octokit.paginate(octokit.rest.pulls.listReviewComments, common),
+      octokit.paginate(octokit.rest.issues.listComments, {
+        owner: repository.owner,
+        repo: repository.name,
+        issue_number: pullRequest.number,
+        per_page: 100
+      }),
       octokit.paginate(octokit.rest.pulls.listCommits, common),
       octokit.paginate(octokit.rest.pulls.listFiles, common)
     ]);
@@ -68,13 +74,31 @@ async function importMergedPullRequests(
             .filter((name): name is string => Boolean(name))
         )
       ],
-      reviewComments: comments.map((comment) => ({
-        externalId: String(comment.id),
-        author: comment.user.login,
-        body: comment.body,
-        url: comment.html_url,
-        occurredAt: comment.created_at
-      })),
+      reviewComments: [
+        ...reviews
+          .filter((review) => Boolean(review.body?.trim()))
+          .map((review) => ({
+            externalId: `review-${review.id}`,
+            author: review.user?.login ?? "unknown",
+            body: review.body,
+            url: review.html_url,
+            occurredAt: review.submitted_at ?? pullRequest.merged_at ?? new Date().toISOString()
+          })),
+        ...reviewComments.map((comment) => ({
+          externalId: String(comment.id),
+          author: comment.user.login,
+          body: comment.body,
+          url: comment.html_url,
+          occurredAt: comment.created_at
+        })),
+        ...conversationComments.map((comment) => ({
+          externalId: `conversation-${comment.id}`,
+          author: comment.user?.login ?? "unknown",
+          body: comment.body ?? "",
+          url: comment.html_url,
+          occurredAt: comment.created_at
+        }))
+      ],
       commits: commits.map((commit) => commit.sha),
       changedFiles: files.map((file) => file.filename),
       rawDiff: files
@@ -115,8 +139,8 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
 export class GitHubTokenSourceControlProvider implements SourceControlProvider {
   readonly #octokit: Octokit;
 
-  public constructor(token: string) {
-    this.#octokit = new Octokit({ auth: token });
+  public constructor(token: string, octokit?: Octokit) {
+    this.#octokit = octokit ?? new Octokit({ auth: token });
   }
 
   async listMergedPullRequests(

@@ -1,27 +1,38 @@
+<p align="center">
+  <a href="../README.md"><img src="assets/lore-docs-header.svg" alt="Lore documentation — engineering memory, evidence, and governance" width="100%" /></a>
+</p>
+
+<p align="center">
+  <a href="../README.md"><strong>Project home</strong></a> ·
+  <a href="README.md"><strong>Documentation</strong></a> ·
+  <a href="features.md"><strong>Features</strong></a> ·
+  <a href="onboarding.md"><strong>Setup</strong></a>
+</p>
+
 # Lore implementation acceptance map
 
 This document maps the original product brief to concrete, runnable Lore surfaces. It focuses on the desired first usable release and the ten MVP milestones; sections labelled “future” in the brief remain adapter boundaries or roadmap items.
 
 ## Closed-loop release
 
-| Brief outcome | Shipped surface | How to prove it |
-| --- | --- | --- |
-| Connect a repository | GitHub repository UI/API plus trusted local CLI | Connect GitHub from **Repositories**; use `lore connect` for a checkout without exposing its path to the browser |
-| Import 100–500 merged PRs | GitHub App adapter, bounded history job, BullMQ worker | Queue **Import history** with 100, 250, or 500 PRs |
-| Preserve PR/review evidence | Idempotent evidence store and ingestion receipts | Repeat the same import; the second pass adds no duplicate evidence |
-| Propose knowledge safely | Versioned, structured AI request and mock provider | Run the worker with `AI_PROVIDER=mock`; only validated candidates are created |
-| Review candidates | Evidence, confidence, contradiction, edit, scope, class, merge, approve, and reject UI | Complete an action in **Candidates** and inspect the updated queue |
-| Index local code/history | TypeScript and PHP AST analysis, safe Git adapter, co-change graph | Run `lore index` in a Git checkout |
-| Prepare task context | Ranking, precedence, bounded impact, evidence, regressions, tests, unknowns | Run `lore prepare "task"` or use the dashboard |
-| Observe agent changes | Codex adapter with prompt-delivered context, bounded Git status observation, persisted refresh, and abandoned-state handling | Run `lore agent codex "task"` |
-| Verify independently | Diff, policy, impact, regression, rule, test, risk, and blocker evaluation | Run `lore verify`; blockers exit with code 2 |
-| Learn from the resulting review | Signed, replay-safe GitHub webhook to evidence and extraction jobs | Send a valid subscribed review event and inspect the new candidate |
+| Brief outcome                   | Shipped surface                                                                                                              | How to prove it                                                                                                  |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Connect a repository            | GitHub repository UI/API plus trusted local CLI                                                                              | Connect GitHub from **Repositories**; use `lore connect` for a checkout without exposing its path to the browser |
+| Import merged PR history        | Local fine-grained PAT or GitHub App adapter, bounded/all history job, BullMQ worker                                         | Queue **Import history** with 100 first, then 250–1,000 or all merged PRs                                        |
+| Preserve PR/review evidence     | Idempotent evidence store and ingestion receipts                                                                             | Repeat the same import; the second pass adds no duplicate evidence                                               |
+| Propose knowledge safely        | Versioned, structured AI request and mock provider                                                                           | Run the worker with `AI_PROVIDER=mock`; only validated candidates are created                                    |
+| Review candidates               | Evidence, confidence, contradiction, edit, scope, class, merge, approve, and reject UI                                       | Complete an action in **Candidates** and inspect the updated queue                                               |
+| Index local code/history        | TypeScript and PHP AST analysis, safe Git adapter, co-change graph                                                           | Run `lore index` in a Git checkout                                                                               |
+| Prepare task context            | Ranking, precedence, bounded impact, evidence, regressions, tests, unknowns                                                  | Run `lore prepare "task"` or use the dashboard                                                                   |
+| Observe agent changes           | Codex adapter with prompt-delivered context, bounded Git status observation, persisted refresh, and abandoned-state handling | Run `lore agent codex "task"`                                                                                    |
+| Verify independently            | Diff, policy, impact, regression, rule, test, risk, and blocker evaluation                                                   | Run `lore verify`; blockers exit with code 2                                                                     |
+| Learn from the resulting review | Signed, replay-safe GitHub webhook to evidence and extraction jobs                                                           | Send a valid subscribed review event and inspect the new candidate                                               |
 
 ## MVP milestone coverage
 
 1. **Core data model:** PostgreSQL/Prisma models, migrations, canonical UUIDs, membership boundaries, evidence links, revisions, proposals, challenges, usage, sessions, immutable context records, append-only session events, linked reports, policies, and audit events.
 2. **Local repository indexer:** local open/scan, language detection, TypeScript/PHP symbols, static relationships, bounded Git history, and statistically guarded co-change edges.
-3. **GitHub import:** GitHub App installation flow, installation-scoped repository routing, historical merged PRs, reviews, comments, commits, changed files, optional raw diff retention, bounded jobs, and idempotency.
+3. **GitHub import:** worker-only PAT or GitHub App authentication, installation-scoped App routing, paginated historical merged PRs, submitted reviews, inline and conversation comments, commits, changed files, optional raw diff retention, bounded/all jobs, and idempotency.
 4. **AI extraction:** replaceable provider contract, versioned prompts, untrusted-input separation, structured Zod output, deduplication/contradiction validation, scope suggestion, and server-side confidence.
 5. **Knowledge review:** candidate search/filter, evidence, confidence explanation, contradictions, statement/scope/class editing, evidence-preserving merge, approve, reject, challenge, archive, and manual confirmation.
 6. **Task context:** task concepts, candidate code, expanded impact, precedence-ranked knowledge, evidence, regressions, recommended tests, warnings, and explicit unknowns.
@@ -44,6 +55,7 @@ This document maps the original product brief to concrete, runnable Lore surface
 ## Operator acceptance commands
 
 ```bash
+npm run demo:check
 npm run typecheck
 npm run lint
 npm test
@@ -51,7 +63,10 @@ npm run build
 npm run test:coverage
 npm audit --omit=dev
 docker compose config --quiet
+docker compose -f docker-compose.yml -f docker-compose.github-token.yml config --quiet
 ```
+
+Documentation acceptance additionally requires every `docs/*.md` page to use the shared header, every local Markdown link/image to resolve, SVG assets to parse, and feature screenshots to be captured from the working demo at the documented desktop/mobile viewports. The current inventory and refresh rules are in the [brand guide](brand.md); the product walkthrough is in the [feature guide](features.md).
 
 For a real PostgreSQL boundary, run migrations and seed twice, then execute `npm run smoke:persistent`. The second seed must skip the existing demo organisation. The smoke script exercises ordinary runtime UUID generation, a sanitised graph upload, manual evidence/knowledge writes, persisted context revision, linked report and session completion, then reconnects with a new Prisma client and reads the durable state. Redis/worker delivery is a separate environment check: `npm run smoke:queue` proves readiness, idempotent dispatch, and consumption against an isolated Redis process. Persistence smoke deliberately injects the in-memory dispatcher so a missing Redis process cannot masquerade as a queue pass.
 

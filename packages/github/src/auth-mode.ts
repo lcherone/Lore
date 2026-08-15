@@ -14,7 +14,11 @@ export function resolveGitHubAuthMode(
     throw new Error("GITHUB_AUTH_MODE must be disabled, token, or app");
   }
 
-  if (present(environment, "GITHUB_TOKEN") || present(environment, "GITHUB_TOKEN_PATH")) {
+  if (
+    present(environment, "GITHUB_TOKEN") ||
+    present(environment, "GITHUB_TOKEN_PATH") ||
+    present(environment, "GITHUB_TOKEN_FILE")
+  ) {
     return "token";
   }
   if (
@@ -23,6 +27,7 @@ export function resolveGitHubAuthMode(
       "GITHUB_APP_SLUG",
       "GITHUB_PRIVATE_KEY",
       "GITHUB_PRIVATE_KEY_PATH",
+      "GITHUB_PRIVATE_KEY_FILE",
       "GITHUB_WEBHOOK_SECRET"
     ].some((name) => present(environment, name))
   ) {
@@ -51,10 +56,13 @@ export function githubIntegrationStatus(
 
   const mode = resolveGitHubAuthMode(environment);
   const tokenReady =
-    present(environment, "GITHUB_TOKEN") || present(environment, "GITHUB_TOKEN_PATH");
+    present(environment, "GITHUB_TOKEN") ||
+    present(environment, "GITHUB_TOKEN_PATH") ||
+    present(environment, "GITHUB_TOKEN_FILE");
   const appKeyReady =
     present(environment, "GITHUB_PRIVATE_KEY") ||
-    present(environment, "GITHUB_PRIVATE_KEY_PATH");
+    present(environment, "GITHUB_PRIVATE_KEY_PATH") ||
+    present(environment, "GITHUB_PRIVATE_KEY_FILE");
   return {
     mode,
     historicalImportReady:

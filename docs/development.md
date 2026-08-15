@@ -1,3 +1,14 @@
+<p align="center">
+  <a href="../README.md"><img src="assets/lore-docs-header.svg" alt="Lore documentation — engineering memory, evidence, and governance" width="100%" /></a>
+</p>
+
+<p align="center">
+  <a href="../README.md"><strong>Project home</strong></a> ·
+  <a href="README.md"><strong>Documentation</strong></a> ·
+  <a href="features.md"><strong>Features</strong></a> ·
+  <a href="onboarding.md"><strong>Setup</strong></a>
+</p>
+
 # Development guide
 
 ## Prerequisites
@@ -10,11 +21,10 @@
 ## Fastest start
 
 ```bash
-npm install
-npm run dev
+npm run demo
 ```
 
-Open `http://localhost:5173`; the API listens on `http://127.0.0.1:3001`. The repository default is explicit in-memory demo mode. The browser displays a disconnected state instead of fixture data if the API is unavailable.
+Open `http://localhost:5173`; the API listens on `http://127.0.0.1:3001`. The wrapper installs dependencies only when missing and forces explicit in-memory demo mode. Use `npm run demo:check` to start both processes temporarily, prove their readiness, and stop them again. The browser displays a disconnected state instead of fixture data if the API is unavailable.
 
 ## Persistent stack
 
@@ -58,6 +68,7 @@ Run `npm run mcp` with `LORE_REPOSITORY_PATH` set to an initialised checkout. Ru
 
 ```bash
 npm run db:generate
+npm run setup:check
 npm run typecheck
 npm run lint
 npm test
