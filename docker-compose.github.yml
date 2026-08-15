@@ -1,0 +1,11 @@
+services:
+  worker:
+    environment:
+      GITHUB_AUTH_MODE: app
+      GITHUB_PRIVATE_KEY: ""
+      GITHUB_PRIVATE_KEY_PATH: /run/secrets/lore-github-app.pem
+    volumes:
+      - type: bind
+        source: ${GITHUB_PRIVATE_KEY_FILE:-./.secrets/lore-github-app.pem}
+        target: /run/secrets/lore-github-app.pem
+        read_only: true

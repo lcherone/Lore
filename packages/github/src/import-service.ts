@@ -1,6 +1,13 @@
-import type { LoreStore, SourceControlProvider } from "@lore/core/index.js";
+import type {
+  LoreStore,
+  SourceControlProvider
+} from "@lore/core/index.js";
 import { deterministicUuid } from "@lore/shared/ids.js";
-import type { EvidenceRecord, RepositorySummary } from "@lore/shared/types.js";
+import type {
+  EvidenceRecord,
+  PullRequestImportLimit,
+  RepositorySummary
+} from "@lore/shared/types.js";
 
 const evidenceId = (provider: string, externalId: string): string =>
   deterministicUuid("lore.evidence", `${provider}:${externalId}`);
@@ -14,7 +21,7 @@ export class GitHubImportService {
   async importMergedPullRequests(
     organisationId: string,
     repository: RepositorySummary,
-    limit: 50 | 100 | 250 | 500 | 1000
+    limit: PullRequestImportLimit
   ): Promise<{ pullRequests: number; evidenceAdded: number; evidenceIds: string[] }> {
     const pullRequests = await this.provider.listMergedPullRequests(repository, limit);
     const retention = repository.retentionConfig ?? {

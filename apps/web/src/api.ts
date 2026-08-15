@@ -1,4 +1,19 @@
-import type { ContextPackage, DashboardSnapshot, KnowledgeItem, PolicyRecord, RepositoryRetentionConfig, RepositorySummary } from "@lore/shared/types.js";
+import type {
+  ContextPackage,
+  DashboardSnapshot,
+  KnowledgeItem,
+  PolicyRecord,
+  PullRequestImportLimit,
+  RepositoryRetentionConfig,
+  RepositorySummary
+} from "@lore/shared/types.js";
+
+export interface GitHubIntegrationStatus {
+  mode: "disabled" | "token" | "app" | "demo";
+  historicalImportReady: boolean;
+  installFlowReady: boolean;
+  webhooksReady: boolean;
+}
 
 let csrfToken: string | undefined;
 
@@ -26,6 +41,8 @@ export const loreApi = {
     return session;
   },
   bootstrap: (): Promise<DashboardSnapshot> => request("/api/bootstrap"),
+  githubStatus: (): Promise<GitHubIntegrationStatus> => request("/api/github/status"),
+  githubInstall: (): Promise<{ url: string }> => request("/api/github/install"),
   prepareTask: (repositoryId: string, task: string): Promise<ContextPackage> =>
     request("/api/tasks/prepare", { method: "POST", body: JSON.stringify({ repositoryId, task }) }),
   approveCandidate: (id: string, input: Record<string, unknown>) =>
@@ -43,7 +60,7 @@ export const loreApi = {
   connectRepository: (input: Record<string, unknown>) =>
     request("/api/repositories", { method: "POST", body: JSON.stringify(input) }),
   indexRepository: (id: string): Promise<{ status: "queued" | "completed"; simulated?: boolean }> => request(`/api/repositories/${id}/index`, { method: "POST" }),
-  importHistory: (id: string, limit: 50 | 100 | 250 | 500 | 1000): Promise<{ status: "queued" | "simulated"; simulated?: boolean }> =>
+  importHistory: (id: string, limit: PullRequestImportLimit): Promise<{ status: "queued" | "simulated"; simulated?: boolean }> =>
     request(`/api/repositories/${id}/github-import`, { method: "POST", body: JSON.stringify({ limit }) }),
   deleteRepository: (id: string, confirmation: string): Promise<{ deletedId: string; challengedKnowledgeIds: string[] }> =>
     request(`/api/repositories/${id}?confirm=${encodeURIComponent(confirmation)}`, { method: "DELETE" }),

@@ -1,0 +1,11 @@
+services:
+  worker:
+    environment:
+      GITHUB_AUTH_MODE: token
+      GITHUB_TOKEN: ""
+      GITHUB_TOKEN_PATH: /run/secrets/lore-github-token
+    volumes:
+      - type: bind
+        source: ${GITHUB_TOKEN_FILE:-./.secrets/lore-github-token}
+        target: /run/secrets/lore-github-token
+        read_only: true

@@ -35,6 +35,7 @@ import type {
   KnowledgeKind,
   KnowledgeScope,
   PolicyRecord,
+  PullRequestImportLimit,
   RepositoryRetentionConfig,
   RepositorySummary,
   SafetyReport
@@ -1164,6 +1165,9 @@ export function KnowledgePage({
 
 export function RepositoriesPage({
   repositories,
+  githubStatus,
+  installationId: initialInstallationId,
+  onInstallGitHub,
   onConnect,
   onIndex,
   onImport,
@@ -1171,9 +1175,17 @@ export function RepositoriesPage({
   onRetention
 }: {
   repositories: RepositorySummary[];
+  githubStatus: {
+    mode: "disabled" | "token" | "app" | "demo";
+    historicalImportReady: boolean;
+    installFlowReady: boolean;
+    webhooksReady: boolean;
+  };
+  installationId?: string;
+  onInstallGitHub: () => Promise<void>;
   onConnect: (input: Record<string, unknown>) => Promise<void>;
   onIndex: (repository: RepositorySummary) => Promise<void>;
-  onImport: (repository: RepositorySummary, limit: 50 | 100 | 250 | 500 | 1000) => Promise<void>;
+  onImport: (repository: RepositorySummary, limit: PullRequestImportLimit) => Promise<void>;
   onDelete: (repository: RepositorySummary, confirmation: string) => Promise<void>;
   onRetention: (
     repository: RepositorySummary,
@@ -1182,8 +1194,8 @@ export function RepositoriesPage({
 }) {
   const [connectOpen, setConnectOpen] = useState(false);
   const [importRepository, setImportRepository] = useState<RepositorySummary>();
-  const [installationId, setInstallationId] = useState("");
-  const [importLimit, setImportLimit] = useState<50 | 100 | 250 | 500 | 1000>(100);
+  const [installationId, setInstallationId] = useState(initialInstallationId ?? "");
+  const [importLimit, setImportLimit] = useState<PullRequestImportLimit>(100);
   const [owner, setOwner] = useState("");
   const [name, setName] = useState("");
   const [deleteRepository, setDeleteRepository] = useState<RepositorySummary>();
@@ -1196,6 +1208,11 @@ export function RepositoriesPage({
     retainCodeSnippets: false
   });
   const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!initialInstallationId) return;
+    setInstallationId(initialInstallationId);
+    setConnectOpen(true);
+  }, [initialInstallationId]);
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     setSaving(true);
@@ -1357,7 +1374,11 @@ export function RepositoriesPage({
                 variant="primary"
                 form="connect-repository"
                 type="submit"
-                disabled={saving || !installationId}
+                disabled={
+                  saving ||
+                  !githubStatus.historicalImportReady ||
+                  (githubStatus.mode === "app" && !installationId)
+                }
               >
                 {saving ? "Connecting…" : "Connect repository"}
               </Button>
@@ -1372,10 +1393,34 @@ export function RepositoriesPage({
             <div className="info-callout">
               <GitBranch size={19} />
               <span>
-                <strong>Install the Lore GitHub App first</strong> The installation identity is
-                stored with this repository and used to scope imports and webhooks.
+                {githubStatus.mode === "token" ? (
+                  <>
+                    <strong>Local token mode is ready</strong> The token stays in the worker
+                    environment; the browser stores only this repository identity.
+                  </>
+                ) : githubStatus.mode === "demo" ? (
+                  <>
+                    <strong>Demo connection</strong> No GitHub credentials are used until persistent
+                    mode is enabled.
+                  </>
+                ) : githubStatus.mode === "app" ? (
+                  <>
+                    <strong>Install the Lore GitHub App first</strong> Lore will return here and
+                    prefill the installation identity used to scope imports and webhooks.
+                  </>
+                ) : (
+                  <>
+                    <strong>GitHub is not configured</strong> Set <code>GITHUB_AUTH_MODE</code> and
+                    the matching worker credential, then restart Lore.
+                  </>
+                )}
               </span>
             </div>
+            {githubStatus.mode === "app" && !installationId && githubStatus.installFlowReady && (
+              <Button type="button" variant="secondary" onClick={() => void onInstallGitHub()}>
+                Install GitHub App
+              </Button>
+            )}
             <div className="form-grid">
               <FormField label="Owner">
                 <input
@@ -1396,19 +1441,21 @@ export function RepositoriesPage({
                 />
               </FormField>
             </div>
-            <FormField
-              label="GitHub App installation ID"
-              hint="Returned by the configured GitHub App callback"
-            >
-              <input
-                name="providerInstallationId"
-                required
-                inputMode="numeric"
-                pattern="[0-9]+"
-                value={installationId}
-                onChange={(event) => setInstallationId(event.target.value)}
-              />
-            </FormField>
+            {githubStatus.mode === "app" && (
+              <FormField
+                label="GitHub App installation ID"
+                hint="Returned by the configured GitHub App callback"
+              >
+                <input
+                  name="providerInstallationId"
+                  required
+                  inputMode="numeric"
+                  pattern="[0-9]+"
+                  value={installationId}
+                  onChange={(event) => setInstallationId(event.target.value)}
+                />
+              </FormField>
+            )}
             <div className="info-callout">
               <ShieldCheck size={18} />
               <span>
@@ -1442,8 +1489,9 @@ export function RepositoriesPage({
             <div className="info-callout">
               <History size={19} />
               <span>
-                <strong>Start bounded, then expand</strong> Lore uses the installation already
-                registered to this repository and stores evidence, not a second source checkout.
+                <strong>Start bounded, then expand</strong> “All” walks every merged PR available
+                to the configured credential and paginates its reviews, comments, commits, and
+                files. Large repositories can take time and consume GitHub API quota.
               </span>
             </div>
             <FormField label="Merged pull requests">
@@ -1451,7 +1499,11 @@ export function RepositoriesPage({
                 name="importLimit"
                 value={importLimit}
                 onChange={(event) =>
-                  setImportLimit(Number(event.target.value) as 50 | 100 | 250 | 500 | 1000)
+                  setImportLimit(
+                    event.target.value === "all"
+                      ? "all"
+                      : (Number(event.target.value) as 50 | 100 | 250 | 500 | 1000)
+                  )
                 }
               >
                 {[50, 100, 250, 500, 1000].map((limit) => (
@@ -1459,6 +1511,7 @@ export function RepositoriesPage({
                     {limit}
                   </option>
                 ))}
+                <option value="all">All merged PRs</option>
               </select>
             </FormField>
           </form>

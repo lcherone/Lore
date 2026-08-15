@@ -22,11 +22,12 @@ import type {
   DashboardSnapshot,
   KnowledgeItem,
   PolicyRecord,
+  PullRequestImportLimit,
   RepositoryRetentionConfig,
   RepositorySummary
 } from "@lore/shared/types.js";
 import { Brand, Toast } from "./components.js";
-import { loreApi } from "./api.js";
+import { loreApi, type GitHubIntegrationStatus } from "./api.js";
 import {
   CandidatesPage,
   DashboardPage,
@@ -83,10 +84,19 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [apiConnected, setApiConnected] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
+  const [githubStatus, setGitHubStatus] = useState<GitHubIntegrationStatus>({
+    mode: "disabled",
+    historicalImportReady: false,
+    installFlowReady: false,
+    webhooksReady: false
+  });
   const [loadError, setLoadError] = useState<string>();
   const [mobileNav, setMobileNav] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" }>();
+  const [githubInstallationId] = useState(
+    () => new URLSearchParams(window.location.search).get("githubInstallationId") ?? undefined
+  );
 
   useEffect(() => {
     const onHash = () => setPage(pageFromHash());
@@ -95,13 +105,22 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!githubInstallationId) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("githubInstallationId");
+    url.searchParams.delete("githubSetupAction");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [githubInstallationId]);
+
+  useEffect(() => {
     let active = true;
-    void Promise.all([loreApi.bootstrap(), loreApi.session()])
-      .then(([snapshot, session]) => {
+    void Promise.all([loreApi.bootstrap(), loreApi.session(), loreApi.githubStatus()])
+      .then(([snapshot, session, integration]) => {
         if (active) {
           setData(snapshot);
           setApiConnected(true);
           setDemoMode(session.demoMode);
+          setGitHubStatus(integration);
           setLoadError(undefined);
         }
       })
@@ -283,6 +302,16 @@ export function App() {
     }
   };
 
+  const installGitHubApp = async (): Promise<void> => {
+    try {
+      if (!apiConnected) throw new Error("Lore is disconnected; GitHub setup cannot start.");
+      const { url } = await loreApi.githubInstall();
+      window.location.assign(url);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "GitHub App installation could not start", "error");
+    }
+  };
+
   const indexRepository = async (repository: RepositorySummary): Promise<void> => {
     try {
       if (!apiConnected) throw new Error("Lore is disconnected; no job was queued.");
@@ -299,7 +328,7 @@ export function App() {
 
   const importHistory = async (
     repository: RepositorySummary,
-    limit: 50 | 100 | 250 | 500 | 1000
+    limit: PullRequestImportLimit
   ): Promise<void> => {
     try {
       if (!apiConnected)
@@ -391,6 +420,9 @@ export function App() {
         return (
           <RepositoriesPage
             repositories={data.repositories}
+            githubStatus={githubStatus}
+            installationId={githubInstallationId}
+            onInstallGitHub={installGitHubApp}
             onConnect={connectRepository}
             onIndex={indexRepository}
             onImport={importHistory}

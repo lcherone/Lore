@@ -19,6 +19,7 @@ export type KnowledgeStatus =
 export type Severity = "info" | "suggestion" | "warning" | "error" | "blocker";
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type ContextPriority = "mandatory" | "high" | "medium" | "low";
+export type PullRequestImportLimit = 50 | 100 | 250 | 500 | 1000 | "all";
 
 export interface KnowledgeScope {
   organisation?: string;

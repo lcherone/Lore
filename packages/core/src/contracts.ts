@@ -11,6 +11,7 @@ import type {
   KnowledgeItem,
   KnowledgeProposalRecord,
   PolicyRecord,
+  PullRequestImportLimit,
   RepositoryRetentionConfig,
   RegressionRecord,
   RepositorySummary,
@@ -34,7 +35,10 @@ export interface PullRequestImport {
 }
 
 export interface SourceControlProvider {
-  listMergedPullRequests(repository: RepositorySummary, limit: 50 | 100 | 250 | 500 | 1000): Promise<PullRequestImport[]>;
+  listMergedPullRequests(
+    repository: RepositorySummary,
+    limit: PullRequestImportLimit
+  ): Promise<PullRequestImport[]>;
 }
 
 export interface WorkItem {

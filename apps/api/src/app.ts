@@ -25,7 +25,12 @@ import {
 import type { CodeEntity, CodeRelationship, PolicyDetector, PolicyRecord } from "@lore/shared/types.js";
 import { newUuid } from "@lore/shared/ids.js";
 import { policyPatternError } from "@lore/shared/policy-patterns.js";
-import { verifyGitHubWebhook, webhookEvidence } from "@lore/github/index.js";
+import {
+  githubIntegrationStatus,
+  resolveGitHubAuthMode,
+  verifyGitHubWebhook,
+  webhookEvidence
+} from "@lore/github/index.js";
 import { createOAuthState, encodeSession, tenantContext, verifyOAuthState } from "./auth.js";
 import { ApiMetrics } from "./metrics.js";
 
@@ -359,18 +364,52 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     const tenant = tenantContext(request, demoMode);
     const { id } = z.object({ id: z.string() }).parse(request.params);
     const input = z.object({
-      limit: z.union([z.literal(50), z.literal(100), z.literal(250), z.literal(500), z.literal(1000)]).default(100)
+      limit: z
+        .union([
+          z.literal(50),
+          z.literal(100),
+          z.literal(250),
+          z.literal(500),
+          z.literal(1000),
+          z.literal("all")
+        ])
+        .default(100)
     }).parse(request.body);
     const repository = await store.getRepository(tenant.organisationId, id);
     if (repository.provider !== "github") throw new LoreError("Historical import requires a GitHub repository", "INVALID_PROVIDER", 400);
+    const status = githubIntegrationStatus(process.env, demoMode);
+    if (!status.historicalImportReady) {
+      throw new LoreError(
+        "Configure a GitHub personal access token or GitHub App credentials before importing",
+        "NOT_CONFIGURED",
+        503
+      );
+    }
+    const authMode = demoMode
+      ? repository.providerInstallationId
+        ? "app"
+        : "token"
+      : resolveGitHubAuthMode();
     const installationId = Number(repository.providerInstallationId);
-    if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+    if (
+      authMode === "app" &&
+      (!Number.isSafeInteger(installationId) || installationId <= 0)
+    ) {
       throw new LoreError("Connect this repository to a verified GitHub App installation before importing", "INSTALLATION_REQUIRED", 409);
+    }
+    if (authMode !== "app" && authMode !== "token") {
+      throw new LoreError("GitHub historical import is disabled", "NOT_CONFIGURED", 503);
     }
     const job = await jobs.dispatch(
       "github.import",
-      { organisationId: tenant.organisationId, repositoryId: id, installationId, limit: input.limit },
-      `github-import-${id}-${installationId}-${input.limit}`
+      {
+        organisationId: tenant.organisationId,
+        repositoryId: id,
+        authMode,
+        ...(authMode === "app" ? { installationId } : {}),
+        limit: input.limit
+      },
+      `github-import-${id}-${authMode}-${authMode === "app" ? installationId : "local"}-${input.limit}`
     );
     return reply.status(202).send({
       jobId: job.id,
@@ -704,6 +743,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
 
   app.get("/api/github/install", async (request, reply) => {
     tenantContext(request, demoMode);
+    if (!demoMode && resolveGitHubAuthMode() !== "app") {
+      throw new LoreError(
+        "GitHub App installation is unavailable while GITHUB_AUTH_MODE is not app",
+        "NOT_CONFIGURED",
+        503
+      );
+    }
     const slug = process.env.GITHUB_APP_SLUG;
     if (!slug) throw new LoreError("GITHUB_APP_SLUG is not configured", "NOT_CONFIGURED", 503);
     const state = createOAuthState(sessionSecret);
@@ -718,12 +764,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return { url: `https://github.com/apps/${encodeURIComponent(slug)}/installations/new?state=${encodeURIComponent(state)}` };
   });
 
+  app.get("/api/github/status", async (request) => {
+    tenantContext(request, demoMode);
+    return githubIntegrationStatus(process.env, demoMode);
+  });
+
   app.get("/api/github/callback", async (request, reply) => {
     tenantContext(request, demoMode);
-    const { state, installation_id: installationId, setup_action: setupAction } = z.object({
+    const { state, installation_id: installationId, setup_action: setupAction, format } = z.object({
       state: z.string().min(1),
       installation_id: z.coerce.number().int().positive(),
-      setup_action: z.string().optional()
+      setup_action: z.string().optional(),
+      format: z.enum(["json"]).optional()
     }).parse(request.query);
     const signedCookie = request.cookies.lore_oauth_state;
     const stored = signedCookie ? request.unsignCookie(signedCookie) : undefined;
@@ -731,7 +783,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       throw new LoreError("GitHub installation state is invalid or expired", "INVALID_OAUTH_STATE", 401);
     }
     reply.clearCookie("lore_oauth_state", { path: "/" });
-    return { installed: true, installationId, setupAction: setupAction ?? "install", next: "/repositories" };
+    const result = { installed: true, installationId, setupAction: setupAction ?? "install", next: "/repositories" };
+    if (format === "json") return result;
+    const appUrl = new URL(process.env.APP_URL ?? "http://localhost:5173");
+    appUrl.searchParams.set("githubInstallationId", String(installationId));
+    appUrl.searchParams.set("githubSetupAction", result.setupAction);
+    appUrl.hash = "repositories";
+    return reply.redirect(appUrl.toString());
   });
 
   app.post(

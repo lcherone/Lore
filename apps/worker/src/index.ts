@@ -6,9 +6,14 @@ import { MockAIProvider, KnowledgeExtractionService, selectAIProvider } from "@l
 import { validateKnowledgeProposal } from "@lore/core/index.js";
 import { createLoreStore, createRedisConnection, LORE_QUEUE_NAME } from "@lore/database/index.js";
 import { assertTrustedRepositoryPath, LocalGit } from "@lore/git/index.js";
-import { GitHubImportService, GitHubSourceControlProvider } from "@lore/github/index.js";
+import {
+  GitHubImportService,
+  GitHubSourceControlProvider,
+  GitHubTokenSourceControlProvider
+} from "@lore/github/index.js";
 import { KnowledgeHealthService } from "@lore/knowledge/index.js";
 import type { CandidateRecord, ConfidenceFactors } from "@lore/shared/types.js";
+import { loadGitHubPrivateKey, loadGitHubToken } from "./github-credentials.js";
 
 const store = createLoreStore({ ...process.env, DEMO_MODE: "false" });
 const connection = createRedisConnection();
@@ -21,12 +26,32 @@ const indexJobSchema = z.object({
   localPath: z.string().min(1)
 });
 
-const githubJobSchema = z.object({
-  organisationId: z.string().min(1),
-  repositoryId: z.string().min(1),
-  installationId: z.number().int().positive(),
-  limit: z.union([z.literal(50), z.literal(100), z.literal(250), z.literal(500), z.literal(1000)]).default(100)
-});
+const githubJobSchema = z
+  .object({
+    organisationId: z.string().min(1),
+    repositoryId: z.string().min(1),
+    authMode: z.enum(["app", "token"]),
+    installationId: z.number().int().positive().optional(),
+    limit: z
+      .union([
+        z.literal(50),
+        z.literal(100),
+        z.literal(250),
+        z.literal(500),
+        z.literal(1000),
+        z.literal("all")
+      ])
+      .default(100)
+  })
+  .superRefine((input, context) => {
+    if (input.authMode === "app" && !input.installationId) {
+      context.addIssue({
+        code: "custom",
+        path: ["installationId"],
+        message: "GitHub App jobs require an installation ID"
+      });
+    }
+  });
 
 const extractionJobSchema = z.object({
   organisationId: z.string().min(1),
@@ -78,20 +103,44 @@ const worker = new Worker(
 
     if (job.name === "github.import") {
       const input = githubJobSchema.parse(job.data);
-      const appId = Number(process.env.GITHUB_APP_ID);
-      const privateKey = process.env.GITHUB_PRIVATE_KEY;
-      if (!appId || !privateKey) throw new Error("GITHUB_APP_ID and GITHUB_PRIVATE_KEY are required for GitHub import jobs");
       const repository = await store.getRepository(input.organisationId, input.repositoryId);
-      const importer = new GitHubImportService(
-        new GitHubSourceControlProvider({ appId, privateKey, installationId: input.installationId }),
-        store
-      );
+      const provider =
+        input.authMode === "token"
+          ? new GitHubTokenSourceControlProvider(
+              (await loadGitHubToken()) ??
+                (() => {
+                  throw new Error(
+                    "GITHUB_TOKEN or GITHUB_TOKEN_PATH is required for token import jobs"
+                  );
+                })()
+            )
+          : new GitHubSourceControlProvider({
+              appId:
+                Number(process.env.GITHUB_APP_ID) ||
+                (() => {
+                  throw new Error("GITHUB_APP_ID is required for GitHub App import jobs");
+                })(),
+              privateKey:
+                (await loadGitHubPrivateKey()) ??
+                (() => {
+                  throw new Error(
+                    "GITHUB_PRIVATE_KEY or GITHUB_PRIVATE_KEY_PATH is required for GitHub App import jobs"
+                  );
+                })(),
+              installationId: input.installationId!
+            });
+      const importer = new GitHubImportService(provider, store);
       const imported = await importer.importMergedPullRequests(input.organisationId, repository, input.limit);
       if (imported.evidenceIds.length > 0) {
         await queue.add(
           "knowledge.extract",
           { organisationId: input.organisationId, repositoryId: input.repositoryId, evidenceIds: imported.evidenceIds },
-          { jobId: `extract-import-${input.repositoryId}-${input.limit}`, attempts: 3, removeOnComplete: 1_000, removeOnFail: 5_000 }
+          {
+            jobId: `extract-import-${input.repositoryId}-${input.authMode}-${input.limit}`,
+            attempts: 3,
+            removeOnComplete: 1_000,
+            removeOnFail: 5_000
+          }
         );
       }
       return imported;
