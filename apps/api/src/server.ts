@@ -1,7 +1,7 @@
 import { createApp } from "./app.js";
 
 const port = Number(process.env.API_PORT ?? 3001);
-const host = process.env.API_HOST ?? "0.0.0.0";
+const host = process.env.API_HOST ?? "127.0.0.1";
 const app = await createApp();
 
 const shutdown = async (signal: string): Promise<void> => {
@@ -15,4 +15,3 @@ process.once("SIGINT", () => void shutdown("SIGINT"));
 
 await app.listen({ port, host });
 app.log.info({ event: "server.started", port, host }, "Lore API is ready");
-

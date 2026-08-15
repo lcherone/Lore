@@ -38,7 +38,8 @@ export function Risk({ level }: { level: RiskLevel | "Blocked" }) {
   return (
     <span className={clsx("risk", `risk--${normalised}`)}>
       <span className="risk__dot" />
-      {level[0]}{level.slice(1).toLowerCase()}
+      {level[0]}
+      {level.slice(1).toLowerCase()}
     </span>
   );
 }
@@ -48,19 +49,33 @@ export function SeverityLabel({ severity }: { severity: Severity }) {
 }
 
 export function KindIcon({ kind }: { kind: KnowledgeKind }) {
-  return <span className={clsx("kind-icon", `kind-icon--${kind}`)} aria-hidden="true">{kind.slice(0, 1).toUpperCase()}</span>;
+  return (
+    <span className={clsx("kind-icon", `kind-icon--${kind}`)} aria-hidden="true">
+      {kind.slice(0, 1).toUpperCase()}
+    </span>
+  );
 }
 
 export function Confidence({ value, label = true }: { value: number; label?: boolean }) {
   return (
     <span className="confidence">
-      <span className="confidence__track"><span style={{ width: `${Math.round(value * 100)}%` }} /></span>
+      <span className="confidence__track">
+        <span style={{ width: `${Math.round(value * 100)}%` }} />
+      </span>
       {label && <strong>{Math.round(value * 100)}%</strong>}
     </span>
   );
 }
 
-export function PageHeader({ title, description, actions }: { title: string; description: string; actions?: ReactNode }) {
+export function PageHeader({
+  title,
+  description,
+  actions
+}: {
+  title: string;
+  description: string;
+  actions?: ReactNode;
+}) {
   return (
     <header className="page-header">
       <div>
@@ -72,7 +87,15 @@ export function PageHeader({ title, description, actions }: { title: string; des
   );
 }
 
-export function EmptyState({ title, body, action }: { title: string; body: string; action?: ReactNode }) {
+export function EmptyState({
+  title,
+  body,
+  action
+}: {
+  title: string;
+  body: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="empty-state">
       <span className="empty-state__glyph">L</span>
@@ -83,13 +106,36 @@ export function EmptyState({ title, body, action }: { title: string; body: strin
   );
 }
 
-export function Modal({ title, children, onClose, footer, wide = false }: { title: string; children: ReactNode; onClose: () => void; footer?: ReactNode; wide?: boolean }) {
+export function Modal({
+  title,
+  children,
+  onClose,
+  footer,
+  wide = false
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  footer?: ReactNode;
+  wide?: boolean;
+}) {
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className={clsx("modal", wide && "modal--wide")} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <section
+        className={clsx("modal", wide && "modal--wide")}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-title"
+      >
         <header className="modal__header">
           <h2 id="modal-title">{title}</h2>
-          <button className="icon-button" onClick={onClose} aria-label="Close"><X size={19} /></button>
+          <button className="icon-button" onClick={onClose} aria-label="Close">
+            <X size={19} />
+          </button>
         </header>
         <div className="modal__body">{children}</div>
         {footer && <footer className="modal__footer">{footer}</footer>}
@@ -98,7 +144,15 @@ export function Modal({ title, children, onClose, footer, wide = false }: { titl
   );
 }
 
-export function FormField({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+export function FormField({
+  label,
+  hint,
+  children
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
     <label className="form-field">
       <span>{label}</span>
@@ -108,7 +162,16 @@ export function FormField({ label, hint, children }: { label: string; hint?: str
   );
 }
 
-export function Toast({ message, tone = "success" }: { message: string; tone?: "success" | "error" }) {
-  return <div className={clsx("toast", `toast--${tone}`)} role="status">{message}</div>;
+export function Toast({
+  message,
+  tone = "success"
+}: {
+  message: string;
+  tone?: "success" | "error";
+}) {
+  return (
+    <div className={clsx("toast", `toast--${tone}`)} role="status">
+      {message}
+    </div>
+  );
 }
-

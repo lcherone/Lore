@@ -17,6 +17,11 @@ export class BullMqJobDispatcher implements JobDispatcher {
     this.#queue = new Queue(LORE_QUEUE_NAME, { connection: this.#connection });
   }
 
+  async health(): Promise<void> {
+    const response = await this.#connection.ping();
+    if (response !== "PONG") throw new Error("Redis did not answer PONG");
+  }
+
   async dispatch(
     name: "repository.index" | "github.import" | "knowledge.extract" | "knowledge.health",
     payload: Record<string, unknown>,
@@ -40,6 +45,8 @@ export class BullMqJobDispatcher implements JobDispatcher {
 
 export class InMemoryJobDispatcher implements JobDispatcher {
   readonly jobs: Array<{ id: string; name: string; payload: Record<string, unknown> }> = [];
+
+  async health(): Promise<void> {}
 
   async dispatch(name: "repository.index" | "github.import" | "knowledge.extract" | "knowledge.health", payload: Record<string, unknown>, idempotencyKey: string): Promise<{ id: string }> {
     const existing = this.jobs.find((job) => job.id === idempotencyKey);

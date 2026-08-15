@@ -5,7 +5,7 @@ import { TypeScriptAnalyzer, PhpLanguageAnalyzer, LocalRepositoryIndexer, addGit
 import { MockAIProvider, KnowledgeExtractionService, selectAIProvider } from "@lore/ai/index.js";
 import { validateKnowledgeProposal } from "@lore/core/index.js";
 import { createLoreStore, createRedisConnection, LORE_QUEUE_NAME } from "@lore/database/index.js";
-import { LocalGit } from "@lore/git/index.js";
+import { assertTrustedRepositoryPath, LocalGit } from "@lore/git/index.js";
 import { GitHubImportService, GitHubSourceControlProvider } from "@lore/github/index.js";
 import { KnowledgeHealthService } from "@lore/knowledge/index.js";
 import type { CandidateRecord, ConfidenceFactors } from "@lore/shared/types.js";
@@ -63,10 +63,11 @@ const worker = new Worker(
     if (job.name === "repository.index") {
       const input = indexJobSchema.parse(job.data);
       const repository = await store.getRepository(input.organisationId, input.repositoryId);
-      const commit = await git.currentCommit(input.localPath);
+      const localPath = await assertTrustedRepositoryPath(input.localPath);
+      const commit = await git.currentCommit(localPath);
       const indexer = new LocalRepositoryIndexer([new TypeScriptAnalyzer(), new PhpLanguageAnalyzer()]);
-      const output = await indexer.analyze({ ...repository, lastIndexedCommit: commit }, input.localPath);
-      const history = await git.history(input.localPath, undefined, 500);
+      const output = await indexer.analyze({ ...repository, lastIndexedCommit: commit }, localPath);
+      const history = await git.history(localPath, undefined, 500);
       const enriched = {
         ...output,
         relationships: addGitHistoryRelationships(repository.id, output.entities, output.relationships, history)
@@ -122,7 +123,7 @@ const worker = new Worker(
           existingKnowledge: snapshot.knowledge,
           humanInitiated: false
         });
-        await store.saveKnowledgeProposal(input.organisationId, {
+        const proposal = await store.saveKnowledgeProposal(input.organisationId, {
           repositoryId: input.repositoryId,
           operation: "create",
           payload,
@@ -169,7 +170,8 @@ const worker = new Worker(
           health: validation.contradictions.length ? "conflicted" : "needs_review",
           evidence: evidenceRecords,
           contradictionSummaries: validation.contradictions.map((item) => item.statement),
-          confidenceFactors: factors
+          confidenceFactors: factors,
+          proposalId: proposal.id
         };
         await store.createKnowledgeCandidate(input.organisationId, candidate);
         created += 1;

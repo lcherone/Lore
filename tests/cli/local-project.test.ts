@@ -1,8 +1,9 @@
-import { chmod, lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { LocalProject } from "../../apps/cli/src/local-project.js";
+import { runGit } from "@lore/git/index.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -36,5 +37,14 @@ describe("local Lore state", () => {
     await writeFile(join(root, ".lore", "config.json"), "{}\n");
     await chmod(join(root, ".lore", "config.json"), 0o644);
     await expect(project.readConfig()).rejects.toThrow("permissions are too broad");
+  });
+
+  it("adds Lore state to the repository-local Git exclude", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lore-state-"));
+    temporaryDirectories.push(root);
+    await runGit(root, ["init", "--quiet"]);
+    await new LocalProject(root).initialize();
+    expect(await readFile(join(root, ".git", "info", "exclude"), "utf8")).toContain(".lore/");
+    expect((await runGit(root, ["status", "--porcelain", "--untracked-files=all"])).trim()).toBe("");
   });
 });

@@ -65,6 +65,7 @@ services:
       DATABASE_URL: postgresql://lore:lore@postgres:5432/lore?schema=public
       REDIS_URL: redis://redis:6379
       DEMO_MODE: "false"
+      API_HOST: 0.0.0.0
       APP_URL: http://localhost:5173
       WEB_ORIGIN: http://localhost:5173
       LOCAL_DEV_AUTH: "true"

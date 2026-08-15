@@ -20,6 +20,14 @@ docker compose up --build
 
 Use a native persistent mode when you already run PostgreSQL and Redis locally. Set `DEMO_MODE=false`, configure the two URLs, run migrations and seed, then start `npm run dev` and `npm run worker` in separate terminals.
 
+The CLI has its own explicit authority mode:
+
+- `local` (default) uses only the checkout's graph and Git history. It contains no organisational or fixture knowledge.
+- `demo` is an explicit opt-in to the bundled Soho scenario: `lore init --mode demo`.
+- `service` uses the Fastify API as the authority for knowledge, sessions, context, and reports. `lore connect` selects it automatically.
+
+Lore never falls back between these modes.
+
 ## Connect a local checkout
 
 From the Lore repository:
@@ -36,7 +44,7 @@ lore init --repository OWNER/NAME --organisation ORGANISATION_SLUG
 lore index
 ```
 
-The generated `.lore/config.json` contains identifiers, the API URL, the default agent, and trusted test commands. Do not add credentials. Add `.lore/` to `.gitignore` if local context and reports should remain private.
+The generated `.lore/config.json` contains identifiers, the API URL, the default agent, and trusted test commands. Do not add credentials. Lore adds `.lore/` to the checkout's local `.git/info/exclude` and always omits it from verification, so private state is neither tracked nor mistaken for a product change. Add `.lore/` to the shared `.gitignore` only when the whole team should inherit that convention.
 
 To connect the local config to an API repository record:
 
@@ -46,6 +54,8 @@ lore connect \
   --organisation-id ORGANISATION_ID \
   --api-url http://127.0.0.1:3001
 ```
+
+Running `lore index` in service mode uploads a bounded, sanitised entity/relationship graph. It does not upload a source checkout, and the browser cannot submit a local path.
 
 ## First task
 
@@ -79,7 +89,7 @@ For explicit control, call Lore tools from the agent before and after edits. For
 lore agent codex "TICKET-123 concise task description"
 ```
 
-Lore prepares context before launching the allowlisted executable, observes changed file paths every two seconds, refreshes context when the working set expands, and verifies the final diff.
+Lore currently has one verified interactive adapter: Codex. It passes initial context directly in the Codex prompt and writes the same content to `.lore/LORE_CONTEXT.md`, observes changed file paths every two seconds, refreshes persisted context when the working set expands, and verifies the final diff. Use Lore MCP for other agents. Failed Codex processes are retained as abandoned sessions rather than reported as complete.
 
 ## GitHub history
 
@@ -88,14 +98,16 @@ After installing the GitHub App, connect a provider repository and queue a bound
 ```bash
 curl -X POST http://127.0.0.1:3001/api/repositories/REPOSITORY_ID/github-import \
   -H 'content-type: application/json' \
-  -d '{"installationId":INSTALLATION_ID,"limit":100}'
+  -d '{"limit":100}'
 ```
+
+The GitHub App installation ID is recorded when the repository is connected, so import and webhook routing cannot switch installations per request.
 
 Open the Candidates screen. Approve only statements whose evidence, class, and scope are accurate. Edit over-broad scope before approval. Reject noisy inferences with a reason; the audit trail records both decisions.
 
 ## Import existing engineering guidance
 
-Import JSON exports, Markdown, `AGENTS.md`, `CONTRIBUTING.md`, architecture notes, or ADRs from a configured checkout:
+In `service` mode, import JSON exports, Markdown, `AGENTS.md`, `CONTRIBUTING.md`, architecture notes, or ADRs from a configured checkout:
 
 ```bash
 lore knowledge import AGENTS.md
@@ -113,9 +125,9 @@ Deleting a repository requires typing its exact `owner/name`. Lore deletes repos
 
 ## Common problems
 
-### The UI shows demo data but preparation fails
+### The UI says Lore is disconnected
 
-The Vite app can render its built-in snapshot while the API is offline. Start `npm run dev`, then confirm `curl http://127.0.0.1:3001/healthz`.
+Lore never substitutes fixtures after an API failure. Start `npm run dev`, then confirm both `curl http://127.0.0.1:3001/healthz` and `curl http://127.0.0.1:3001/readyz`.
 
 ### Indexing reports no Git history
 

@@ -125,12 +125,18 @@ export class CliRuntime {
     const context = await this.project.readContext();
     const actualChanges = changedFiles ?? (await this.git.changedFiles(this.project.root, context?.repository.lastIndexedCommit));
     if (config.mode === "service") {
-      const result = await new HttpLoreClient(config).verify(
-        repository.id,
-        task ?? context?.task.text ?? "Unspecified local change",
-        actualChanges,
-        context?.repository.lastIndexedCommit
-      );
+      const localSession = await this.project.readSession();
+      const client = new HttpLoreClient(config);
+      const sessionId = typeof localSession?.id === "string" && ["preparing", "active"].includes(String(localSession.status))
+        ? localSession.id
+        : (await client.startSession(
+            repository.id,
+            task ?? context?.task.text ?? "Unspecified local change",
+            "other",
+            context?.repository.lastIndexedCommit
+          )).session.id;
+      const currentCommit = await this.git.currentCommit(this.project.root).catch(() => undefined);
+      const result = await client.verify(sessionId, actualChanges, currentCommit);
       await this.project.saveSession(result.session);
       await this.project.saveReport(result.report);
       return result.report;
@@ -163,7 +169,7 @@ export class CliRuntime {
     if (!entity) return undefined;
     const impact = graph.traverse([entity.id], { maxDepth: 2, maximumNodes: 20, minimumConfidence: 0.35 });
     const { snapshot, evidence } = config.mode === "service"
-      ? { snapshot: await new HttpLoreClient(config).snapshot(), evidence: [] as EvidenceRecord[] }
+      ? { snapshot: await new HttpLoreClient(config).snapshot(), evidence: await new HttpLoreClient(config).evidence() }
       : this.#localAuthority(repository, config.mode);
     const knowledge = snapshot.knowledge.filter((item) =>
       `${item.title} ${item.statement} ${JSON.stringify(item.scope)}`.toLowerCase().includes(entity.name.toLowerCase()) ||
@@ -213,7 +219,14 @@ export class CliRuntime {
 
   async startSession(task: string, agentType: string): Promise<Record<string, unknown>> {
     const repository = await this.repository();
+    const config = await this.project.readConfigOrDefault();
     const baseCommit = await this.git.currentCommit(this.project.root).catch(() => undefined);
+    if (config.mode === "service") {
+      const started = await new HttpLoreClient(config).startSession(repository.id, task, agentType, baseCommit);
+      await this.project.saveContext(started.context, formatAgentInstructions(started.context));
+      await this.project.saveSession(started.session);
+      return started.session as unknown as Record<string, unknown>;
+    }
     const context = await this.prepare(task);
     const session = {
       id: newUuid(),
@@ -229,6 +242,30 @@ export class CliRuntime {
     };
     await this.project.saveSession(session);
     return session;
+  }
+
+  async abandonSession(reason: string): Promise<Record<string, unknown>> {
+    const current = await this.project.readSession();
+    if (!current || typeof current.id !== "string") throw new Error("No session exists");
+    const config = await this.project.readConfigOrDefault();
+    const abandoned = config.mode === "service"
+      ? await new HttpLoreClient(config).abandonSession(current.id, reason)
+      : { ...current, status: "abandoned", completedAt: new Date().toISOString(), reason };
+    await this.project.saveSession(abandoned);
+    return abandoned as unknown as Record<string, unknown>;
+  }
+
+  async refreshSessionContext(task: string, paths: string[]): Promise<ContextPackage> {
+    const config = await this.project.readConfigOrDefault();
+    const session = await this.project.readSession();
+    if (config.mode === "service") {
+      if (!session || typeof session.id !== "string") throw new Error("No service session exists");
+      const context = await new HttpLoreClient(config).refreshContext(session.id, paths);
+      await this.project.saveContext(context, formatAgentInstructions(context));
+      await this.project.saveSession({ ...session, status: "active", filesChanged: paths });
+      return context;
+    }
+    return this.prepare(task, paths);
   }
 
   #localAuthority(repository: RepositorySummary, mode: "local" | "demo" | "service"): { snapshot: DashboardSnapshot; evidence: EvidenceRecord[] } {

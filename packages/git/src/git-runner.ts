@@ -58,6 +58,8 @@ interface GitStatusEntry {
   untracked: boolean;
 }
 
+const isLoreInternalPath = (path: string): boolean => path === ".lore" || path.startsWith(".lore/");
+
 function parseNameStatus(output: string): GitStatusEntry[] {
   const tokens = output.split("\0");
   const entries: GitStatusEntry[] = [];
@@ -145,8 +147,11 @@ export class LocalGit implements GitChangeReader {
     }
 
     const byPath = new Map<string, GitStatusEntry>();
-    for (const entry of trackedChanges) byPath.set(entry.path, entry);
+    for (const entry of trackedChanges) {
+      if (!isLoreInternalPath(entry.path)) byPath.set(entry.path, entry);
+    }
     for (const entry of parsePorcelainStatus(statusOutput)) {
+      if (isLoreInternalPath(entry.path)) continue;
       const existing = byPath.get(entry.path);
       byPath.set(entry.path, existing ? { ...existing, ...entry, untracked: existing.untracked || entry.untracked } : entry);
     }

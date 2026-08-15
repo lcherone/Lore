@@ -38,13 +38,36 @@ describe("working API vertical slice", () => {
       url: "/api/sessions",
       payload: { repositoryId: "repo_soho_ecom", task: "Update address code mapping", agentType: "codex" }
     });
+    const sessionId = session.json<{ id: string }>().id;
+    const persistedContext = await app.inject({
+      method: "POST",
+      url: `/api/sessions/${sessionId}/refresh-context`
+    });
+    expect(persistedContext.statusCode).toBe(200);
+    expect(persistedContext.json()).toMatchObject({ revision: 1 });
     const report = await app.inject({
       method: "POST",
-      url: `/api/sessions/${session.json<{ id: string }>().id}/verify`,
+      url: `/api/sessions/${sessionId}/verify`,
       payload: { changedFiles: [{ path: "src/Tax/Avalara/AddressCode.php", status: "modified", additions: 3, deletions: 1, patch: "+return $role;" }] }
     });
     expect(report.statusCode).toBe(200);
     expect(["MEDIUM", "HIGH", "CRITICAL"]).toContain(report.json<SafetyReport>().risk);
+    expect(report.json<SafetyReport>()).toMatchObject({ sessionId, contextId: persistedContext.json<{ id: string }>().id });
+    expect((await store.getSnapshot("org_acme")).sessions.find((item) => item.id === sessionId)?.status).toBe("completed");
+    const events = await app.inject({ method: "GET", url: `/api/sessions/${sessionId}/events` });
+    expect(events.json<{ items: Array<{ sequence: number; type: string }> }>().items.map((event) => event.type)).toEqual([
+      "started", "context_prepared", "verification_started", "verification_finished", "completed"
+    ]);
+    expect(events.json<{ items: Array<{ sequence: number }> }>().items.map((event) => event.sequence)).toEqual([1, 2, 3, 4, 5]);
+
+    const abandonedSession = await app.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { repositoryId: "repo_soho_ecom", task: "Interrupted agent run", agentType: "codex" }
+    });
+    const abandonedId = abandonedSession.json<{ id: string }>().id;
+    expect((await app.inject({ method: "POST", url: `/api/sessions/${abandonedId}/abandon`, payload: { reason: "Agent process exited" } })).json()).toMatchObject({ status: "abandoned" });
+    expect((await store.getSessionEvents("org_acme", abandonedId)).at(-1)).toMatchObject({ type: "abandoned", data: { reason: "Agent process exited" } });
 
     const queued = await app.inject({
       method: "POST",

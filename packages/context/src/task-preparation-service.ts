@@ -74,12 +74,26 @@ export class TaskPreparationService {
     );
     const candidatePaths = [...new Set([...seedEntities.map((entity) => entity.path), ...(input.explicitPaths ?? [])])];
     const symbols = seedEntities.filter((entity) => entity.type !== "file").map((entity) => entity.qualifiedName);
+    const language = [...new Set(seedEntities.map((entity) => entity.language))].length === 1 ? seedEntities[0]?.language : undefined;
+    const scopeInput = {
+      repository: input.repository,
+      organisation: input.snapshot.organisation.slug,
+      paths: candidatePaths,
+      symbols,
+      ...(language ? { language } : {}),
+      integration: input.task,
+      subsystem: input.task
+    };
 
     const applicableKnowledge = sortByPrecedence(
       input.snapshot.knowledge.filter((item) => {
         if (!["active", "challenged"].includes(item.status)) return false;
         const directlyRelevant = relevance(`${item.title} ${item.statement} ${item.rationale}`, concepts) >= 0.12;
-        return directlyRelevant || scopeApplies(item.scope, { repository: input.repository, paths: candidatePaths, symbols });
+        const scopedToTask = Boolean(
+          item.scope.paths?.length || item.scope.symbols?.length || item.scope.subsystem || item.scope.language ||
+          item.scope.framework || item.scope.integration || item.scope.ticketType
+        );
+        return scopeApplies(item.scope, scopeInput) && (directlyRelevant || scopedToTask);
       })
     ).slice(0, 12);
 
@@ -94,7 +108,7 @@ export class TaskPreparationService {
     });
 
     const policies = input.snapshot.policies
-      .filter((policy) => policy.enabled && scopeApplies(policy.scope, { repository: input.repository, paths: candidatePaths, symbols }))
+      .filter((policy) => policy.enabled && scopeApplies(policy.scope, scopeInput))
       .map((policy): ContextEntry<PolicyRecord> => ({
         id: policy.id,
         priority: policy.severity === "blocker" ? "mandatory" : "high",

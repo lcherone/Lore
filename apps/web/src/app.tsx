@@ -39,7 +39,16 @@ import {
   SettingsPage
 } from "./pages.js";
 
-type PageId = "dashboard" | "repositories" | "knowledge" | "candidates" | "policies" | "sessions" | "reports" | "reviewers" | "settings";
+type PageId =
+  | "dashboard"
+  | "repositories"
+  | "knowledge"
+  | "candidates"
+  | "policies"
+  | "sessions"
+  | "reports"
+  | "reviewers"
+  | "settings";
 
 const navItems: Array<{ id: PageId; label: string; icon: typeof Home }> = [
   { id: "dashboard", label: "Dashboard", icon: Home },
@@ -121,7 +130,9 @@ export function App() {
   }, []);
 
   const navigate = (next: string): void => {
-    const safePage = [...navItems.map((item) => item.id), "settings"].includes(next as PageId) ? (next as PageId) : "dashboard";
+    const safePage = [...navItems.map((item) => item.id), "settings"].includes(next as PageId)
+      ? (next as PageId)
+      : "dashboard";
     window.location.hash = safePage;
     setPage(safePage);
     setMobileNav(false);
@@ -134,7 +145,10 @@ export function App() {
   };
 
   const prepare = async (task: string, repositoryId: string): Promise<ContextPackage> => {
-    if (!apiConnected) throw new Error("Start `npm run dev` to prepare deterministic context. The current screen is read-only demo data.");
+    if (!apiConnected)
+      throw new Error(
+        "Start `npm run dev` to prepare deterministic context. The current screen is read-only demo data."
+      );
     return loreApi.prepareTask(repositoryId, task);
   };
 
@@ -144,7 +158,10 @@ export function App() {
   ): Promise<void> => {
     try {
       if (!apiConnected) throw new Error("Lore is disconnected; no changes were saved.");
-      await loreApi.approveCandidate(candidate.id, { ...draft, reason: "Approved in candidate review" });
+      await loreApi.approveCandidate(candidate.id, {
+        ...draft,
+        reason: "Approved in candidate review"
+      });
       const approved = {
         ...candidate,
         ...draft,
@@ -177,17 +194,25 @@ export function App() {
     }
   };
 
-  const changeKnowledgeStatus = async (item: KnowledgeItem, status: "challenged" | "archived", reason: string): Promise<void> => {
+  const changeKnowledgeStatus = async (
+    item: KnowledgeItem,
+    status: "challenged" | "archived",
+    reason: string
+  ): Promise<void> => {
     try {
       if (!apiConnected) throw new Error("Lore is disconnected; no changes were saved.");
-      const updated = status === "challenged"
-        ? await loreApi.challengeKnowledge(item.id, reason)
-        : await loreApi.archiveKnowledge(item.id, reason);
+      const updated =
+        status === "challenged"
+          ? await loreApi.challengeKnowledge(item.id, reason)
+          : await loreApi.archiveKnowledge(item.id, reason);
       setData((snapshot) => ({
         ...snapshot,
-        knowledge: status === "archived"
-          ? snapshot.knowledge.filter((knowledge) => knowledge.id !== item.id)
-          : snapshot.knowledge.map((knowledge) => knowledge.id === item.id ? updated : knowledge)
+        knowledge:
+          status === "archived"
+            ? snapshot.knowledge.filter((knowledge) => knowledge.id !== item.id)
+            : snapshot.knowledge.map((knowledge) =>
+                knowledge.id === item.id ? updated : knowledge
+              )
       }));
       notify(status === "challenged" ? "Knowledge challenged for review" : "Knowledge archived");
     } catch (error) {
@@ -200,7 +225,10 @@ export function App() {
     try {
       if (!apiConnected) throw new Error("Lore is disconnected; no changes were saved.");
       await loreApi.rejectCandidate(candidate.id, "Rejected during candidate review");
-      setData((snapshot) => ({ ...snapshot, candidates: snapshot.candidates.filter((item) => item.id !== candidate.id) }));
+      setData((snapshot) => ({
+        ...snapshot,
+        candidates: snapshot.candidates.filter((item) => item.id !== candidate.id)
+      }));
       notify("Candidate rejected; evidence retained");
     } catch (error) {
       notify(error instanceof Error ? error.message : "Rejection failed", "error");
@@ -210,16 +238,28 @@ export function App() {
 
   const mergeCandidate = async (candidate: CandidateRecord, targetId: string): Promise<void> => {
     try {
-      const target = data.candidates.find((item) => item.id === targetId) ?? data.knowledge.find((item) => item.id === targetId);
+      const target =
+        data.candidates.find((item) => item.id === targetId) ??
+        data.knowledge.find((item) => item.id === targetId);
       if (!target) throw new Error("Choose an available knowledge target");
       if (!apiConnected) throw new Error("Lore is disconnected; no changes were saved.");
-      const merged = await loreApi.mergeCandidate(candidate.id, targetId, "Merged as duplicate during candidate review");
+      const merged = await loreApi.mergeCandidate(
+        candidate.id,
+        targetId,
+        "Merged as duplicate during candidate review"
+      );
       setData((snapshot) => ({
         ...snapshot,
         candidates: snapshot.candidates
           .filter((item) => item.id !== candidate.id)
-          .map((item) => item.id === targetId && merged.status === "candidate" ? merged as CandidateRecord : item),
-        knowledge: snapshot.knowledge.map((item) => item.id === targetId && merged.status !== "candidate" ? merged : item)
+          .map((item) =>
+            item.id === targetId && merged.status === "candidate"
+              ? (merged as CandidateRecord)
+              : item
+          ),
+        knowledge: snapshot.knowledge.map((item) =>
+          item.id === targetId && merged.status !== "candidate" ? merged : item
+        )
       }));
       notify("Candidate merged; evidence and provenance preserved");
     } catch (error) {
@@ -232,7 +272,10 @@ export function App() {
     try {
       if (!apiConnected) throw new Error("Lore is disconnected; no changes were saved.");
       const repository = (await loreApi.connectRepository(input)) as RepositorySummary;
-      setData((snapshot) => ({ ...snapshot, repositories: [...snapshot.repositories, repository] }));
+      setData((snapshot) => ({
+        ...snapshot,
+        repositories: [...snapshot.repositories, repository]
+      }));
       notify("Repository connected. Import history next.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "Repository connection failed", "error");
@@ -243,8 +286,12 @@ export function App() {
   const indexRepository = async (repository: RepositorySummary): Promise<void> => {
     try {
       if (!apiConnected) throw new Error("Lore is disconnected; no job was queued.");
-      await loreApi.indexRepository(repository.id);
-      notify("Repository indexing queued");
+      const result = await loreApi.indexRepository(repository.id);
+      notify(
+        result.simulated
+          ? "Demo indexing simulated; no worker job was started"
+          : "Repository indexing queued"
+      );
     } catch (error) {
       notify(error instanceof Error ? error.message : "Indexing could not start", "error");
     }
@@ -252,20 +299,27 @@ export function App() {
 
   const importHistory = async (
     repository: RepositorySummary,
-    installationId: number,
     limit: 50 | 100 | 250 | 500 | 1000
   ): Promise<void> => {
     try {
-      if (!apiConnected) throw new Error("Start the Lore API and worker before importing GitHub history.");
-      await loreApi.importHistory(repository.id, installationId, limit);
-      notify(`Import of ${limit} merged pull requests queued`);
+      if (!apiConnected)
+        throw new Error("Start the Lore API and worker before importing GitHub history.");
+      const result = await loreApi.importHistory(repository.id, limit);
+      notify(
+        result.simulated
+          ? `Demo import of ${limit} pull requests recorded without a worker`
+          : `Import of ${limit} merged pull requests queued`
+      );
     } catch (error) {
       notify(error instanceof Error ? error.message : "Historical import could not start", "error");
       throw error;
     }
   };
 
-  const deleteRepository = async (repository: RepositorySummary, confirmation: string): Promise<void> => {
+  const deleteRepository = async (
+    repository: RepositorySummary,
+    confirmation: string
+  ): Promise<void> => {
     try {
       if (!apiConnected) throw new Error("Lore is disconnected; no changes were saved.");
       const result = await loreApi.deleteRepository(repository.id, confirmation);
@@ -274,15 +328,21 @@ export function App() {
         repositories: snapshot.repositories.filter((item) => item.id !== result.deletedId),
         knowledge: snapshot.knowledge
           .filter((item) => item.repositoryId !== result.deletedId)
-          .map((item) => result.challengedKnowledgeIds.includes(item.id) ? { ...item, status: "challenged" as const, health: "conflicted" as const } : item),
+          .map((item) =>
+            result.challengedKnowledgeIds.includes(item.id)
+              ? { ...item, status: "challenged" as const, health: "conflicted" as const }
+              : item
+          ),
         candidates: snapshot.candidates.filter((item) => item.repositoryId !== result.deletedId),
         policies: snapshot.policies.filter((item) => item.repositoryId !== result.deletedId),
         sessions: snapshot.sessions.filter((item) => item.repositoryId !== result.deletedId),
         reports: snapshot.reports.filter((item) => item.repositoryId !== result.deletedId)
       }));
-      notify(result.challengedKnowledgeIds.length > 0
-        ? `Repository deleted; ${result.challengedKnowledgeIds.length} organisation knowledge item(s) need reconfirmation`
-        : "Repository and repository-scoped data deleted");
+      notify(
+        result.challengedKnowledgeIds.length > 0
+          ? `Repository deleted; ${result.challengedKnowledgeIds.length} organisation knowledge item(s) need reconfirmation`
+          : "Repository and repository-scoped data deleted"
+      );
     } catch (error) {
       notify(error instanceof Error ? error.message : "Repository deletion failed", "error");
       throw error;
@@ -298,7 +358,9 @@ export function App() {
       const updated = await loreApi.updateRepositoryRetention(repository.id, retentionConfig);
       setData((snapshot) => ({
         ...snapshot,
-        repositories: snapshot.repositories.map((item) => item.id === repository.id ? updated : item)
+        repositories: snapshot.repositories.map((item) =>
+          item.id === repository.id ? updated : item
+        )
       }));
       notify("Repository retention policy updated and audited");
     } catch (error) {
@@ -326,11 +388,34 @@ export function App() {
       case "dashboard":
         return <DashboardPage data={data} onPrepare={prepare} onNavigate={navigate} />;
       case "repositories":
-        return <RepositoriesPage repositories={data.repositories} onConnect={connectRepository} onIndex={indexRepository} onImport={importHistory} onDelete={deleteRepository} onRetention={updateRepositoryRetention} />;
+        return (
+          <RepositoriesPage
+            repositories={data.repositories}
+            onConnect={connectRepository}
+            onIndex={indexRepository}
+            onImport={importHistory}
+            onDelete={deleteRepository}
+            onRetention={updateRepositoryRetention}
+          />
+        );
       case "knowledge":
-        return <KnowledgePage items={data.knowledge} repositories={data.repositories} onCreate={createKnowledge} onStatusChange={changeKnowledgeStatus} />;
+        return (
+          <KnowledgePage
+            items={data.knowledge}
+            repositories={data.repositories}
+            onCreate={createKnowledge}
+            onStatusChange={changeKnowledgeStatus}
+          />
+        );
       case "candidates":
-        return <CandidatesPage candidates={data.candidates} onApprove={approveCandidate} onReject={rejectCandidate} onMerge={mergeCandidate} />;
+        return (
+          <CandidatesPage
+            candidates={data.candidates}
+            onApprove={approveCandidate}
+            onReject={rejectCandidate}
+            onMerge={mergeCandidate}
+          />
+        );
       case "policies":
         return <PoliciesPage policies={data.policies} onCreate={createPolicy} />;
       case "sessions":
@@ -340,12 +425,18 @@ export function App() {
       case "reviewers":
         return <ReviewersPage data={data} />;
       case "settings":
-        return <SettingsPage />;
+        return <SettingsPage mode={demoMode ? "demo" : "persistent"} />;
     }
   })();
 
   if (loading) {
-    return <main className="connection-state"><Brand /><div className="loading-line" /><p>Loading evidence-backed engineering context…</p></main>;
+    return (
+      <main className="connection-state">
+        <Brand />
+        <div className="loading-line" />
+        <p>Loading evidence-backed engineering context…</p>
+      </main>
+    );
   }
 
   if (loadError || !apiConnected) {
@@ -356,7 +447,9 @@ export function App() {
         <h1>Lore is disconnected</h1>
         <p>{loadError ?? "The Lore API is unavailable."}</p>
         <p>No demo records have been substituted and all write actions remain disabled.</p>
-        <button className="button button--primary" onClick={() => window.location.reload()}>Retry connection</button>
+        <button className="button button--primary" onClick={() => window.location.reload()}>
+          Retry connection
+        </button>
         <code>npm run dev</code>
       </main>
     );
@@ -365,38 +458,89 @@ export function App() {
   return (
     <div className={mobileNav ? "app app--nav-open" : "app"}>
       <aside className="sidebar">
-        <div className="sidebar__brand"><Brand /><button aria-label="Close navigation" onClick={() => setMobileNav(false)}><X size={20} /></button></div>
+        <div className="sidebar__brand">
+          <Brand />
+          <button aria-label="Close navigation" onClick={() => setMobileNav(false)}>
+            <X size={20} />
+          </button>
+        </div>
         <nav>
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
-              <button className={page === item.id ? "is-active" : ""} key={item.id} onClick={() => navigate(item.id)}>
+              <button
+                className={page === item.id ? "is-active" : ""}
+                key={item.id}
+                onClick={() => navigate(item.id)}
+              >
                 <Icon size={20} />
                 <span>{item.label}</span>
-                {item.id === "candidates" && data.candidates.length > 0 && <em>{data.candidates.length}</em>}
+                {item.id === "candidates" && data.candidates.length > 0 && (
+                  <em>{data.candidates.length}</em>
+                )}
               </button>
             );
           })}
         </nav>
-        <button className={page === "settings" ? "sidebar__settings is-active" : "sidebar__settings"} onClick={() => navigate("settings")}><Settings size={20} /><span>Settings</span></button>
+        <button
+          className={page === "settings" ? "sidebar__settings is-active" : "sidebar__settings"}
+          onClick={() => navigate("settings")}
+        >
+          <Settings size={20} />
+          <span>Settings</span>
+        </button>
       </aside>
       <div className="sidebar-scrim" onClick={() => setMobileNav(false)} />
       <section className="app-frame">
         <header className="topbar">
-          <button className="mobile-menu" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={21} /></button>
-          <button className="organisation-switcher"><span>{data.organisation.name}</span><i>/</i><strong>{data.repositories[0] ? `${data.repositories[0].owner}-${data.repositories[0].name}` : "No repository"}</strong><ChevronDown size={15} /></button>
-          <button className="command-search" onClick={() => setPaletteOpen(true)}><Search size={17} /><span>Search or run a command…</span><kbd>⌘ K</kbd></button>
-          <button className="notification" aria-label="Notifications"><Bell size={19} /><i /></button>
-          <button className="avatar" aria-label="User menu">CH</button>
+          <button
+            className="mobile-menu"
+            onClick={() => setMobileNav(true)}
+            aria-label="Open navigation"
+          >
+            <Menu size={21} />
+          </button>
+          <button className="organisation-switcher">
+            <span>{data.organisation.name}</span>
+            <i>/</i>
+            <strong>
+              {data.repositories[0]
+                ? `${data.repositories[0].owner}-${data.repositories[0].name}`
+                : "No repository"}
+            </strong>
+            <ChevronDown size={15} />
+          </button>
+          <button className="command-search" onClick={() => setPaletteOpen(true)}>
+            <Search size={17} />
+            <span>Search or run a command…</span>
+            <kbd>⌘ K</kbd>
+          </button>
+          <button className="notification" aria-label="Notifications">
+            <Bell size={19} />
+            <i />
+          </button>
+          <button className="avatar" aria-label="User menu">
+            CH
+          </button>
         </header>
         <main className="app-content">{pageContent}</main>
         <footer className="statusbar">
-          <span><i className="is-online" />{demoMode ? "Demo mode · API online" : "Persistent mode · API online"}</span>
-          <span><ClockIcon /> Last indexed {data.repositories[0]?.indexedAt ? relativeTime(data.repositories[0].indexedAt) : "never"}</span>
+          <span>
+            <i className="is-online" />
+            {demoMode ? "Demo mode · API online" : "Persistent mode · API online"}
+          </span>
+          <span>
+            <ClockIcon /> Last indexed{" "}
+            {data.repositories[0]?.indexedAt
+              ? relativeTime(data.repositories[0].indexedAt)
+              : "never"}
+          </span>
           <span>v0.1.0</span>
         </footer>
       </section>
-      {paletteOpen && <CommandPalette data={data} onClose={() => setPaletteOpen(false)} onNavigate={navigate} />}
+      {paletteOpen && (
+        <CommandPalette data={data} onClose={() => setPaletteOpen(false)} onNavigate={navigate} />
+      )}
       {toast && <Toast message={toast.message} tone={toast.tone} />}
     </div>
   );
@@ -406,22 +550,86 @@ function ClockIcon() {
   return <span className="clock-icon" aria-hidden="true" />;
 }
 
-function CommandPalette({ data, onClose, onNavigate }: { data: DashboardSnapshot; onClose: () => void; onNavigate: (page: string) => void }) {
+function CommandPalette({
+  data,
+  onClose,
+  onNavigate
+}: {
+  data: DashboardSnapshot;
+  onClose: () => void;
+  onNavigate: (page: string) => void;
+}) {
   const [query, setQuery] = useState("");
   const results = useMemo(() => {
     const needle = query.toLowerCase();
     return [
-      ...navItems.map((item) => ({ id: item.id, label: `Open ${item.label}`, type: "Navigation", icon: item.icon })),
-      ...data.knowledge.map((item) => ({ id: "knowledge" as const, label: item.title, type: item.kind, icon: BookOpen })),
-      ...data.candidates.map((item) => ({ id: "candidates" as const, label: item.title, type: "Candidate", icon: Sparkles }))
-    ].filter((item) => !needle || `${item.label} ${item.type}`.toLowerCase().includes(needle)).slice(0, 10);
+      ...navItems.map((item) => ({
+        id: item.id,
+        label: `Open ${item.label}`,
+        type: "Navigation",
+        icon: item.icon
+      })),
+      ...data.knowledge.map((item) => ({
+        id: "knowledge" as const,
+        label: item.title,
+        type: item.kind,
+        icon: BookOpen
+      })),
+      ...data.candidates.map((item) => ({
+        id: "candidates" as const,
+        label: item.title,
+        type: "Candidate",
+        icon: Sparkles
+      }))
+    ]
+      .filter((item) => !needle || `${item.label} ${item.type}`.toLowerCase().includes(needle))
+      .slice(0, 10);
   }, [data, query]);
   return (
-    <div className="palette-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div
+      className="palette-backdrop"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
       <section className="palette" role="dialog" aria-label="Command search">
-        <header><Search size={19} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search knowledge, candidates, or pages…" /><kbd>esc</kbd></header>
-        <div>{results.map((item, index) => { const Icon = item.icon; return <button key={`${item.type}-${item.label}-${index}`} onClick={() => onNavigate(item.id)}><Icon size={17} /><span><strong>{item.label}</strong><small>{item.type}</small></span><Command size={14} /></button>; })}</div>
-        <footer><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span><strong>Evidence first</strong></footer>
+        <header>
+          <Search size={19} />
+          <input
+            name="commandSearch"
+            aria-label="Search commands"
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search knowledge, candidates, or pages…"
+          />
+          <kbd>esc</kbd>
+        </header>
+        <div>
+          {results.map((item, index) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={`${item.type}-${item.label}-${index}`}
+                onClick={() => onNavigate(item.id)}
+              >
+                <Icon size={17} />
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>{item.type}</small>
+                </span>
+                <Command size={14} />
+              </button>
+            );
+          })}
+        </div>
+        <footer>
+          <span>
+            <kbd>↵</kbd> open
+          </span>
+          <span>
+            <kbd>esc</kbd> close
+          </span>
+          <strong>Evidence first</strong>
+        </footer>
       </section>
     </div>
   );

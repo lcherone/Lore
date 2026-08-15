@@ -4,6 +4,8 @@ import type {
   ChangedFile,
   CodeEntity,
   CodeRelationship,
+  ContextPackage,
+  ContextPackageRecord,
   DashboardSnapshot,
   EvidenceRecord,
   KnowledgeItem,
@@ -12,7 +14,8 @@ import type {
   RepositoryRetentionConfig,
   RegressionRecord,
   RepositorySummary,
-  SafetyReport
+  SafetyReport,
+  SessionEvent
 } from "@lore/shared/types.js";
 
 export interface PullRequestImport {
@@ -94,11 +97,14 @@ export interface LanguageAnalyzer {
 }
 
 export interface LoreStore {
+  health(): Promise<void>;
+  validateMembership(organisationId: string, userId: string): Promise<void>;
   getSnapshot(organisationId: string): Promise<DashboardSnapshot>;
   getEvidence(organisationId: string): Promise<EvidenceRecord[]>;
   getRepository(organisationId: string, repositoryId: string): Promise<RepositorySummary>;
   resolveProviderRepository(
     provider: RepositorySummary["provider"],
+    providerInstallationId: string,
     providerRepositoryId: string,
     owner: string,
     name: string
@@ -160,7 +166,11 @@ export interface LoreStore {
   ): Promise<PolicyRecord>;
   createSession(session: AgentSession): Promise<AgentSession>;
   updateSession(organisationId: string, session: AgentSession): Promise<AgentSession>;
-  saveReport(organisationId: string, report: SafetyReport): Promise<SafetyReport>;
+  abandonSession(organisationId: string, sessionId: string, reason: string): Promise<AgentSession>;
+  getSessionEvents(organisationId: string, sessionId: string): Promise<SessionEvent[]>;
+  saveContextPackage(organisationId: string, sessionId: string, context: ContextPackage): Promise<ContextPackageRecord>;
+  getLatestContextPackage(organisationId: string, sessionId: string): Promise<ContextPackageRecord | undefined>;
+  saveReport(organisationId: string, report: SafetyReport, sessionId?: string): Promise<SafetyReport>;
   ingestEvidence(records: EvidenceRecord[]): Promise<number>;
   hasIngestionReceipt(organisationId: string, provider: string, externalId: string): Promise<boolean>;
   saveIngestionReceipt(organisationId: string, provider: string, externalId: string, eventType: string): Promise<void>;
@@ -172,6 +182,7 @@ export interface GitChangeReader {
 }
 
 export interface JobDispatcher {
+  health(): Promise<void>;
   dispatch(
     name: "repository.index" | "github.import" | "knowledge.extract" | "knowledge.health",
     payload: Record<string, unknown>,

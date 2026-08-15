@@ -5,12 +5,14 @@ import type {
   CodeRelationship,
   ContextPackage,
   DashboardSnapshot,
+  EvidenceRecord,
   SafetyReport
 } from "@lore/shared/types.js";
 import type { LocalConfig } from "./local-project.js";
 
 export interface LoreClient {
   snapshot(): Promise<DashboardSnapshot>;
+  evidence(): Promise<EvidenceRecord[]>;
   prepareTask(repositoryId: string, task: string, paths?: string[]): Promise<ContextPackage>;
   search(query: string, repositoryId?: string): Promise<Record<string, unknown>>;
   uploadAnalysis(input: {
@@ -20,7 +22,10 @@ export interface LoreClient {
     entities: CodeEntity[];
     relationships: CodeRelationship[];
   }): Promise<void>;
-  verify(repositoryId: string, task: string, changedFiles: ChangedFile[], baseCommit?: string): Promise<{ session: AgentSession; report: SafetyReport }>;
+  startSession(repositoryId: string, task: string, agentType: string, baseCommit?: string): Promise<{ session: AgentSession; context: ContextPackage }>;
+  refreshContext(sessionId: string, paths: string[]): Promise<ContextPackage>;
+  verify(sessionId: string, changedFiles: ChangedFile[], currentCommit?: string): Promise<{ session: AgentSession; report: SafetyReport }>;
+  abandonSession(sessionId: string, reason: string): Promise<AgentSession>;
 }
 
 export class HttpLoreClient implements LoreClient {
@@ -28,6 +33,10 @@ export class HttpLoreClient implements LoreClient {
 
   async snapshot(): Promise<DashboardSnapshot> {
     return this.#request("/api/bootstrap");
+  }
+
+  async evidence(): Promise<EvidenceRecord[]> {
+    return (await this.#request<{ items: EvidenceRecord[] }>("/api/evidence")).items;
   }
 
   async prepareTask(repositoryId: string, task: string, paths?: string[]): Promise<ContextPackage> {
@@ -56,22 +65,38 @@ export class HttpLoreClient implements LoreClient {
     });
   }
 
-  async verify(
+  async startSession(
     repositoryId: string,
     task: string,
-    changedFiles: ChangedFile[],
+    agentType: string,
     baseCommit?: string
-  ): Promise<{ session: AgentSession; report: SafetyReport }> {
+  ): Promise<{ session: AgentSession; context: ContextPackage }> {
     const session = await this.#request<AgentSession>("/api/sessions", {
       method: "POST",
-      body: JSON.stringify({ repositoryId, task, agentType: "other", ...(baseCommit ? { baseCommit } : {}) })
+      body: JSON.stringify({ repositoryId, task, agentType, ...(baseCommit ? { baseCommit } : {}) })
     });
-    await this.#request(`/api/sessions/${session.id}/refresh-context`, { method: "POST" });
-    const report = await this.#request<SafetyReport>(`/api/sessions/${session.id}/verify`, {
+    const context = await this.#request<ContextPackage>(`/api/sessions/${session.id}/refresh-context`, { method: "POST" });
+    return { session: { ...session, status: "active" }, context };
+  }
+
+  async refreshContext(sessionId: string, paths: string[]): Promise<ContextPackage> {
+    return this.#request(`/api/sessions/${sessionId}/refresh-context`, {
       method: "POST",
-      body: JSON.stringify({ changedFiles })
+      body: JSON.stringify({ paths })
     });
+  }
+
+  async verify(sessionId: string, changedFiles: ChangedFile[], currentCommit?: string): Promise<{ session: AgentSession; report: SafetyReport }> {
+    const report = await this.#request<SafetyReport>(`/api/sessions/${sessionId}/verify`, {
+      method: "POST",
+      body: JSON.stringify({ changedFiles, ...(currentCommit ? { currentCommit } : {}) })
+    });
+    const session = await this.#request<AgentSession>(`/api/sessions/${sessionId}`);
     return { session, report };
+  }
+
+  async abandonSession(sessionId: string, reason: string): Promise<AgentSession> {
+    return this.#request(`/api/sessions/${sessionId}/abandon`, { method: "POST", body: JSON.stringify({ reason }) });
   }
 
   async #request<T>(path: string, init?: RequestInit): Promise<T> {

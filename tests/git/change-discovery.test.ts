@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, rename, unlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, rename, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -32,6 +32,8 @@ describe("Git change discovery", () => {
     await runGit(root, ["add", "-A", "rename-me.ts", "renamed.ts"]);
     await unlink(join(root, "delete-me.ts"));
     await writeFile(join(root, "untracked.ts"), "export const untracked = true;\n");
+    await mkdir(join(root, ".lore"));
+    await writeFile(join(root, ".lore", "context.json"), "{\"private\":true}\n");
 
     const changes = await new LocalGit().changedFiles(root);
     expect(changes.map(({ path, status }) => ({ path, status }))).toEqual([
@@ -43,5 +45,6 @@ describe("Git change discovery", () => {
     ]);
     expect(changes.find((item) => item.path === "renamed.ts")?.previousPath).toBe("rename-me.ts");
     expect(changes.find((item) => item.path === "untracked.ts")?.patch).toContain("+export const untracked = true;");
+    expect(changes.some((item) => item.path.startsWith(".lore/"))).toBe(false);
   });
 });

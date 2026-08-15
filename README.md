@@ -49,8 +49,9 @@ Lore is a strict-TypeScript modular monolith with explicit adapters. It can run 
 ```mermaid
 flowchart TB
   UI[React web app] --> API[Fastify API]
-  CLI[CLI] --> LOCAL[Local repository runtime]
+  CLI[CLI] --> LOCAL[Trusted local repository runtime]
   MCP[MCP server] --> LOCAL
+  LOCAL -->|sanitised graph and change envelopes| API
   API --> CORE[Context, knowledge, policy, reporting services]
   WORKER[BullMQ worker] --> CORE
   CORE --> PG[(PostgreSQL / Prisma)]
@@ -67,7 +68,7 @@ flowchart TB
 Key design choices:
 
 - PostgreSQL is the source of truth; JSON fields hold bounded metadata, not the whole graph.
-- Repository access is local. Whole repositories are not uploaded by the CLI.
+- Repository access is local. The browser never selects a server path; service mode uploads a sanitised symbol/relationship graph, not a source checkout.
 - Every knowledge item retains scope, evidence, confidence, classification, health, and provenance.
 - AI output is schema-validated and becomes a proposal or candidate—not a direct database mutation.
 - Policies are explicit, human-owned, deterministic detectors.
@@ -170,12 +171,16 @@ GITHUB_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE K
 GITHUB_WEBHOOK_SECRET=replace-with-a-long-random-secret
 ```
 
-Start installation by requesting `GET /api/github/install`, follow the returned URL, then retain the resulting installation ID. Connect the repository in the UI or with `POST /api/repositories`, then queue 100–500 merged PRs:
+Start installation by requesting `GET /api/github/install`, follow the returned URL, then retain the resulting installation ID. Store that ID when connecting the repository; later imports use the repository's registered installation rather than accepting one per job:
 
 ```bash
+curl -X POST http://127.0.0.1:3001/api/repositories \
+  -H 'content-type: application/json' \
+  -d '{"provider":"github","owner":"acme","name":"commerce","defaultBranch":"main","providerInstallationId":"12345678"}'
+
 curl -X POST http://127.0.0.1:3001/api/repositories/REPOSITORY_ID/github-import \
   -H 'content-type: application/json' \
-  -d '{"installationId":12345678,"limit":250}'
+  -d '{"limit":250}'
 ```
 
 The worker imports PRs, commits, changed paths, reviews, and review comments as idempotent evidence, then schedules structured candidate extraction. Configure per-repository retention in the UI before import when raw diffs, review comments, or summary-only storage need different handling. Webhooks validate their HMAC signature and GitHub delivery ID before ingestion. See [GitHub integration](docs/github.md).
@@ -201,7 +206,7 @@ npm run build
 npm link
 ```
 
-Then, inside a Git repository:
+Then choose an explicit CLI authority inside a Git repository. `local` is the default and never injects fixture knowledge:
 
 ```bash
 lore init --repository acme/commerce --organisation acme-engineering
@@ -213,7 +218,15 @@ lore explain AddressCode::fromRole
 lore verify
 ```
 
-`lore init` creates `.lore/config.json` and a small static agent instruction file. `lore index` parses TypeScript/JavaScript and PHP ASTs, reads bounded Git history, calculates statistically supported co-change relationships, and stores the local graph under `.lore/`. Secrets are never stored there.
+For the bundled scenario, opt in with `lore init --mode demo`. To use PostgreSQL-backed organisational knowledge, connect the checkout to an existing service repository and re-index; indexing keeps source local and uploads the sanitised graph:
+
+```bash
+lore connect --repository-id UUID --organisation-id UUID --api-url http://127.0.0.1:3001
+lore index
+lore prepare "TICKET-123 task description"
+```
+
+`lore init` creates `.lore/config.json`, a small static agent instruction file, and a repository-local Git exclusion for `.lore/`. `lore index` parses TypeScript/JavaScript and PHP ASTs, reads bounded Git history, calculates statistically supported co-change relationships, and stores the local graph under `.lore/`. Lore state is always omitted from verification and secrets are never stored there.
 
 For scripts, put `--json` before the command:
 
@@ -230,7 +243,7 @@ lore session status
 lore session stop
 
 lore knowledge list
-lore knowledge show knowledge_avalara_codes
+lore knowledge show KNOWLEDGE_UUID
 lore knowledge export --format markdown --output lore-knowledge.md
 lore knowledge import AGENTS.md
 lore knowledge import docs/adr/0007-tax-boundary.md
@@ -242,7 +255,7 @@ Run an agent under Lore’s prepare/observe/verify wrapper:
 lore agent codex "SS-6160 Update Avalara ShipFrom and ShipTo addresses"
 ```
 
-Only the explicit `codex`, `claude`, and `cursor` executables are accepted; shell interpolation is not used. When a newly changed file appears, context is refreshed automatically. A blocker exits verification with code 2.
+The interactive wrapper currently supports Codex and passes initial context in Codex's prompt as well as `.lore/LORE_CONTEXT.md`. Other agents consume the same service contracts through MCP. Git discovery includes staged, unstaged, renamed, deleted, and untracked files; context refreshes when the working set expands, the final diff is verified, and non-zero agent exits are retained as abandoned sessions. Shell interpolation is never used.
 
 See [onboarding](docs/onboarding.md) for configuration and troubleshooting.
 
@@ -302,11 +315,13 @@ Confidence is calculated server-side from independent observations, PRs, reviewe
 ## Security model
 
 - Signed, HTTP-only session cookies; CSRF protection for non-demo production writes.
+- Active membership is revalidated before authenticated API routes.
 - GitHub OAuth state and webhook HMAC validation.
 - Organisation and repository checks at every store boundary.
 - Immutable evidence identities and ingestion receipts for replay protection.
 - Structured logging with token, key, cookie, and credential redaction.
-- Git runs through argument arrays with `shell: false`; revisions are validated.
+- Git runs through argument arrays with `shell: false`; revisions are validated and change collection is NUL-delimited and bounded.
+- Local `.lore` state is owner-only, symlink-resistant, size-bounded, and atomically replaced.
 - Repository, ticket, review, and documentation text is untrusted AI input.
 - AI cannot create policy, calculate authority, execute tools, or write database rows directly.
 - Explicit policy detectors inspect only changed paths and added patch lines.

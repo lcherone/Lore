@@ -19,7 +19,14 @@ export function formatContextPackage(context: ContextPackage): string {
   lines.push("", "Relevant knowledge:");
   lines.push(
     ...(knowledge.length
-      ? knowledge.map((entry) => `- [${entry.priority.toUpperCase()}] ${"name" in entry.item ? entry.item.name : entry.item.title} (${percent(entry.confidence)})\n  ${entry.reason}`)
+      ? knowledge.map((entry) => {
+          const title = "name" in entry.item ? entry.item.name : entry.item.title;
+          const statement = "detector" in entry.item ? entry.item.description : entry.item.statement;
+          const provenance = entry.evidence[0]
+            ? `\n  Evidence: ${entry.evidence[0].title ?? entry.evidence[0].externalId} — ${entry.evidence[0].content.replace(/\s+/g, " ").slice(0, 180)}`
+            : "\n  Evidence: no retained excerpt; inspect Lore provenance before relying on this item.";
+          return `- [${entry.priority.toUpperCase()}] ${title} (${percent(entry.confidence)})\n  Action: ${statement}\n  Included because: ${entry.reason}${provenance}`;
+        })
       : ["- No applicable knowledge found."])
   );
   lines.push("", "Historical regressions:");
@@ -42,4 +49,3 @@ export function formatAgentInstructions(context: ContextPackage): string {
     "Before completion: run `lore verify` and address any blockers."
   ].join("\n");
 }
-

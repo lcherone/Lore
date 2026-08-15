@@ -38,6 +38,14 @@ describe("evidence-backed knowledge", () => {
     expect(scopeApplies(scope, { repository, paths: ["src/Order/Service/Create.php"] })).toBe(false);
   });
 
+  it("treats missing required path, symbol, and integration dimensions as non-matches", () => {
+    const repository = createDemoSnapshot().repositories[0]!;
+    expect(scopeApplies({ paths: ["src/Tax/**"] }, { repository })).toBe(false);
+    expect(scopeApplies({ symbols: ["AddressCode::fromRole"] }, { repository, paths: ["src/Tax/AddressCode.php"] })).toBe(false);
+    expect(scopeApplies({ integration: "Avalara" }, { repository, paths: ["src/Checkout/Service.ts"] })).toBe(false);
+    expect(scopeApplies({ integration: "Avalara" }, { repository, paths: ["src/Tax/Avalara/Client.php"] })).toBe(true);
+  });
+
   it("flags contradictory active knowledge instead of overwriting it", () => {
     const current = createDemoSnapshot().knowledge[0]!;
     const existing: KnowledgeItem = {

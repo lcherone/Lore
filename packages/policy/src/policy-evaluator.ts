@@ -5,15 +5,36 @@ import type {
   PolicyRecord,
   RepositorySummary
 } from "@lore/shared/types.js";
-
-const lineForIndex = (content: string, index: number): number => content.slice(0, index).split("\n").length;
+import { policyPatternError } from "@lore/shared/policy-patterns.js";
 
 const safeExpression = (pattern: string): RegExp | undefined => {
+  if (policyPatternError(pattern)) return undefined;
   try {
-    return new RegExp(pattern, "gi");
+    return new RegExp(pattern, "i");
   } catch {
     return undefined;
   }
+};
+
+const addedSourceLines = (patch: string): Array<{ content: string; line: number }> => {
+  const added: Array<{ content: string; line: number }> = [];
+  let targetLine = 0;
+  for (const line of patch.split("\n")) {
+    const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunk) {
+      targetLine = Number(hunk[1]);
+      continue;
+    }
+    if (line.startsWith("+++")) continue;
+    if (line.startsWith("+")) {
+      targetLine = targetLine || 1;
+      added.push({ content: line.slice(1), line: targetLine });
+      targetLine += 1;
+    } else if (!line.startsWith("-") && targetLine > 0) {
+      targetLine += 1;
+    }
+  }
+  return added;
 };
 
 const redact = (value: string): string =>
@@ -23,12 +44,12 @@ const redact = (value: string): string =>
     .slice(0, 180);
 
 export class PolicyEvaluator {
-  evaluate(repository: RepositorySummary, policies: PolicyRecord[], changedFiles: ChangedFile[]): PolicyFinding[] {
+  evaluate(repository: RepositorySummary, policies: PolicyRecord[], changedFiles: ChangedFile[], organisation?: string): PolicyFinding[] {
     const findings: PolicyFinding[] = [];
     const changedPaths = changedFiles.map((file) => file.path);
 
     for (const policy of policies.filter((item) => item.enabled)) {
-      if (!scopeApplies(policy.scope, { repository, paths: changedPaths })) continue;
+      if (!scopeApplies(policy.scope, { repository, organisation, paths: changedPaths })) continue;
       const detector = policy.detector;
 
       if (detector.type === "forbidden_path") {
@@ -61,16 +82,16 @@ export class PolicyEvaluator {
 
       if (detector.type === "forbidden_import") {
         for (const file of changedFiles) {
-          const patch = file.patch ?? "";
+          const added = addedSourceLines(file.patch ?? "");
           for (const imported of detector.imports) {
-            const index = patch.indexOf(imported);
-            if (index < 0) continue;
+            const match = added.find((line) => line.content.includes(imported));
+            if (!match) continue;
             findings.push({
               policyId: policy.id,
               policyName: policy.name,
               severity: policy.severity,
               path: file.path,
-              line: lineForIndex(patch, index),
+              line: match.line,
               message: detector.message,
               evidence: `Import contains: ${imported}`
             });
@@ -80,27 +101,20 @@ export class PolicyEvaluator {
 
       if (detector.type === "forbidden_pattern" || detector.type === "secret_scan") {
         for (const file of changedFiles) {
-          const patch = file.patch ?? "";
-          const addedLines = patch
-            .split("\n")
-            .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
-            .join("\n");
+          const added = addedSourceLines(file.patch ?? "");
           for (const pattern of detector.patterns) {
             const expression = safeExpression(pattern);
             if (!expression) continue;
-            const match = expression.exec(addedLines);
+            const match = added.find((line) => expression.test(line.content));
             if (!match) continue;
-            const lineStart = addedLines.lastIndexOf("\n", match.index) + 1;
-            const followingBreak = addedLines.indexOf("\n", match.index);
-            const lineEnd = followingBreak < 0 ? addedLines.length : followingBreak;
             findings.push({
               policyId: policy.id,
               policyName: policy.name,
               severity: policy.severity,
               path: file.path,
-              line: lineForIndex(addedLines, match.index),
+              line: match.line,
               message: detector.message,
-              evidence: redact(addedLines.slice(lineStart, lineEnd))
+              evidence: redact(match.content)
             });
           }
         }

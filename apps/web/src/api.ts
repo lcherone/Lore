@@ -1,9 +1,11 @@
 import type { ContextPackage, DashboardSnapshot, KnowledgeItem, PolicyRecord, RepositoryRetentionConfig, RepositorySummary } from "@lore/shared/types.js";
 
+let csrfToken: string | undefined;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: "include",
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    headers: { "content-type": "application/json", ...(csrfToken && init?.method && init.method !== "GET" ? { "csrf-token": csrfToken } : {}), ...(init?.headers ?? {}) },
     ...init
   });
   if (!response.ok) {
@@ -15,7 +17,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const loreApi = {
-  session: (): Promise<{ user: { organisationId: string; userId: string; name: string }; demoMode: boolean }> => request("/api/auth/session"),
+  session: async (): Promise<{ user: { organisationId: string; userId: string; name: string }; demoMode: boolean }> => {
+    const session = await request<{ user: { organisationId: string; userId: string; name: string }; demoMode: boolean }>("/api/auth/session");
+    if (!session.demoMode) {
+      const csrf = await request<{ enabled: boolean; token?: string }>("/api/auth/csrf");
+      csrfToken = csrf.token;
+    }
+    return session;
+  },
   bootstrap: (): Promise<DashboardSnapshot> => request("/api/bootstrap"),
   prepareTask: (repositoryId: string, task: string): Promise<ContextPackage> =>
     request("/api/tasks/prepare", { method: "POST", body: JSON.stringify({ repositoryId, task }) }),
@@ -33,9 +42,9 @@ export const loreApi = {
     request(`/api/knowledge/${id}/archive`, { method: "POST", body: JSON.stringify({ reason }) }),
   connectRepository: (input: Record<string, unknown>) =>
     request("/api/repositories", { method: "POST", body: JSON.stringify(input) }),
-  indexRepository: (id: string) => request(`/api/repositories/${id}/index`, { method: "POST" }),
-  importHistory: (id: string, installationId: number, limit: 50 | 100 | 250 | 500 | 1000) =>
-    request(`/api/repositories/${id}/github-import`, { method: "POST", body: JSON.stringify({ installationId, limit }) }),
+  indexRepository: (id: string): Promise<{ status: "queued" | "completed"; simulated?: boolean }> => request(`/api/repositories/${id}/index`, { method: "POST" }),
+  importHistory: (id: string, limit: 50 | 100 | 250 | 500 | 1000): Promise<{ status: "queued" | "simulated"; simulated?: boolean }> =>
+    request(`/api/repositories/${id}/github-import`, { method: "POST", body: JSON.stringify({ limit }) }),
   deleteRepository: (id: string, confirmation: string): Promise<{ deletedId: string; challengedKnowledgeIds: string[] }> =>
     request(`/api/repositories/${id}?confirm=${encodeURIComponent(confirmation)}`, { method: "DELETE" }),
   updateRepositoryRetention: (id: string, retentionConfig: RepositoryRetentionConfig): Promise<RepositorySummary> =>

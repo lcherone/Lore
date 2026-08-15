@@ -48,7 +48,13 @@ server.registerTool(
   async ({ query, kind }) => {
     const search = await runtime.search(query);
     if (!kind || !Array.isArray(search.knowledge)) return result(search);
-    return result({ ...search, knowledge: search.knowledge.filter((item) => item && typeof item === "object" && "kind" in item && item.kind === kind) });
+    return result({
+      ...search,
+      knowledge: search.knowledge.filter(
+        (item): item is Record<string, unknown> =>
+          item !== null && typeof item === "object" && "kind" in item && (item as Record<string, unknown>).kind === kind
+      )
+    });
   }
 );
 

@@ -28,7 +28,8 @@
     "worker": "tsx apps/worker/src/index.ts",
     "mcp": "tsx apps/mcp/src/index.ts",
     "cli": "tsx apps/cli/src/index.ts",
-    "smoke:persistent": "tsx scripts/persistent-smoke.ts"
+    "smoke:persistent": "tsx scripts/persistent-smoke.ts",
+    "smoke:queue": "tsx scripts/queue-smoke.ts"
   },
   "engines": {
     "node": ">=22.0.0"

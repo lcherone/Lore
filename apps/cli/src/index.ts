@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import { Command } from "commander";
-import { formatContextPackage } from "@lore/context/index.js";
+import { formatAgentInstructions, formatContextPackage } from "@lore/context/index.js";
 import { ImpactGraph } from "@lore/impact/index.js";
 import { formatSafetyReport } from "@lore/reporting/index.js";
 import { CliRuntime } from "./runtime.js";
@@ -260,11 +260,11 @@ knowledge
 
 program
   .command("agent")
-  .argument("<agent>", "codex, claude, or cursor")
+  .argument("<agent>", "codex (other agents use Lore MCP)")
   .argument("<task...>", "task description")
   .description("prepare mandatory context, run an agent, observe changes, then verify")
   .action(async (agent: string, taskParts: string[]) => {
-    if (!new Set(["codex", "claude", "cursor"]).has(agent)) throw new Error("Agent must be codex, claude, or cursor");
+    if (agent !== "codex") throw new Error("The verified interactive wrapper currently supports Codex. Connect other agents through Lore MCP.");
     const local = runtime();
     const task = taskParts.join(" ");
     const sessionState = await local.startSession(task, agent);
@@ -280,8 +280,8 @@ program
           const discovered = changed.filter((path) => !observed.has(path));
           changed.forEach((path) => observed.add(path));
           if (discovered.length > 0) {
-            await local.prepare(task, changed);
-            process.stderr.write(`\nLore discovered additional context for: ${discovered.join(", ")}\n`);
+            await local.refreshSessionContext(task, changed);
+            process.stderr.write(`\nLore refreshed .lore/LORE_CONTEXT.md for: ${discovered.join(", ")}. Review it before completion.\n`);
           }
         })
         .catch(() => undefined)
@@ -289,7 +289,16 @@ program
           checking = false;
         });
     }, 2_000);
-    const child = spawn(agent, [], {
+    const context = await local.project.readContext();
+    if (!context) throw new Error("Lore did not prepare an agent context");
+    const agentPrompt = [
+      task,
+      "",
+      "Lore prepared the following evidence-backed context before this session. Follow mandatory policies, use the listed decisions as scoped guidance, and run the requested verification before completion. Lore may refresh .lore/LORE_CONTEXT.md when the working set changes; read that file again before finalising.",
+      "",
+      formatAgentInstructions(context)
+    ].join("\n");
+    const child = spawn(agent, ["-C", local.project.root, agentPrompt], {
       cwd: local.project.root,
       shell: false,
       stdio: "inherit",
@@ -300,6 +309,12 @@ program
       child.on("close", (code) => resolveExit(code ?? 1));
     });
     clearInterval(timer);
+    if (exitCode !== 0) {
+      await local.abandonSession(`Codex exited with status ${exitCode}`);
+      process.stderr.write(`Lore retained the session as abandoned because Codex exited with status ${exitCode}.\n`);
+      process.exitCode = exitCode;
+      return;
+    }
     const report = await local.verify(task);
     process.stdout.write(`${formatSafetyReport(report)}\n`);
     process.exitCode = report.blockers.length > 0 ? 2 : exitCode;

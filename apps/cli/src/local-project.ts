@@ -1,9 +1,10 @@
-import { chmod, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { appendFile, chmod, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { z } from "zod";
 import type { CodeEntity, CodeRelationship, ContextPackage, SafetyReport } from "@lore/shared/types.js";
 import { DEMO_ORGANISATION_ID, DEMO_REPOSITORY_ID } from "@lore/shared/demo-data.js";
+import { GitCommandError, runGit } from "@lore/git/index.js";
 
 const configSchema = z.object({
   repositoryId: z.string().min(1),
@@ -57,6 +58,7 @@ export class LocalProject {
         ""
       ].join("\n")
     );
+    await this.#ensureLocalGitExclude();
     return config;
   }
 
@@ -108,7 +110,7 @@ export class LocalProject {
     await this.#writeJson("latest-report.json", report);
   }
 
-  async saveSession(session: Record<string, unknown>): Promise<void> {
+  async saveSession(session: unknown): Promise<void> {
     await mkdir(this.loreDirectory, { recursive: true, mode: 0o700 });
     await this.#writeJson("session.json", session);
   }
@@ -154,6 +156,29 @@ export class LocalProject {
     const metadata = await this.#assertSafeExistingPath(target, true);
     if (metadata.size > maximumBytes) throw new Error(`Lore state file ${name} exceeds the ${maximumBytes}-byte safety limit`);
     return readFile(target, "utf8");
+  }
+
+  async #ensureLocalGitExclude(): Promise<void> {
+    try {
+      const gitPath = (await runGit(this.root, ["rev-parse", "--git-path", "info/exclude"])).trim();
+      if (!gitPath) return;
+      const excludePath = resolve(this.root, gitPath);
+      await mkdir(resolve(excludePath, ".."), { recursive: true });
+      let contents = "";
+      try {
+        const metadata = await lstat(excludePath);
+        if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error(`Lore refuses unsafe Git exclude path: ${excludePath}`);
+        contents = await readFile(excludePath, "utf8");
+      } catch (error) {
+        if (!this.#isMissing(error)) throw error;
+      }
+      if (!contents.split(/\r?\n/).includes(".lore/")) {
+        await appendFile(excludePath, `${contents && !contents.endsWith("\n") ? "\n" : ""}.lore/\n`, { encoding: "utf8", mode: 0o600 });
+      }
+    } catch (error) {
+      if (error instanceof GitCommandError) return;
+      throw error;
+    }
   }
 
   async #assertSafeExistingPath(target: string, required: boolean) {

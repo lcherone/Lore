@@ -18,6 +18,7 @@ const repository: RepositorySummary = {
   organisationId: DEMO_ORGANISATION_ID,
   provider: "github",
   providerRepositoryId: "73421009",
+  providerInstallationId: "123",
   owner: "soho",
   name: "ecom",
   defaultBranch: "main",

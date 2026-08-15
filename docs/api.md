@@ -9,6 +9,7 @@ GET  /healthz
 GET  /readyz
 GET  /metrics
 GET  /api/auth/session
+GET  /api/auth/csrf
 GET  /api/bootstrap
 GET  /api/onboarding
 ```
@@ -18,6 +19,7 @@ GET  /api/onboarding
 ```text
 POST /api/repositories
 POST /api/repositories/:id/index
+PUT  /api/repositories/:id/analysis
 POST /api/repositories/:id/github-import
 PATCH /api/repositories/:id/retention
 DELETE /api/repositories/:id?confirm=OWNER%2FNAME
@@ -28,12 +30,13 @@ GET  /api/github/callback
 POST /api/github/webhook
 ```
 
-Index and import requests return `202` with a job ID. They never perform expensive analysis inside the HTTP request.
+Worker-backed index and import requests return `202` with a job ID. Demo mode labels these responses `simulated`; it never claims an in-memory job was executed. The trusted local CLI uses `PUT /analysis` to upload a bounded sanitised graph, while browser requests cannot register filesystem paths.
 
 ## Knowledge
 
 ```text
 GET  /api/knowledge
+GET  /api/evidence
 POST /api/knowledge
 GET  /api/knowledge/:id
 POST /api/knowledge/:id/approve
@@ -60,12 +63,16 @@ Retention settings are applied before GitHub evidence is written. Summary-only m
 POST /api/tasks/prepare
 POST /api/sessions
 GET  /api/sessions/:id
+GET  /api/sessions/:id/events
 POST /api/sessions/:id/refresh-context
 POST /api/sessions/:id/verify
+POST /api/sessions/:id/abandon
 GET  /api/policies
 POST /api/policies
 GET  /api/reports/:id
 ```
+
+Session context revisions are immutable records. Verification requires a persisted context revision; report creation and the terminal session update are one store transaction, and append-only events expose the lifecycle sequence.
 
 Every body is validated with Zod. Errors use:
 

@@ -15,4 +15,28 @@ describe("progressive context", () => {
     expect(refreshed.candidateFiles).not.toEqual(initial.candidateFiles);
     expect(refreshed.historicalRegressions.some((item) => item.item.title.includes("refund"))).toBe(true);
   });
+
+  it("does not leak required scopes when the task lacks that dimension", () => {
+    const snapshot = createDemoSnapshot();
+    const repository = snapshot.repositories[0]!;
+    const graph = createDemoCodeGraph();
+    snapshot.knowledge = [{
+      ...snapshot.knowledge[0]!,
+      id: "unrelated-scope",
+      title: "Avalara checkout guidance",
+      statement: "Avalara checkout calls require an integration token.",
+      scope: { repository: "soho/ecom", paths: ["src/Tax/Avalara/**"] }
+    }];
+    const context = new TaskPreparationService().prepare({
+      repository,
+      task: "Update checkout guidance",
+      explicitPaths: ["src/Checkout/Help.ts"],
+      snapshot,
+      evidence: getDemoEvidence(),
+      entities: graph.entities,
+      relationships: graph.relationships,
+      regressions: graph.regressions
+    });
+    expect([...context.rules, ...context.decisions].some((entry) => entry.id === "unrelated-scope")).toBe(false);
+  });
 });

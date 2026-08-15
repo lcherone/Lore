@@ -27,8 +27,21 @@ export function matchesPath(path: string, patterns: string[] | undefined): boole
 
 export function scopeApplies(
   scope: KnowledgeScope,
-  input: { repository: RepositorySummary; paths?: string[]; symbols?: string[]; reviewer?: string }
+  input: {
+    repository: RepositorySummary;
+    organisation?: string;
+    paths?: string[];
+    symbols?: string[];
+    reviewer?: string;
+    language?: string;
+    framework?: string;
+    team?: string;
+    subsystem?: string;
+    integration?: string;
+    ticketType?: string;
+  }
 ): boolean {
+  if (scope.organisation && scope.organisation !== input.repository.organisationId && scope.organisation !== input.organisation) return false;
   if (scope.repository && scope.repository !== `${input.repository.owner}/${input.repository.name}` && scope.repository !== input.repository.id) {
     return false;
   }
@@ -36,11 +49,21 @@ export function scopeApplies(
   if (scope.reviewer && scope.reviewer !== input.reviewer) return false;
 
   const paths = input.paths ?? [];
-  if (scope.paths && paths.length > 0 && !paths.some((path) => matchesPath(path, scope.paths))) return false;
+  if (scope.paths && (paths.length === 0 || !paths.some((path) => matchesPath(path, scope.paths)))) return false;
   if (scope.excludedPaths && paths.some((path) => matchesPath(path, scope.excludedPaths))) return false;
 
   const symbols = input.symbols ?? [];
-  if (scope.symbols && symbols.length > 0 && !symbols.some((symbol) => scope.symbols?.includes(symbol))) return false;
+  if (scope.symbols && (symbols.length === 0 || !symbols.some((symbol) => scope.symbols?.includes(symbol)))) return false;
+
+  const contextualText = [...paths, ...symbols].join(" ").toLowerCase();
+  const dimensionMatches = (required: string | undefined, provided: string | undefined): boolean =>
+    !required || provided?.toLowerCase().includes(required.toLowerCase()) || contextualText.includes(required.toLowerCase());
+  if (!dimensionMatches(scope.language, input.language)) return false;
+  if (!dimensionMatches(scope.framework, input.framework)) return false;
+  if (!dimensionMatches(scope.team, input.team)) return false;
+  if (!dimensionMatches(scope.subsystem, input.subsystem)) return false;
+  if (!dimensionMatches(scope.integration, input.integration)) return false;
+  if (!dimensionMatches(scope.ticketType, input.ticketType)) return false;
 
   return true;
 }
@@ -65,7 +88,6 @@ export function knowledgePrecedence(item: KnowledgeItem): number {
 export function sortByPrecedence(items: KnowledgeItem[]): KnowledgeItem[] {
   return [...items].sort((left, right) => {
     const precedenceDelta = knowledgePrecedence(right) - knowledgePrecedence(left);
-    return precedenceDelta || right.confidence - left.confidence;
+    return precedenceDelta || right.confidence - left.confidence || left.id.localeCompare(right.id);
   });
 }
-

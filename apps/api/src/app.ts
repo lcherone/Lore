@@ -15,14 +15,16 @@ import { BullMqJobDispatcher, createLoreStore, InMemoryJobDispatcher } from "@lo
 import { TaskPreparationService } from "@lore/context/index.js";
 import { KnowledgeService } from "@lore/knowledge/index.js";
 import { ChangeVerificationService } from "@lore/reporting/index.js";
+import { assertTrustedRepositoryPath } from "@lore/git/index.js";
 import {
   approveCandidateSchema,
   createSessionSchema,
   prepareTaskSchema,
   verifyChangeSchema
 } from "@lore/shared/schemas.js";
-import type { PolicyDetector, PolicyRecord } from "@lore/shared/types.js";
+import type { CodeEntity, CodeRelationship, PolicyDetector, PolicyRecord } from "@lore/shared/types.js";
 import { newUuid } from "@lore/shared/ids.js";
+import { policyPatternError } from "@lore/shared/policy-patterns.js";
 import { verifyGitHubWebhook, webhookEvidence } from "@lore/github/index.js";
 import { createOAuthState, encodeSession, tenantContext, verifyOAuthState } from "./auth.js";
 import { ApiMetrics } from "./metrics.js";
@@ -55,13 +57,46 @@ const repositoryRetentionSchema = z.object({
 const repositoryInputSchema = z.object({
   provider: z.enum(["github", "gitlab", "bitbucket", "local"]).default("github"),
   providerRepositoryId: z.string().max(200).optional(),
+  providerInstallationId: z.string().regex(/^\d+$/).max(100).optional(),
   owner: z.string().min(1).max(200),
   name: z.string().min(1).max(200),
   defaultBranch: z.string().min(1).max(200).default("main"),
   cloneUrl: z.string().max(2_000).optional(),
-  localPath: z.string().max(4_000).optional(),
   retentionConfig: repositoryRetentionSchema.optional()
 });
+
+const codeEntitySchema = z.object({
+  id: z.string().uuid(),
+  repositoryId: z.string().min(1),
+  type: z.enum(["file", "class", "interface", "trait", "function", "method", "constant", "event", "listener", "service", "repository", "controller", "route", "database_table", "configuration_key", "external_api", "test"]),
+  name: z.string().min(1).max(1_000),
+  qualifiedName: z.string().min(1).max(2_000),
+  path: z.string().min(1).max(4_000),
+  startLine: z.number().int().positive().optional(),
+  endLine: z.number().int().positive().optional(),
+  language: z.string().min(1).max(100),
+  fingerprint: z.string().min(1).max(4_000),
+  metadata: z.record(z.string(), z.unknown())
+}).strict();
+
+const codeRelationshipSchema = z.object({
+  id: z.string().uuid(),
+  repositoryId: z.string().min(1),
+  sourceEntityId: z.string().uuid(),
+  targetEntityId: z.string().uuid(),
+  relationshipType: z.string().min(1).max(200),
+  confidence: z.number().min(0).max(1),
+  source: z.enum(["static_analysis", "git_history", "ai_inference", "manual", "github", "jira"]),
+  metadata: z.record(z.string(), z.unknown())
+}).strict();
+
+const analysisUploadSchema = z.object({
+  repositoryId: z.string().min(1),
+  commit: z.string().min(1).max(128).optional(),
+  indexedAt: z.string().datetime(),
+  entities: z.array(codeEntitySchema).max(50_000),
+  relationships: z.array(codeRelationshipSchema).max(200_000)
+}).strict();
 
 const policyInputSchema = z.object({
   repositoryId: z.string().optional(),
@@ -72,12 +107,18 @@ const policyInputSchema = z.object({
   scope: z.record(z.string(), z.unknown()),
   enabled: z.boolean().default(true),
   detector: z.discriminatedUnion("type", [
-    z.object({ type: z.literal("forbidden_pattern"), patterns: z.array(z.string()).min(1), message: z.string().min(3) }),
-    z.object({ type: z.literal("forbidden_import"), imports: z.array(z.string()).min(1), message: z.string().min(3) }),
-    z.object({ type: z.literal("forbidden_path"), paths: z.array(z.string()).min(1), message: z.string().min(3) }),
-    z.object({ type: z.literal("required_test"), whenPaths: z.array(z.string()).min(1), testPaths: z.array(z.string()).min(1), message: z.string().min(3) }),
-    z.object({ type: z.literal("secret_scan"), patterns: z.array(z.string()).min(1), message: z.string().min(3) })
+    z.object({ type: z.literal("forbidden_pattern"), patterns: z.array(z.string().min(1).max(256)).min(1).max(25), message: z.string().min(3).max(1_000) }),
+    z.object({ type: z.literal("forbidden_import"), imports: z.array(z.string().min(1).max(500)).min(1).max(100), message: z.string().min(3).max(1_000) }),
+    z.object({ type: z.literal("forbidden_path"), paths: z.array(z.string().min(1).max(1_000)).min(1).max(100), message: z.string().min(3).max(1_000) }),
+    z.object({ type: z.literal("required_test"), whenPaths: z.array(z.string().min(1).max(1_000)).min(1).max(100), testPaths: z.array(z.string().min(1).max(1_000)).min(1).max(100), message: z.string().min(3).max(1_000) }),
+    z.object({ type: z.literal("secret_scan"), patterns: z.array(z.string().min(1).max(256)).min(1).max(25), message: z.string().min(3).max(1_000) })
   ])
+}).strict().superRefine((value, context) => {
+  if (value.detector.type !== "forbidden_pattern" && value.detector.type !== "secret_scan") return;
+  value.detector.patterns.forEach((pattern, index) => {
+    const message = policyPatternError(pattern);
+    if (message) context.addIssue({ code: "custom", path: ["detector", "patterns", index], message });
+  });
 });
 
 const manualKnowledgeSchema = z.object({
@@ -167,12 +208,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   await app.register(rateLimit, { max: demoMode ? 1_000 : 300, timeWindow: "1 minute" });
   await app.register(rawBody, { field: "rawBody", global: false, encoding: false, runFirst: true });
 
+  let csrfEnabled = false;
   if (!demoMode && process.env.NODE_ENV === "production") {
+    csrfEnabled = true;
     await app.register(csrfProtection, {
       cookieOpts: { signed: true, sameSite: "strict", secure: true, httpOnly: true }
     });
     app.addHook("onRequest", (request, reply, done) => {
-      if (["GET", "HEAD", "OPTIONS"].includes(request.method) || request.url === "/api/github/webhook") {
+      if (["GET", "HEAD", "OPTIONS"].includes(request.method) || request.url === "/api/github/webhook" || !request.cookies.lore_session) {
         done();
         return;
       }
@@ -182,6 +225,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
 
   app.addHook("onRequest", async () => {
     metrics.requests += 1;
+  });
+  app.addHook("preHandler", async (request) => {
+    if (!request.url.startsWith("/api/") || request.url === "/api/github/webhook") return;
+    const tenant = tenantContext(request, demoMode);
+    await store.validateMembership(tenant.organisationId, tenant.userId);
   });
   app.addHook("onClose", async () => {
     await jobs.close?.();
@@ -202,7 +250,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   });
 
   app.get("/healthz", async () => ({ status: "ok", service: "lore-api", version: "0.1.0" }));
-  app.get("/readyz", async () => ({ status: "ready", storage: demoMode ? "demo" : "postgresql", jobs: demoMode ? "memory" : "redis" }));
+  app.get("/readyz", async (_request, reply) => {
+    try {
+      await Promise.all([store.health(), jobs.health()]);
+      return { status: "ready", storage: demoMode ? "demo" : "postgresql", jobs: demoMode ? "memory" : "redis" };
+    } catch {
+      return reply.status(503).send({ status: "not_ready", storage: demoMode ? "demo" : "postgresql", jobs: demoMode ? "memory" : "redis" });
+    }
+  });
   app.get("/metrics", async (_request, reply) => reply.type("text/plain; version=0.0.4").send(metrics.render()));
 
   app.post("/api/auth/demo", async (_request, reply) => {
@@ -216,6 +271,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   });
 
   app.get("/api/auth/session", async (request) => ({ user: tenantContext(request, demoMode), demoMode }));
+  app.get("/api/auth/csrf", async (_request, reply) => ({ enabled: csrfEnabled, token: csrfEnabled ? reply.generateCsrf() : undefined }));
 
   app.get("/api/bootstrap", async (request) => {
     const tenant = tenantContext(request, demoMode);
@@ -252,29 +308,76 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     const tenant = tenantContext(request, demoMode);
     const { id } = z.object({ id: z.string() }).parse(request.params);
     const repository = await store.getRepository(tenant.organisationId, id);
+    if (demoMode) {
+      return reply.status(202).send({ jobId: `demo-index-${id}`, status: "completed", simulated: true });
+    }
+    if (!repository.localPath) {
+      throw new LoreError("Indexing requires a trusted local Lore client to upload a sanitised code graph", "LOCAL_NODE_REQUIRED", 409);
+    }
+    const localPath = await assertTrustedRepositoryPath(repository.localPath).catch((error: unknown) => {
+      throw new LoreError(error instanceof Error ? error.message : "Repository path is not trusted", "UNTRUSTED_REPOSITORY_PATH", 403);
+    });
     const job = await jobs.dispatch(
       "repository.index",
-      { organisationId: tenant.organisationId, repositoryId: id, localPath: repository.localPath },
+      { organisationId: tenant.organisationId, repositoryId: id, localPath },
       `repository-index-${id}-${repository.lastIndexedCommit ?? "initial"}`
     );
     return reply.status(202).send({ jobId: job.id, status: "queued" });
+  });
+
+  app.put("/api/repositories/:id/analysis", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+    const input = analysisUploadSchema.parse(request.body);
+    if (input.repositoryId !== id) throw new LoreError("Repository identity does not match the route", "TENANT_MISMATCH", 400);
+    const repository = await store.getRepository(tenant.organisationId, id);
+    const entityIds = new Set(input.entities.map((entity) => entity.id));
+    if (input.entities.some((entity) => entity.repositoryId !== id) ||
+        input.relationships.some((relationship) =>
+          relationship.repositoryId !== id || !entityIds.has(relationship.sourceEntityId) || !entityIds.has(relationship.targetEntityId))) {
+      throw new LoreError("Analysis graph contains a foreign repository or unresolved relationship", "INVALID_GRAPH", 400);
+    }
+    await store.saveAnalysis(tenant.organisationId, {
+      repository: {
+        ...repository,
+        ...(input.commit ? { lastIndexedCommit: input.commit } : {}),
+        indexedAt: input.indexedAt,
+        entityCount: input.entities.length,
+        relationshipCount: input.relationships.length,
+        status: "ready"
+      },
+      entities: input.entities as CodeEntity[],
+      relationships: input.relationships as CodeRelationship[],
+      filesScanned: new Set(input.entities.map((entity) => entity.path)).size,
+      filesSkipped: 0,
+      durationMs: 0
+    });
+    return { status: "indexed", repositoryId: id, entities: input.entities.length, relationships: input.relationships.length };
   });
 
   app.post("/api/repositories/:id/github-import", async (request, reply) => {
     const tenant = tenantContext(request, demoMode);
     const { id } = z.object({ id: z.string() }).parse(request.params);
     const input = z.object({
-      installationId: z.number().int().positive(),
       limit: z.union([z.literal(50), z.literal(100), z.literal(250), z.literal(500), z.literal(1000)]).default(100)
     }).parse(request.body);
     const repository = await store.getRepository(tenant.organisationId, id);
     if (repository.provider !== "github") throw new LoreError("Historical import requires a GitHub repository", "INVALID_PROVIDER", 400);
+    const installationId = Number(repository.providerInstallationId);
+    if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+      throw new LoreError("Connect this repository to a verified GitHub App installation before importing", "INSTALLATION_REQUIRED", 409);
+    }
     const job = await jobs.dispatch(
       "github.import",
-      { organisationId: tenant.organisationId, repositoryId: id, installationId: input.installationId, limit: input.limit },
-      `github-import-${id}-${input.installationId}-${input.limit}`
+      { organisationId: tenant.organisationId, repositoryId: id, installationId, limit: input.limit },
+      `github-import-${id}-${installationId}-${input.limit}`
     );
-    return reply.status(202).send({ jobId: job.id, status: "queued", limit: input.limit });
+    return reply.status(202).send({
+      jobId: job.id,
+      status: demoMode ? "simulated" : "queued",
+      simulated: demoMode,
+      limit: input.limit
+    });
   });
 
   app.delete("/api/repositories/:id", async (request) => {
@@ -362,19 +465,44 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return session;
   });
 
-  app.post("/api/sessions/:id/refresh-context", async (request) => {
+  app.get("/api/sessions/:id/events", async (request) => {
     const tenant = tenantContext(request, demoMode);
     const { id } = z.object({ id: z.string() }).parse(request.params);
+    return { items: await store.getSessionEvents(tenant.organisationId, id) };
+  });
+
+  app.post("/api/sessions/:id/abandon", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+    const { reason } = z.object({ reason: z.string().min(3).max(1_000) }).parse(request.body);
     const snapshot = await store.getSnapshot(tenant.organisationId);
     const session = snapshot.sessions.find((item) => item.id === id);
     if (!session) throw new NotFoundError("Agent session", id);
+    if (["completed", "abandoned"].includes(session.status)) throw new LoreError("Only an open session can be abandoned", "INVALID_SESSION_TRANSITION", 409);
+    return store.abandonSession(tenant.organisationId, id, reason);
+  });
+
+  app.post("/api/sessions/:id/refresh-context", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+    const { paths } = z.object({ paths: z.array(z.string().min(1).max(4_000)).max(200).optional() }).parse(request.body ?? {});
+    const snapshot = await store.getSnapshot(tenant.organisationId);
+    let session = snapshot.sessions.find((item) => item.id === id);
+    if (!session) throw new NotFoundError("Agent session", id);
+    if (["completed", "abandoned"].includes(session.status)) throw new LoreError("A terminal session cannot refresh context", "INVALID_SESSION_TRANSITION", 409);
+    if (paths) {
+      session = await store.updateSession(tenant.organisationId, {
+        ...session,
+        filesChanged: [...new Set([...session.filesChanged, ...paths])]
+      });
+    }
     const [repository, evidence, graph, regressions] = await Promise.all([
       store.getRepository(tenant.organisationId, session.repositoryId),
       store.getEvidence(tenant.organisationId),
       store.getCodeGraph(tenant.organisationId, session.repositoryId),
       store.getRegressions(tenant.organisationId, session.repositoryId)
     ]);
-    return contextService.prepare({
+    const context = contextService.prepare({
       repository,
       task: session.task,
       explicitPaths: session.filesChanged,
@@ -384,21 +512,29 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       relationships: graph.relationships,
       regressions
     });
+    const record = await store.saveContextPackage(tenant.organisationId, id, context);
+    return { ...context, revision: record.revision, persistedAt: record.createdAt };
   });
 
   app.post("/api/sessions/:id/verify", async (request) => {
     const tenant = tenantContext(request, demoMode);
     const { id } = z.object({ id: z.string() }).parse(request.params);
-    const body = z.object({ changedFiles: verifyChangeSchema.shape.changedFiles }).parse(request.body);
+    const body = z.object({
+      changedFiles: verifyChangeSchema.shape.changedFiles,
+      currentCommit: z.string().min(1).max(128).optional()
+    }).parse(request.body);
     const snapshot = await store.getSnapshot(tenant.organisationId);
     const session = snapshot.sessions.find((item) => item.id === id);
     if (!session) throw new NotFoundError("Agent session", id);
+    if (["completed", "abandoned"].includes(session.status)) throw new LoreError("A terminal session cannot be verified again", "INVALID_SESSION_TRANSITION", 409);
     const [repository, graph, regressions] = await Promise.all([
       store.getRepository(tenant.organisationId, session.repositoryId),
       store.getCodeGraph(tenant.organisationId, session.repositoryId),
       store.getRegressions(tenant.organisationId, session.repositoryId)
     ]);
-    const report = verificationService.verify({
+    const contextRecord = await store.getLatestContextPackage(tenant.organisationId, id);
+    if (!contextRecord) throw new LoreError("Prepare and persist session context before verification", "CONTEXT_REQUIRED", 409);
+    const generated = verificationService.verify({
       task: session.task,
       repository,
       snapshot,
@@ -407,9 +543,15 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       relationships: graph.relationships,
       regressions
     });
+    const report = {
+      ...generated,
+      sessionId: id,
+      contextId: contextRecord.id,
+      ...(session.baseCommit ? { baseCommit: session.baseCommit } : {}),
+      ...(body.currentCommit ? { currentCommit: body.currentCommit } : session.currentCommit ? { currentCommit: session.currentCommit } : {})
+    };
     metrics.verifications += 1;
-    await store.saveReport(tenant.organisationId, report);
-    return report;
+    return store.saveReport(tenant.organisationId, report, id);
   });
 
   app.get("/api/knowledge", async (request) => {
@@ -421,6 +563,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
         (item) => (!query.kind || item.kind === query.kind) && (!query.status || item.status === query.status) && (!query.repositoryId || item.repositoryId === query.repositoryId)
       )
     };
+  });
+
+  app.get("/api/evidence", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    const items = await store.getEvidence(tenant.organisationId);
+    return { items: items.slice(0, 1_000), count: Math.min(items.length, 1_000), truncated: items.length > 1_000 };
   });
 
   app.get("/api/search", async (request) => {
@@ -616,11 +764,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       const providerRepositoryId = ["string", "number"].includes(typeof payloadRepository.id)
         ? String(payloadRepository.id)
         : "";
-      if (!owner || !repositoryName || !providerRepositoryId) {
+      const installation = payload.installation && typeof payload.installation === "object"
+        ? payload.installation as Record<string, unknown>
+        : {};
+      const providerInstallationId = ["string", "number"].includes(typeof installation.id) ? String(installation.id) : "";
+      if (!owner || !repositoryName || !providerRepositoryId || !providerInstallationId) {
         throw new LoreError("Webhook repository identity is missing", "INVALID_WEBHOOK", 400);
       }
       const routedRepository = await store.resolveProviderRepository(
         "github",
+        providerInstallationId,
         providerRepositoryId,
         owner,
         repositoryName
@@ -633,10 +786,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       }
       const records = webhookEvidence({ organisationId, repositoryId, eventName, deliveryId, payload: request.body });
       const added = await store.ingestEvidence(records);
-      await store.saveIngestionReceipt(organisationId, "github", deliveryId, eventName);
       if (records.length > 0) {
         await jobs.dispatch("knowledge.extract", { organisationId, repositoryId, evidenceIds: records.map((record) => record.id) }, `extract-${deliveryId}`);
       }
+      // The queue job ID is deterministic, so replay is safe. Persist the
+      // receipt only after dispatch; a crash before this point causes replay
+      // instead of permanently losing extraction work.
+      await store.saveIngestionReceipt(organisationId, "github", deliveryId, eventName);
       metrics.webhookDeliveries += 1;
       return reply.status(202).send({ status: "accepted", deliveryId, evidenceAdded: added });
     }

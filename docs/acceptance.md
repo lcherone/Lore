@@ -6,28 +6,28 @@ This document maps the original product brief to concrete, runnable Lore surface
 
 | Brief outcome | Shipped surface | How to prove it |
 | --- | --- | --- |
-| Connect a repository | Repository UI and `POST /api/repositories` | Connect a GitHub or local checkout from **Repositories** |
+| Connect a repository | GitHub repository UI/API plus trusted local CLI | Connect GitHub from **Repositories**; use `lore connect` for a checkout without exposing its path to the browser |
 | Import 100–500 merged PRs | GitHub App adapter, bounded history job, BullMQ worker | Queue **Import history** with 100, 250, or 500 PRs |
 | Preserve PR/review evidence | Idempotent evidence store and ingestion receipts | Repeat the same import; the second pass adds no duplicate evidence |
 | Propose knowledge safely | Versioned, structured AI request and mock provider | Run the worker with `AI_PROVIDER=mock`; only validated candidates are created |
 | Review candidates | Evidence, confidence, contradiction, edit, scope, class, merge, approve, and reject UI | Complete an action in **Candidates** and inspect the updated queue |
 | Index local code/history | TypeScript and PHP AST analysis, safe Git adapter, co-change graph | Run `lore index` in a Git checkout |
 | Prepare task context | Ranking, precedence, bounded impact, evidence, regressions, tests, unknowns | Run `lore prepare "task"` or use the dashboard |
-| Observe agent changes | Allowlisted agent wrapper with two-second changed-path observation and context refresh | Run `lore agent codex "task"` |
+| Observe agent changes | Codex adapter with prompt-delivered context, bounded Git status observation, persisted refresh, and abandoned-state handling | Run `lore agent codex "task"` |
 | Verify independently | Diff, policy, impact, regression, rule, test, risk, and blocker evaluation | Run `lore verify`; blockers exit with code 2 |
 | Learn from the resulting review | Signed, replay-safe GitHub webhook to evidence and extraction jobs | Send a valid subscribed review event and inspect the new candidate |
 
 ## MVP milestone coverage
 
-1. **Core data model:** PostgreSQL/Prisma models, migration, tenant boundaries, evidence links, revisions, proposals, challenges, usage, sessions, reports, policies, and audit events.
+1. **Core data model:** PostgreSQL/Prisma models, migrations, canonical UUIDs, membership boundaries, evidence links, revisions, proposals, challenges, usage, sessions, immutable context records, append-only session events, linked reports, policies, and audit events.
 2. **Local repository indexer:** local open/scan, language detection, TypeScript/PHP symbols, static relationships, bounded Git history, and statistically guarded co-change edges.
-3. **GitHub import:** GitHub App installation flow, historical merged PRs, reviews, comments, commits, changed files, optional raw diff retention, bounded jobs, and idempotency.
+3. **GitHub import:** GitHub App installation flow, installation-scoped repository routing, historical merged PRs, reviews, comments, commits, changed files, optional raw diff retention, bounded jobs, and idempotency.
 4. **AI extraction:** replaceable provider contract, versioned prompts, untrusted-input separation, structured Zod output, deduplication/contradiction validation, scope suggestion, and server-side confidence.
 5. **Knowledge review:** candidate search/filter, evidence, confidence explanation, contradictions, statement/scope/class editing, evidence-preserving merge, approve, reject, challenge, archive, and manual confirmation.
 6. **Task context:** task concepts, candidate code, expanded impact, precedence-ranked knowledge, evidence, regressions, recommended tests, warnings, and explicit unknowns.
 7. **MCP:** prepare, current context, search, symbol lookup, history, rules, decisions, impact, verification, explanation, and proposal validation tools over stdio.
 8. **Change safety:** independent verification and persisted, human-readable safety reports with deterministic policy findings.
-9. **Session observer:** session lifecycle, changed-file observation, progressive context refresh, and final verification.
+9. **Session observer:** durable session lifecycle, append-only events, staged/unstaged/renamed/deleted/untracked observation, progressive context revisions, final verification, and atomic report/session completion.
 10. **GitHub feedback loop:** HMAC validation, delivery replay protection, review evidence ingestion, and candidate extraction dispatch.
 
 ## Trust, privacy, and ownership
@@ -38,7 +38,8 @@ This document maps the original product brief to concrete, runnable Lore surface
 - Repository retention controls independently govern summaries, review comments, raw PR diffs, and code snippets. Summary-only mode rejects contradictory raw-retention settings.
 - Repository deletion requires the exact `owner/name`, cascades repository data, and challenges organisation-wide knowledge whose provenance was removed.
 - Knowledge exports as JSON or Markdown. Imports accept JSON and Markdown files, including `AGENTS.md`, `CONTRIBUTING.md`, architecture documents, and ADRs, while recording the source name.
-- Every persistent operation is organisation-scoped. Human writes, merges, retention changes, and destructive actions are audited.
+- Every authenticated operation revalidates organisation membership. Human writes, merges, retention changes, and destructive actions are audited.
+- Demo, local, service, disconnected, and loading states are explicit; an API failure cannot fabricate data or write success.
 
 ## Operator acceptance commands
 
@@ -52,7 +53,7 @@ npm audit --omit=dev
 docker compose config --quiet
 ```
 
-For a real PostgreSQL boundary, run migrations and seed twice, then execute `npm run smoke:persistent`. The second seed must skip the existing demo organisation and the smoke script must prepare task context from persisted entities, evidence, candidates, and regressions.
+For a real PostgreSQL boundary, run migrations and seed twice, then execute `npm run smoke:persistent`. The second seed must skip the existing demo organisation. The smoke script exercises ordinary runtime UUID generation, a sanitised graph upload, manual evidence/knowledge writes, persisted context revision, linked report and session completion, then reconnects with a new Prisma client and reads the durable state. Redis/worker delivery is a separate environment check: `npm run smoke:queue` proves readiness, idempotent dispatch, and consumption against an isolated Redis process. Persistence smoke deliberately injects the in-memory dispatcher so a missing Redis process cannot masquerade as a queue pass.
 
 For UI acceptance, verify the dashboard context modal, candidate scope/class/merge/approval flow, manual knowledge form, repository history/retention/delete controls, safety report, command palette, and mobile navigation. No browser console errors or warnings are expected.
 

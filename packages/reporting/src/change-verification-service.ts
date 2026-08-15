@@ -55,14 +55,15 @@ export class ChangeVerificationService {
         ["active", "challenged"].includes(item.status) &&
         scopeApplies(item.scope, {
           repository: input.repository,
+          organisation: input.snapshot.organisation.slug,
           paths: changedPaths,
           symbols: changedEntities.map((entity) => entity.qualifiedName)
         })
     );
     const applicablePolicies = input.snapshot.policies.filter(
-      (policy) => policy.enabled && scopeApplies(policy.scope, { repository: input.repository, paths: changedPaths })
+      (policy) => policy.enabled && scopeApplies(policy.scope, { repository: input.repository, organisation: input.snapshot.organisation.slug, paths: changedPaths })
     );
-    const findings = this.#policyEvaluator.evaluate(input.repository, applicablePolicies, input.changedFiles);
+    const findings = this.#policyEvaluator.evaluate(input.repository, applicablePolicies, input.changedFiles, input.snapshot.organisation.slug);
     const relevantRegressions = input.regressions.filter((regression) =>
       regression.affectedEntities.some((affected) =>
         changedEntities.some(

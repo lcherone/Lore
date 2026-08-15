@@ -50,6 +50,7 @@ await prisma.repository.create({
     organisationId,
     provider: repository.provider,
     providerRepositoryId: repository.providerRepositoryId,
+    providerInstallationId: repository.providerInstallationId,
     owner: repository.owner,
     name: repository.name,
     defaultBranch: repository.defaultBranch,

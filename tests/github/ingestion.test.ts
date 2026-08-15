@@ -69,6 +69,7 @@ describe("GitHub evidence ingestion", () => {
     const app = await createApp({ demoMode: true, logger: false, dependencies: { store, jobs } });
     const payload = JSON.stringify({
       action: "submitted",
+      installation: { id: 123 },
       repository: { id: 73421009, name: "ecom", full_name: "soho/ecom", owner: { login: "soho" } },
       pull_request: { number: 2401, updated_at: "2026-08-15T10:00:00.000Z" },
       review: { id: 7788, body: "Keep mapper boundaries explicit.", state: "approved", html_url: "https://example.test/review/7788" },

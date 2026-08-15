@@ -53,6 +53,7 @@ export interface RepositorySummary {
   organisationId: string;
   provider: "github" | "gitlab" | "bitbucket" | "local";
   providerRepositoryId?: string;
+  providerInstallationId?: string;
   owner: string;
   name: string;
   defaultBranch: string;
@@ -128,6 +129,7 @@ export interface ConfidenceFactors {
 
 export interface CandidateRecord extends KnowledgeItem {
   status: "candidate";
+  proposalId?: string;
   evidence: EvidenceRecord[];
   contradictionSummaries: string[];
   confidenceFactors: ConfidenceFactors;
@@ -261,6 +263,14 @@ export interface ContextPackage {
   generatedAt: string;
 }
 
+export interface ContextPackageRecord {
+  id: string;
+  sessionId: string;
+  revision: number;
+  payload: ContextPackage;
+  createdAt: string;
+}
+
 export interface PolicyFinding {
   policyId: string;
   policyName: string;
@@ -282,6 +292,10 @@ export interface ChangedFile {
 
 export interface SafetyReport {
   id: string;
+  sessionId?: string;
+  contextId?: string;
+  baseCommit?: string;
+  currentCommit?: string;
   task: string;
   repositoryId: string;
   repositoryName: string;
@@ -329,6 +343,15 @@ export interface AgentSession {
   filesObserved: string[];
   filesChanged: string[];
   warningCount: number;
+}
+
+export interface SessionEvent {
+  id: string;
+  sessionId: string;
+  sequence: number;
+  type: "started" | "context_prepared" | "context_refreshed" | "file_changed" | "verification_started" | "verification_finished" | "completed" | "failed" | "abandoned";
+  data: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface DashboardSnapshot {

@@ -6,6 +6,8 @@ import type {
   CandidateRecord,
   CodeEntity,
   CodeRelationship,
+  ContextPackage,
+  ContextPackageRecord,
   DashboardSnapshot,
   EvidenceRecord,
   KnowledgeItem,
@@ -14,7 +16,8 @@ import type {
   RepositoryRetentionConfig,
   RepositorySummary,
   RegressionRecord,
-  SafetyReport
+  SafetyReport,
+  SessionEvent
 } from "@lore/shared/types.js";
 import {
   ConflictError,
@@ -30,12 +33,21 @@ export class InMemoryLoreStore implements LoreStore {
   readonly #evidence: EvidenceRecord[];
   readonly #receipts = new Set<string>();
   readonly #proposals: KnowledgeProposalRecord[] = [];
+  readonly #contexts = new Map<string, ContextPackageRecord[]>();
+  readonly #sessionEvents = new Map<string, SessionEvent[]>();
   readonly #graphs = new Map<string, { entities: CodeEntity[]; relationships: CodeRelationship[]; regressions: RegressionRecord[] }>();
 
   public constructor(snapshot = createDemoSnapshot(), evidence = getDemoEvidence()) {
     this.#snapshot = structuredClone(snapshot);
     this.#evidence = structuredClone(evidence);
     this.#graphs.set("repo_soho_ecom", createDemoCodeGraph());
+  }
+
+  async health(): Promise<void> {}
+
+  async validateMembership(organisationId: string, userId: string): Promise<void> {
+    this.#assertOrganisation(organisationId);
+    if (userId !== "user_casey" && userId !== "system") throw new ForbiddenError("The current user is not an active organisation member");
   }
 
   async getSnapshot(organisationId: string): Promise<DashboardSnapshot> {
@@ -57,6 +69,7 @@ export class InMemoryLoreStore implements LoreStore {
 
   async resolveProviderRepository(
     provider: RepositorySummary["provider"],
+    providerInstallationId: string,
     providerRepositoryId: string,
     owner: string,
     name: string
@@ -64,6 +77,7 @@ export class InMemoryLoreStore implements LoreStore {
     const repository = this.#snapshot.repositories.find(
       (item) =>
         item.provider === provider &&
+        item.providerInstallationId === providerInstallationId &&
         ((item.providerRepositoryId && item.providerRepositoryId === providerRepositoryId) ||
           (item.owner.toLowerCase() === owner.toLowerCase() && item.name.toLowerCase() === name.toLowerCase()))
     );
@@ -218,16 +232,28 @@ export class InMemoryLoreStore implements LoreStore {
     };
     this.#snapshot.candidates.splice(index, 1);
     this.#snapshot.knowledge.unshift(approved);
+    const proposal = candidate.proposalId ? this.#proposals.find((item) => item.id === candidate.proposalId) : undefined;
+    if (proposal) {
+      proposal.status = "approved";
+      proposal.reviewedAt = new Date().toISOString();
+      proposal.reviewedBy = actor;
+    }
     return structuredClone(approved);
   }
 
   async rejectCandidate(organisationId: string, candidateId: string, reason: string, actor: string): Promise<void> {
     void reason;
-    void actor;
     this.#assertOrganisation(organisationId);
     const index = this.#snapshot.candidates.findIndex((item) => item.id === candidateId);
     if (index < 0) throw new NotFoundError("Knowledge candidate", candidateId);
+    const candidate = this.#snapshot.candidates[index]!;
     this.#snapshot.candidates.splice(index, 1);
+    const proposal = candidate.proposalId ? this.#proposals.find((item) => item.id === candidate.proposalId) : undefined;
+    if (proposal) {
+      proposal.status = "rejected";
+      proposal.reviewedAt = new Date().toISOString();
+      proposal.reviewedBy = actor;
+    }
   }
 
   async mergeCandidate(
@@ -238,7 +264,6 @@ export class InMemoryLoreStore implements LoreStore {
     actor: string
   ): Promise<KnowledgeItem> {
     void reason;
-    void actor;
     if (candidateId === targetId) throw new ConflictError("A candidate cannot be merged into itself");
     const source = await this.getCandidate(organisationId, candidateId);
     const candidateTarget = this.#snapshot.candidates.find((item) => item.id === targetId);
@@ -258,6 +283,12 @@ export class InMemoryLoreStore implements LoreStore {
     }
     const sourceIndex = this.#snapshot.candidates.findIndex((item) => item.id === candidateId);
     this.#snapshot.candidates.splice(sourceIndex, 1);
+    const proposal = source.proposalId ? this.#proposals.find((item) => item.id === source.proposalId) : undefined;
+    if (proposal) {
+      proposal.status = "approved";
+      proposal.reviewedAt = new Date().toISOString();
+      proposal.reviewedBy = actor;
+    }
     return structuredClone(target);
   }
 
@@ -349,6 +380,7 @@ export class InMemoryLoreStore implements LoreStore {
       throw new ConflictError("Session already exists", { sessionId: session.id });
     }
     this.#snapshot.sessions.unshift(structuredClone(session));
+    this.#appendSessionEvent(session.id, "started", { status: session.status, agentType: session.agentType });
     return structuredClone(session);
   }
 
@@ -356,14 +388,88 @@ export class InMemoryLoreStore implements LoreStore {
     this.#assertOrganisation(organisationId);
     const index = this.#snapshot.sessions.findIndex((item) => item.id === session.id);
     if (index < 0) throw new NotFoundError("Agent session", session.id);
+    const previous = this.#snapshot.sessions[index]!;
+    if (previous.organisationId !== organisationId) throw new ForbiddenError();
     this.#snapshot.sessions[index] = structuredClone(session);
+    if (previous.status !== session.status && session.status === "abandoned") {
+      this.#appendSessionEvent(session.id, "abandoned", { previousStatus: previous.status });
+    }
     return structuredClone(session);
   }
 
-  async saveReport(organisationId: string, report: SafetyReport): Promise<SafetyReport> {
+  async getSessionEvents(organisationId: string, sessionId: string): Promise<SessionEvent[]> {
     this.#assertOrganisation(organisationId);
-    this.#snapshot.reports.unshift(structuredClone(report));
-    return structuredClone(report);
+    if (!this.#snapshot.sessions.some((item) => item.id === sessionId && item.organisationId === organisationId)) {
+      throw new NotFoundError("Agent session", sessionId);
+    }
+    return structuredClone(this.#sessionEvents.get(sessionId) ?? []);
+  }
+
+  async abandonSession(organisationId: string, sessionId: string, reason: string): Promise<AgentSession> {
+    this.#assertOrganisation(organisationId);
+    const session = this.#snapshot.sessions.find((item) => item.id === sessionId && item.organisationId === organisationId);
+    if (!session) throw new NotFoundError("Agent session", sessionId);
+    if (["completed", "abandoned"].includes(session.status)) throw new ConflictError("Only an open session can be abandoned");
+    const previousStatus = session.status;
+    session.status = "abandoned";
+    session.completedAt = new Date().toISOString();
+    this.#appendSessionEvent(sessionId, "abandoned", { previousStatus, reason });
+    return structuredClone(session);
+  }
+
+  async saveContextPackage(
+    organisationId: string,
+    sessionId: string,
+    context: ContextPackage
+  ): Promise<ContextPackageRecord> {
+    this.#assertOrganisation(organisationId);
+    const session = this.#snapshot.sessions.find((item) => item.id === sessionId && item.organisationId === organisationId);
+    if (!session) throw new NotFoundError("Agent session", sessionId);
+    if (session.repositoryId !== context.repository.id) throw new ForbiddenError("Context repository does not belong to the session");
+    const records = this.#contexts.get(sessionId) ?? [];
+    const record: ContextPackageRecord = {
+      id: context.id,
+      sessionId,
+      revision: records.length + 1,
+      payload: structuredClone(context),
+      createdAt: new Date().toISOString()
+    };
+    records.push(record);
+    this.#contexts.set(sessionId, records);
+    session.status = "active";
+    session.filesObserved = context.candidateFiles.map((file) => file.path);
+    this.#appendSessionEvent(sessionId, record.revision === 1 ? "context_prepared" : "context_refreshed", {
+      contextId: context.id,
+      revision: record.revision,
+      filesObserved: session.filesObserved.length
+    });
+    return structuredClone(record);
+  }
+
+  async getLatestContextPackage(organisationId: string, sessionId: string): Promise<ContextPackageRecord | undefined> {
+    this.#assertOrganisation(organisationId);
+    const session = this.#snapshot.sessions.find((item) => item.id === sessionId && item.organisationId === organisationId);
+    if (!session) throw new NotFoundError("Agent session", sessionId);
+    return structuredClone(this.#contexts.get(sessionId)?.at(-1));
+  }
+
+  async saveReport(organisationId: string, report: SafetyReport, sessionId?: string): Promise<SafetyReport> {
+    this.#assertOrganisation(organisationId);
+    const linked = sessionId ? { ...report, sessionId } : report;
+    if (sessionId) {
+      const session = this.#snapshot.sessions.find((item) => item.id === sessionId && item.organisationId === organisationId);
+      if (!session) throw new NotFoundError("Agent session", sessionId);
+      if (session.repositoryId !== report.repositoryId) throw new ForbiddenError("Report repository does not belong to the session");
+      session.status = "completed";
+      session.completedAt = new Date().toISOString();
+      session.warningCount = report.warnings.length;
+      session.filesChanged = report.changedFiles.map((file) => file.path);
+      this.#appendSessionEvent(sessionId, "verification_started", { contextId: report.contextId });
+      this.#appendSessionEvent(sessionId, "verification_finished", { reportId: report.id, risk: report.risk });
+      this.#appendSessionEvent(sessionId, "completed", { reportId: report.id });
+    }
+    this.#snapshot.reports.unshift(structuredClone(linked));
+    return structuredClone(linked);
   }
 
   async ingestEvidence(records: EvidenceRecord[]): Promise<number> {
@@ -400,6 +506,12 @@ export class InMemoryLoreStore implements LoreStore {
   public createId(prefix: string): string {
     void prefix;
     return newUuid();
+  }
+
+  #appendSessionEvent(sessionId: string, type: SessionEvent["type"], data: Record<string, unknown>): void {
+    const events = this.#sessionEvents.get(sessionId) ?? [];
+    events.push({ id: newUuid(), sessionId, sequence: events.length + 1, type, data, createdAt: new Date().toISOString() });
+    this.#sessionEvents.set(sessionId, events);
   }
 
   #assertOrganisation(organisationId: string): void {
