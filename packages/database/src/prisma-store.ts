@@ -156,7 +156,11 @@ export class PrismaLoreStore implements LoreStore {
         where: { provider_providerUserId: { provider: "github", providerUserId: identity.providerUserId } },
         include: { user: true }
       });
-      const existingUser = existingIdentity?.user ?? await transaction.user.findUnique({ where: { emailNormalized } });
+      const emailUser = await transaction.user.findUnique({ where: { emailNormalized } });
+      if (existingIdentity && emailUser && existingIdentity.userId !== emailUser.id) {
+        throw new ConflictError("This verified email is already linked to another Lore account");
+      }
+      const existingUser = existingIdentity?.user ?? emailUser;
       const preserveEditedProfile = Boolean(existingUser?.profileEditedAt);
       const profileData = {
         email: identity.email,
@@ -330,6 +334,11 @@ export class PrismaLoreStore implements LoreStore {
     invitedByUserId: string
   ): Promise<OrganisationInvitation> {
     const emailNormalized = input.email.trim().toLowerCase();
+    const member = await this.prisma.membership.findFirst({
+      where: { organisationId, user: { emailNormalized } },
+      select: { id: true }
+    });
+    if (member) throw new ConflictError("This person is already an organisation member");
     const existing = await this.prisma.organisationInvitation.findFirst({
       where: { organisationId, emailNormalized, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }
     });

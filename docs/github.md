@@ -9,9 +9,11 @@
   <a href="onboarding.md"><strong>Setup</strong></a>
 </p>
 
-# GitHub integration
+# GitHub repository integration
 
-Lore supports two GitHub authentication modes. Use a fine-grained personal access token (PAT) for the first local import. Use a GitHub App when more than one person will use Lore, when installations must be managed independently, or when live webhook feedback is required.
+This page covers permission to read repositories. Lore supports two repository credential modes: use a fine-grained personal access token (PAT) for the first local import; use a GitHub App when installations must be managed independently or live webhook feedback is required.
+
+GitHub **login is separate**. `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET` identify a person and populate their Lore profile; they never authorise repository imports. Configure accounts first with [Authentication, profiles, and organisations](authentication-and-organisations.md), then return here to connect repositories.
 
 | Capability                        | Local fine-grained PAT | GitHub App                                           |
 | --------------------------------- | ---------------------- | ---------------------------------------------------- |
@@ -72,7 +74,7 @@ GITHUB_TOKEN_PATH=/Users/YOU/.config/lore/github-token
 
 A real import needs PostgreSQL, Redis, the API, and the worker. Demo mode only simulates a queued import.
 
-For native Node processes with PostgreSQL and Redis already running, set the local development identity in `.env`:
+For native Node processes with PostgreSQL and Redis already running, use the signed-in account and active organisation configured in [Authentication and organisations](authentication-and-organisations.md). If you are working on API internals without a browser, the loopback-only development bypass remains available:
 
 ```dotenv
 LOCAL_DEV_AUTH=true
@@ -145,7 +147,7 @@ Setup URL:    http://localhost:5173/api/github/callback
 Webhook URL:  https://YOUR-PUBLIC-PROXY/api/github/webhook
 ```
 
-The setup URL may be local because GitHub redirects the user's browser. Only the webhook receiver needs a public HTTPS address. Keep `localhost` consistent—do not mix it with `127.0.0.1`—so the signed state cookie returns to the same host. GitHub distinguishes an App setup URL from an OAuth callback URL; Lore currently uses the post-install setup redirect, not GitHub user OAuth.
+The setup URL may be local because GitHub redirects the user's browser. Only the webhook receiver needs a public HTTPS address. Keep `localhost` consistent—do not mix it with `127.0.0.1`—so the signed state cookie returns to the same host. GitHub distinguishes this repository App setup URL (`/api/github/callback`) from Lore's user-login OAuth callback (`/api/auth/github/callback`). They are separate flows and credentials.
 
 Repository permissions:
 

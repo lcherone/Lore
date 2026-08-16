@@ -44,6 +44,7 @@ ensure_dependencies() {
 
 demo_environment=(
   DEMO_MODE=true
+  DEMO_REQUIRE_LOGIN=true
   GITHUB_AUTH_MODE=disabled
   API_HOST=127.0.0.1
   APP_URL=http://localhost:5173

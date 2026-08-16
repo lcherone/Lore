@@ -24,6 +24,7 @@
   <a href="#one-command-demo"><strong>Run the demo</strong></a> ·
   <a href="#what-lore-does"><strong>Features</strong></a> ·
   <a href="docs/README.md"><strong>Documentation</strong></a> ·
+  <a href="docs/authentication-and-organisations.md"><strong>Accounts & organisations</strong></a> ·
   <a href="docs/github.md"><strong>GitHub setup</strong></a> ·
   <a href="docs/security.md"><strong>Security</strong></a>
 </p>
@@ -46,7 +47,7 @@ Prerequisite: Node.js 22+ with npm.
 npm run demo
 ```
 
-Open [http://localhost:5173](http://localhost:5173). The demo command installs dependencies when missing and starts realistic in-memory data. It requires no database, Redis, GitHub account, PAT, or AI key. Stop it with <kbd>Ctrl+C</kbd>.
+Open [http://localhost:5173](http://localhost:5173) and choose **Explore the demo account**. The demo command installs dependencies when missing and starts realistic in-memory data. It requires no database, Redis, GitHub account, PAT, or AI key. Stop it with <kbd>Ctrl+C</kbd>.
 
 To prove the same API and web path without leaving processes running:
 
@@ -88,6 +89,8 @@ It stays quiet when nothing applies and specific when something does.
 
 | Feature | What it gives you | How it works |
 | --- | --- | --- |
+| **GitHub login and profiles** | One personal account with an editable profile initially populated from GitHub | OAuth code flow with state + PKCE, verified email, stable GitHub ID, discarded login token, and opaque revocable Lore sessions |
+| **Organisations and roles** | Private workspaces, invitations, switching, and owner/admin/member/viewer access | Live membership checks, email-bound invitation acceptance, server-side selected tenant, and session rotation on organisation changes |
 | **Task context** | Relevant files, symbols, impact, policy, decisions, tests, and unknowns before editing | Deterministic retrieval plus bounded graph traversal |
 | **Local repository graph** | Structural and historical relationships without uploading the checkout | TypeScript/JavaScript and PHP ASTs plus bounded Git/co-change analysis |
 | **GitHub memory** | Merged PRs, review bodies, inline/conversation comments, commits, paths, and patches | Fine-grained PAT or App installation, fully paginated and idempotent |
@@ -327,7 +330,8 @@ Copy [`.env.example`](.env.example) and change only the mode you need. `npm run 
 | --- | --- | --- |
 | Runtime | `NODE_ENV`, `DEMO_MODE`, `API_PORT`, `API_HOST`, `APP_URL`, `WEB_ORIGIN`, `LOG_LEVEL` | Keep `APP_URL` loopback while using bundled local auth. |
 | Storage/jobs | `DATABASE_URL`, `REDIS_URL`, `WORKER_CONCURRENCY` | Required only for persistent mode; lower concurrency for an initial very large import. |
-| Session/local identity | `SESSION_SECRET`, `LOCAL_DEV_AUTH`, `LOCAL_ORGANISATION_ID`, `LOCAL_USER_ID`, `LOCAL_USER_NAME` | Generate `SESSION_SECRET` with `openssl rand -base64 48`; local auth is not production identity. |
+| GitHub login | `SESSION_SECRET`, `AUTH_SESSION_TTL_HOURS`, `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_OAUTH_CALLBACK_URL` | Personal identity and profiles; see [account setup](docs/authentication-and-organisations.md). |
+| Local identity bypass | `LOCAL_DEV_AUTH`, `LOCAL_ORGANISATION_ID`, `LOCAL_USER_ID`, `LOCAL_USER_NAME` | Loopback development only; never enable in shared environments. |
 | Server checkout access | `LORE_ALLOWED_REPOSITORY_ROOTS` | Prefer local `lore index` graph upload and leave this empty. |
 | GitHub PAT | `GITHUB_AUTH_MODE`, `GITHUB_TOKEN`, `GITHUB_TOKEN_PATH`, `GITHUB_TOKEN_FILE` | Prefer an owner-only token file; `_FILE` is the Docker host mount source. |
 | GitHub App | `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_PRIVATE_KEY_PATH`, `GITHUB_PRIVATE_KEY_FILE`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET` | Needed for installation credentials and signed live webhooks. |
@@ -373,13 +377,14 @@ Read [architecture](docs/architecture.md), [knowledge model](docs/knowledge-mode
 
 ## Security and responsible deployment
 
-Implemented boundaries include signed HTTP-only sessions, CSRF protection for non-demo production writes, active membership checks, webhook HMAC validation, immutable provider IDs, structured log redaction, safe Git argument arrays, owner-only local state, and deterministic policy detectors.
+Implemented boundaries include opaque hashed and revocable server sessions, GitHub OAuth state and PKCE, verified-email identity linking, session rotation, signed HTTP-only cookies, CSRF protection for non-demo production writes, live organisation membership and baseline role checks, email-bound invitations, webhook HMAC validation, immutable provider IDs, structured log redaction, safe Git argument arrays, owner-only local state, and deterministic policy detectors.
 
 Repository text, tickets, reviews, documents, and model output are always untrusted. AI cannot create policy, calculate authority, execute tools, or write database rows directly.
 
 This repository is a comprehensive local prototype—not an approved external multi-tenant SaaS service. Before processing customer or regulated data, read:
 
 - [Security model](docs/security.md)
+- [Authentication, profiles, organisations, and roles](docs/authentication-and-organisations.md)
 - [AI safety](docs/ai-safety.md)
 - [SaaS, enterprise, privacy, PCI, and AI-governance readiness](docs/saas-readiness.md)
 

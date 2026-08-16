@@ -36,7 +36,11 @@ let csrfToken: string | undefined;
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: "include",
-    headers: { "content-type": "application/json", ...(csrfToken && init?.method && init.method !== "GET" ? { "csrf-token": csrfToken } : {}), ...(init?.headers ?? {}) },
+    headers: {
+      ...(init?.body ? { "content-type": "application/json" } : {}),
+      ...(csrfToken && init?.method && init.method !== "GET" ? { "csrf-token": csrfToken } : {}),
+      ...(init?.headers ?? {})
+    },
     ...init
   });
   if (!response.ok) {

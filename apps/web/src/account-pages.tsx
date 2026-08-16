@@ -3,7 +3,7 @@ import {
   Building2,
   Check,
   Copy,
-  Github,
+  GitFork,
   LogOut,
   Mail,
   MapPin,
@@ -57,18 +57,18 @@ export function LoginPage({
         </div>
         <ul>
           <li><ShieldCheck size={18} /><span><strong>Private by organisation</strong> Every repository, rule, and evidence item stays inside an organisation boundary.</span></li>
-          <li><Github size={18} /><span><strong>One trusted identity</strong> Sign in with GitHub; Lore never stores the short-lived login access token.</span></li>
+          <li><GitFork size={18} /><span><strong>One trusted identity</strong> Sign in with GitHub; Lore never stores the short-lived login access token.</span></li>
           <li><UsersRound size={18} /><span><strong>Built for real teams</strong> Create organisations, invite colleagues, and assign least-privilege roles.</span></li>
         </ul>
         <small>Evidence-backed engineering memory · Local-first today · SaaS-ready foundations</small>
       </section>
       <section className="login-panel">
         <div className="login-card">
-          <span className="login-card__mark"><Github size={24} /></span>
+          <span className="login-card__mark"><GitFork size={24} /></span>
           <h2>Welcome to Lore</h2>
           <p>Use your GitHub account to create a private workspace or join an existing team.</p>
           {githubLoginEnabled ? (
-            <Button variant="primary" icon={<Github size={18} />} onClick={githubLogin}>Continue with GitHub</Button>
+            <Button variant="primary" icon={<GitFork size={18} />} onClick={githubLogin}>Continue with GitHub</Button>
           ) : demoMode ? (
             <Button variant="primary" icon={<UserRound size={18} />} disabled={busy} onClick={() => void demoLogin()}>
               {busy ? "Signing in…" : "Explore the demo account"}
@@ -108,6 +108,10 @@ function OrganisationForm({ onCreate }: { onCreate: (input: { name: string; slug
     setError(undefined);
     try {
       await onCreate({ name, slug });
+      setName("");
+      setSlug("");
+      setSlugEdited(false);
+      setBusy(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Organisation could not be created");
       setBusy(false);
@@ -216,7 +220,7 @@ export function ProfilePage({
           <dl>
             <div><Mail size={15} /><span>{profile.email}<small>Verified by GitHub</small></span></div>
             {profile.location && <div><MapPin size={15} /><span>{profile.location}</span></div>}
-            <div><Github size={15} /><a href={profile.githubProfileUrl} target="_blank" rel="noreferrer">GitHub profile</a></div>
+            <div><GitFork size={15} /><a href={profile.githubProfileUrl} target="_blank" rel="noreferrer">GitHub profile</a></div>
           </dl>
         </aside>
         <div className="account-sections">
@@ -265,7 +269,12 @@ export function OrganisationsPage({ session, onRefresh }: { session: AccountSess
     if (!active) return;
     setDetails(await loreApi.organisation(active.id));
   };
-  useEffect(() => { void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Organisation could not be loaded")); }, [active?.id]);
+  useEffect(() => {
+    setInviteUrl(undefined);
+    setShowCreate(false);
+    setError(undefined);
+    void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Organisation could not be loaded"));
+  }, [active?.id]);
   const invite = async (event: FormEvent) => {
     event.preventDefault();
     if (!active) return;

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Casey Hall demo avatar">
+  <defs>
+    <linearGradient id="background" x1="14" y1="8" x2="82" y2="90" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#17384d"/>
+      <stop offset="1" stop-color="#071522"/>
+    </linearGradient>
+  </defs>
+  <circle cx="48" cy="48" r="48" fill="url(#background)"/>
+  <path d="M16 61 48 43l32 18v22H16Z" fill="#0b8f72" opacity=".42"/>
+  <path d="m26 30 22-12 22 12-22 12Z" fill="none" stroke="#f04e3e" stroke-width="4" stroke-linejoin="round"/>
+  <path d="m26 39 22 12 22-12M26 48l22 12 22-12" fill="none" stroke="#f04e3e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="48" y="82" fill="#fff" font-family="Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">CH</text>
+</svg>

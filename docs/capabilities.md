@@ -35,8 +35,25 @@ Last reviewed: 2026-08-16.
 | `GET /readyz`           | Store and job-transport readiness                     |
 | `GET /metrics`          | Bounded Prometheus text metrics                       |
 | `POST /api/auth/demo`   | Explicit demo cookie sign-in                          |
-| `GET /api/auth/session` | Current local/demo session context                    |
+| `GET /api/auth/github` | Start GitHub OAuth with state and PKCE |
+| `GET /api/auth/github/callback` | Verify GitHub identity and create an opaque Lore session |
+| `GET /api/auth/session` | Account, active organisation, memberships, and invitations |
+| `POST /api/auth/logout` | Revoke the current server-side session |
+| `GET /api/auth/sessions` | List current revocable sessions |
+| `DELETE /api/auth/sessions/others` | Revoke all other sessions |
 | `GET /api/auth/csrf`    | CSRF bootstrap when production cookie auth enables it |
+| `GET /api/account/profile` | Read the GitHub-seeded personal profile |
+| `PATCH /api/account/profile` | Update editable personal profile fields |
+| `GET /api/organisations` | List the account's organisation memberships |
+| `POST /api/organisations` | Create a private organisation and rotate into it |
+| `GET /api/organisations/:id` | Read organisation members and pending invitations |
+| `PATCH /api/organisations/:id` | Update owner/admin organisation settings |
+| `POST /api/organisations/:id/switch` | Validate membership and rotate into another organisation |
+| `POST /api/organisations/:id/invitations` | Create a verified-email invitation |
+| `DELETE /api/organisations/:id/invitations/:invitationId` | Revoke a pending invitation |
+| `POST /api/invitations/:id/accept` | Accept a matching invitation and rotate organisation context |
+| `PATCH /api/organisations/:id/members/:userId` | Change a non-owner member role |
+| `DELETE /api/organisations/:id/members/:userId` | Remove a non-owner member |
 | `GET /api/bootstrap`    | Organisation-scoped dashboard snapshot                |
 | `GET /api/onboarding`   | Current onboarding completion state                   |
 
@@ -111,9 +128,9 @@ BullMQ supplies transport retries and deterministic job IDs. Durable `JobRun`, p
 
 ## Human control surface
 
-The React application currently exposes dashboard context preparation, repository connection/import/retention/deletion, ad-hoc communication evidence capture, transcript analysis with comparison outcomes, candidate review and merge, knowledge creation/challenge/archive, policy creation, reviewer views, sessions, safety reports, onboarding help, keyboard navigation, and explicit disconnected/loading states.
+The React application currently exposes GitHub login, a demo login, GitHub-seeded editable profiles, active-session revocation, organisation creation/switching, role and member management, copyable verified-email invitations, dashboard context preparation, repository connection/import/retention/deletion, ad-hoc communication evidence capture, transcript analysis with comparison outcomes, candidate review and merge, knowledge creation/challenge/archive, policy creation, reviewer views, sessions, safety reports, onboarding help, keyboard navigation, and explicit disconnected/loading states.
 
-The following are not shipped: production SSO or membership administration, a durable GitHub installation ownership model, Jira/Linear/Slack/Stoker connectors, a real AI provider, billing, hosted multi-tenant SaaS, job administration, GitHub Check publication, or automatic policy/knowledge approval.
+The following are not shipped: enterprise SSO/SAML, MFA policy enforcement, SCIM, ownership transfer/deletion recovery, email delivery, a durable GitHub installation ownership model, Jira/Linear/Slack/Stoker connectors, a real AI provider, billing, hosted multi-tenant SaaS, job administration, GitHub Check publication, or automatic policy/knowledge approval.
 
 ## Maintenance rule
 

@@ -65,7 +65,7 @@ export class InMemoryLoreStore implements LoreStore {
       name: "Casey Hall",
       githubLogin: "casey-hall",
       githubProfileUrl: "https://github.com/casey-hall",
-      avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+      avatarUrl: "/demo-avatar.svg",
       bio: "Engineering leader building safer software systems.",
       company: "Acme Engineering",
       jobTitle: "Engineering Lead",
@@ -100,8 +100,12 @@ export class InMemoryLoreStore implements LoreStore {
   async signInWithGitHub(identity: GitHubUserIdentity): Promise<UserProfile> {
     const identityKey = `github:${identity.providerUserId}`;
     const normalizedEmail = identity.email.trim().toLowerCase();
-    const existingUserId = this.#identityUsers.get(identityKey)
-      ?? [...this.#users.values()].find((user) => user.email.toLowerCase() === normalizedEmail)?.id;
+    const identityUserId = this.#identityUsers.get(identityKey);
+    const emailUserId = [...this.#users.values()].find((user) => user.email.toLowerCase() === normalizedEmail)?.id;
+    if (identityUserId && emailUserId && identityUserId !== emailUserId) {
+      throw new ConflictError("This verified email is already linked to another Lore account");
+    }
+    const existingUserId = identityUserId ?? emailUserId;
     const now = new Date().toISOString();
     const existing = existingUserId ? this.#users.get(existingUserId) : undefined;
     const id = existing?.id ?? newUuid();
@@ -280,6 +284,10 @@ export class InMemoryLoreStore implements LoreStore {
     const inviter = await this.getUserProfile(invitedByUserId);
     const snapshot = this.#snapshotFor(organisationId);
     const email = input.email.trim().toLowerCase();
+    const existingUser = [...this.#users.values()].find((user) => user.email.toLowerCase() === email);
+    if (existingUser && this.#memberships.has(`${organisationId}:${existingUser.id}`)) {
+      throw new ConflictError("This person is already an organisation member");
+    }
     if ([...this.#invitations.values()].some((item) => item.organisationId === organisationId && item.email.toLowerCase() === email && !item.acceptedAt && !item.revokedAt)) {
       throw new ConflictError("A pending invitation already exists for this email");
     }

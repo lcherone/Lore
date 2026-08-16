@@ -1,12 +1,13 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: lore
       POSTGRES_USER: lore
       POSTGRES_PASSWORD: lore
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - lore-postgres:/var/lib/postgresql/data
     healthcheck:
@@ -17,8 +18,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -40,6 +42,7 @@ services:
         condition: service_healthy
 
   seed:
+    profiles: ["demo-data"]
     build:
       context: .
       target: tools
@@ -61,25 +64,25 @@ services:
       - path: .env
         required: false
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       DATABASE_URL: postgresql://lore:lore@postgres:5432/lore?schema=public
       REDIS_URL: redis://redis:6379
       DEMO_MODE: "false"
       API_HOST: 0.0.0.0
       APP_URL: http://localhost:5173
       WEB_ORIGIN: http://localhost:5173
-      LOCAL_DEV_AUTH: "true"
-      LOCAL_ORGANISATION_ID: 6f4f5ce6-9038-4ad2-b45e-f6de814555dd
-      LOCAL_USER_ID: df9f1efc-1dfe-4df7-b02d-ce228da36e07
-      LOCAL_USER_NAME: Casey Hall
+      TRUST_PROXY: "true"
+      LOCAL_DEV_AUTH: "false"
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
+    restart: unless-stopped
+    init: true
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      seed:
+      migrate:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -96,16 +99,19 @@ services:
       - path: .env
         required: false
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       DATABASE_URL: postgresql://lore:lore@postgres:5432/lore?schema=public
       REDIS_URL: redis://redis:6379
       DEMO_MODE: "false"
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      seed:
+      migrate:
         condition: service_completed_successfully
 
   web:
@@ -113,7 +119,8 @@ services:
       context: .
       target: web
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"
+    restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy

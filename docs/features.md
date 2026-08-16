@@ -35,6 +35,36 @@ npm run demo:check
 
 **Boundary.** Demo imports and queued jobs are simulated honestly. Use persistent mode for real GitHub history, durable knowledge, Redis jobs, and multi-process workers.
 
+## GitHub login, personal profiles, and organisations
+
+**What it does.** Gives every person one account with a GitHub-seeded, editable profile. The account can own or join multiple private organisations, switch between them, invite colleagues, and enforce owner, admin, member, or viewer access.
+
+**How it works.** Real login uses GitHub's authorization-code flow with state and PKCE, fetches a verified email plus profile, links the stable numeric GitHub identity, then discards the GitHub login token. Lore issues its own random opaque session; only its hash and server-side expiry, revocation, last-seen, user, and active organisation are persisted. Every tenant request validates current membership. Creating, switching, or joining an organisation rotates the session.
+
+<p align="center">
+  <img src="assets/screenshots/lore-login.png" alt="Branded Lore sign-in screen explaining private organisations, GitHub identity, and team roles" width="100%" />
+</p>
+
+**Use it locally.** Run `npm run demo`, open [http://localhost:5173](http://localhost:5173), and choose **Explore the demo account**. For a real identity, register the local GitHub OAuth callback and follow [Authentication, profiles, and organisations](authentication-and-organisations.md#real-github-login-on-a-local-machine).
+
+Open the avatar or **Your profile**. GitHub supplies the first name, avatar, bio, company, location, website, login, profile link, and verified email. Display name, bio, company, title, location, website, and timezone are editable; later logins preserve user edits. The security section lists expiring sessions and can revoke every other session or sign out the current one.
+
+<p align="center">
+  <img src="assets/screenshots/lore-profile.png" alt="Lore personal profile editor with GitHub identity details and revocable session controls" width="100%" />
+</p>
+
+Open **Organisation** to create or switch workspaces, inspect members, invite a verified email as admin/member/viewer, copy its join link, change non-owner roles, revoke invitations, or remove non-owner members. Invitation links alone grant nothing: acceptance requires a signed-in GitHub account with the exact verified invited email.
+
+<p align="center">
+  <img src="assets/screenshots/lore-organisations.png" alt="Lore organisation access screen with role-aware invitation, members, and pending invitation controls" width="100%" />
+</p>
+
+**Role boundary.** Owners manage everything. Admins manage settings, people, and engineering memory but cannot replace the owner. Members can work with repositories and engineering memory. Viewers are API-enforced read-only. Ownership transfer and organisation deletion intentionally wait for a re-authenticated recovery design.
+
+**Repository boundary.** GitHub login identifies a person but grants no repository access. Historical imports still require a selected-repository PAT or repository GitHub App from [GitHub repository integration](github.md).
+
+**SaaS boundary.** This is a working local account and baseline tenancy foundation, not an external-hosting approval. Enterprise SSO/MFA/SCIM, final granular roles, support access, audit export, installation ownership verification, deletion/export, regulated-data controls, legal materials, and independent testing remain in [SaaS readiness](saas-readiness.md).
+
 ## Dashboard and knowledge pulse
 
 **What it does.** Gives reviewers one operating view of knowledge health, pending candidates, recent verification results, and the task-context entry point.

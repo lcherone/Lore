@@ -11,7 +11,55 @@
 
 # REST API
 
-All product routes use `/api`. In demo mode requests receive the built-in demo tenant. Persistent deployments require a signed session or explicitly loopback-restricted local development auth.
+All product routes use `/api`. Human access uses a random opaque session cookie backed by a hashed, expiring, revocable `AuthSession`. Run `npm run demo` for an explicit demo login; persistent deployments use GitHub OAuth or the explicitly loopback-restricted local development bypass.
+
+## Accounts and organisations
+
+```text
+POST   /api/auth/demo
+GET    /api/auth/github?returnTo=/%23profile
+GET    /api/auth/github/callback
+GET    /api/auth/session
+POST   /api/auth/logout
+GET    /api/auth/sessions
+DELETE /api/auth/sessions/others
+GET    /api/account/profile
+PATCH  /api/account/profile
+GET    /api/organisations
+POST   /api/organisations
+GET    /api/organisations/:id
+PATCH  /api/organisations/:id
+POST   /api/organisations/:id/switch
+POST   /api/organisations/:id/invitations
+DELETE /api/organisations/:id/invitations/:invitationId
+POST   /api/invitations/:id/accept
+PATCH  /api/organisations/:id/members/:userId
+DELETE /api/organisations/:id/members/:userId
+```
+
+`GET /api/auth/session` is intentionally public and always returns `200`. Check `authenticated` before reading its optional `user` and `activeOrganisation` fields. It also reports organisation memberships, invitations matching the verified email, demo mode, and whether GitHub login is configured. No access token or session token is returned in JSON.
+
+For a terminal-only demo, keep an owner-only cookie jar:
+
+```bash
+curl -c /tmp/lore-demo.cookies -X POST http://127.0.0.1:3001/api/auth/demo
+curl -b /tmp/lore-demo.cookies http://127.0.0.1:3001/api/auth/session
+```
+
+Real GitHub login is a browser redirect, not a JSON password endpoint. Open `http://localhost:5173/api/auth/github`; Lore validates state and PKCE, reads the verified GitHub identity server-side, discards the GitHub token, sets the Lore cookie, and redirects to the UI.
+
+Create an organisation after login:
+
+```bash
+curl -b /tmp/lore-demo.cookies -c /tmp/lore-demo.cookies \
+  -H 'content-type: application/json' \
+  -d '{"name":"Acme Engineering","slug":"acme-engineering"}' \
+  http://127.0.0.1:3001/api/organisations
+```
+
+The creation, switch, and invitation-acceptance responses rotate the Lore cookie. A browser handles this automatically; a command-line client must use `-c` as well as `-b` to save the replacement. Production mutations also require the token from `GET /api/auth/csrf` in the `csrf-token` header.
+
+See [Authentication, profiles, and organisations](authentication-and-organisations.md) for field definitions, role permissions, invitation behaviour, local OAuth registration, and security boundaries.
 
 ## Health and bootstrap
 

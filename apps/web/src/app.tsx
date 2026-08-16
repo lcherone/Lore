@@ -567,6 +567,20 @@ export function App() {
     );
   }
 
+  if (!account?.authenticated) {
+    return (
+      <LoginPage
+        demoMode={account?.demoMode ?? demoMode}
+        githubLoginEnabled={account?.githubLoginEnabled ?? false}
+        onDemoLogin={demoLogin}
+      />
+    );
+  }
+
+  if (!account.activeOrganisation) {
+    return <OrganisationOnboardingPage session={account} onRefresh={loadApplication} />;
+  }
+
   return (
     <div className={mobileNav ? "app app--nav-open" : "app"}>
       <aside className="sidebar">
@@ -594,13 +608,17 @@ export function App() {
             );
           })}
         </nav>
-        <button
-          className={page === "settings" ? "sidebar__settings is-active" : "sidebar__settings"}
-          onClick={() => navigate("settings")}
-        >
-          <Settings size={20} />
-          <span>Settings</span>
-        </button>
+        <div className="sidebar__account">
+          <button className={page === "organisations" ? "is-active" : ""} onClick={() => navigate("organisations")}>
+            <Building2 size={20} /><span>Organisation</span>
+          </button>
+          <button className={page === "profile" ? "is-active" : ""} onClick={() => navigate("profile")}>
+            <UserRound size={20} /><span>Your profile</span>
+          </button>
+          <button className={page === "settings" ? "is-active" : ""} onClick={() => navigate("settings")}>
+            <Settings size={20} /><span>Settings</span>
+          </button>
+        </div>
       </aside>
       <div className="sidebar-scrim" onClick={() => setMobileNav(false)} />
       <section className="app-frame">
@@ -612,16 +630,26 @@ export function App() {
           >
             <Menu size={21} />
           </button>
-          <button className="organisation-switcher">
-            <span>{data.organisation.name}</span>
-            <i>/</i>
-            <strong>
-              {data.repositories[0]
-                ? `${data.repositories[0].owner}-${data.repositories[0].name}`
-                : "No repository"}
-            </strong>
-            <ChevronDown size={15} />
-          </button>
+          <div className="organisation-switcher-wrap">
+            <button className="organisation-switcher" aria-expanded={organisationMenuOpen} onClick={() => setOrganisationMenuOpen((value) => !value)}>
+              <span>{account.activeOrganisation.name}</span>
+              <i>/</i>
+              <strong>{account.activeOrganisation.role}</strong>
+              <ChevronDown size={15} />
+            </button>
+            {organisationMenuOpen && (
+              <div className="organisation-menu">
+                <small>Switch organisation</small>
+                {account.organisations.map((organisation) => (
+                  <button className={organisation.id === account.activeOrganisation?.id ? "is-active" : ""} key={organisation.id} onClick={() => void switchOrganisation(organisation.id)}>
+                    <span>{organisation.name.slice(0, 1).toUpperCase()}</span>
+                    <div><strong>{organisation.name}</strong><small>{organisation.role} · {organisation.memberCount} members</small></div>
+                  </button>
+                ))}
+                <button className="organisation-menu__manage" onClick={() => { setOrganisationMenuOpen(false); navigate("organisations"); }}>Manage organisations</button>
+              </div>
+            )}
+          </div>
           <button className="command-search" onClick={() => setPaletteOpen(true)}>
             <Search size={17} />
             <span>Search or run a command…</span>
@@ -631,8 +659,8 @@ export function App() {
             <Bell size={19} />
             <i />
           </button>
-          <button className="avatar" aria-label="User menu">
-            CH
+          <button className="avatar" aria-label="Open your profile" onClick={() => navigate("profile")}>
+            {account.user?.avatarUrl ? <img src={account.user.avatarUrl} alt="" /> : account.user?.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}
           </button>
         </header>
         <main className="app-content">{pageContent}</main>

@@ -3,7 +3,11 @@ import { lstat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const docker = process.argv.includes("--docker");
-const demo = process.env.DEMO_MODE !== "false";
+const requireGitHubLogin = process.argv.includes("--github-login");
+const requireGitHubRepository = process.argv.includes("--github-repository");
+// Compose deliberately overrides .env's demo default. Treat --docker as the
+// persistent runtime it actually starts, even before the containers exist.
+const demo = !docker && process.env.DEMO_MODE !== "false";
 const errors: string[] = [];
 const warnings: string[] = [];
 const ok: string[] = [];
@@ -32,19 +36,17 @@ if (demo) {
   ok.push("Runtime: demo mode; PostgreSQL, Redis, and GitHub credentials are optional.");
 } else if (docker) {
   ok.push(
-    "Runtime: persistent Docker mode; Compose supplies internal PostgreSQL, Redis, and local-auth values."
+    "Runtime: local-production Docker mode; Compose supplies PostgreSQL and Redis and disables demo/local identity bypasses."
   );
 } else {
-  for (const name of [
-    "DATABASE_URL",
-    "REDIS_URL",
-    "LOCAL_ORGANISATION_ID",
-    "LOCAL_USER_ID"
-  ] as const) {
+  for (const name of ["DATABASE_URL", "REDIS_URL"] as const) {
     if (!present(name)) errors.push(`${name} is required for native persistent mode.`);
   }
-  if (process.env.LOCAL_DEV_AUTH !== "true") {
-    errors.push("LOCAL_DEV_AUTH=true is required for the bundled native local login.");
+  if (process.env.LOCAL_DEV_AUTH === "true") {
+    for (const name of ["LOCAL_ORGANISATION_ID", "LOCAL_USER_ID"] as const) {
+      if (!present(name)) errors.push(`${name} is required when LOCAL_DEV_AUTH=true.`);
+    }
+    warnings.push("LOCAL_DEV_AUTH is a loopback development bypass; use GitHub login for product testing.");
   }
   ok.push("Runtime: native persistent mode.");
 }
@@ -56,6 +58,33 @@ if (sessionSecret.length < 32 || sessionSecret.startsWith("replace-with")) {
   );
 } else {
   ok.push("Session secret: configured (value hidden).");
+}
+
+const oauthClientIdReady = present("GITHUB_OAUTH_CLIENT_ID");
+const oauthClientSecretReady = present("GITHUB_OAUTH_CLIENT_SECRET");
+if (oauthClientIdReady !== oauthClientSecretReady) {
+  errors.push("Set both GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET, or neither.");
+} else if (oauthClientIdReady && oauthClientSecretReady) {
+  const callback = process.env.GITHUB_OAUTH_CALLBACK_URL?.trim()
+    ?? `${(process.env.APP_URL ?? "http://localhost:5173").replace(/\/$/, "")}/api/auth/github/callback`;
+  try {
+    const callbackUrl = new URL(callback);
+    if (callbackUrl.pathname !== "/api/auth/github/callback") {
+      errors.push("GITHUB_OAUTH_CALLBACK_URL must end with /api/auth/github/callback.");
+    } else {
+      ok.push(`GitHub login: OAuth App configured for ${callbackUrl.origin} (credentials hidden).`);
+    }
+  } catch {
+    errors.push("GITHUB_OAUTH_CALLBACK_URL must be an absolute URL.");
+  }
+} else if (requireGitHubLogin) {
+  errors.push(
+    "GitHub login is required: configure GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET."
+  );
+} else if (!demo && process.env.LOCAL_DEV_AUTH !== "true") {
+  errors.push("Configure GitHub OAuth login or explicitly enable the loopback-only LOCAL_DEV_AUTH bypass.");
+} else {
+  warnings.push("GitHub login is not configured.");
 }
 
 const configuredMode = process.env.GITHUB_AUTH_MODE?.trim().toLowerCase();
@@ -77,7 +106,11 @@ const githubMode = configuredMode || inferredMode;
 if (!new Set(["disabled", "token", "app"]).has(githubMode)) {
   errors.push("GITHUB_AUTH_MODE must be disabled, token, or app.");
 } else if (githubMode === "disabled") {
-  ok.push("GitHub: disabled; this is valid for demo and checkout-only workflows.");
+  (requireGitHubRepository ? errors : ok).push(
+    requireGitHubRepository
+      ? "GitHub repository access is required: set GITHUB_AUTH_MODE=token or app and configure its credential."
+      : "GitHub repository import: disabled; valid until remote history is needed."
+  );
 } else if (githubMode === "token") {
   const fileVariable = docker ? "GITHUB_TOKEN_FILE" : "GITHUB_TOKEN_PATH";
   if (!present("GITHUB_TOKEN") && !present(fileVariable)) {

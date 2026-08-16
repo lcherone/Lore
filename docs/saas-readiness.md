@@ -101,6 +101,12 @@ Run a jurisdiction and sector assessment for every target market and customer. T
 
 ## Mandatory product and architecture gates
 
+### Implemented local account foundation
+
+Lore now has GitHub-only human login with state and PKCE, verified-email/stable-ID linking, editable GitHub-seeded profiles, opaque hashed and revocable server sessions, expiry and rotation, personal accounts spanning private organisations, owner/admin/member/viewer roles, live membership checks, and verified-email invitations. These controls materially improve the local product and remove the former identity-bearing cookie design.
+
+They do not close the external-deployment gate. GitHub OAuth is not enterprise OIDC/SAML, the four baseline roles are not the final security/knowledge/auditor/support role model, and the service still needs the isolation, lifecycle, operational, legal, assurance, and regulated-data controls below. See [Authentication and organisations](authentication-and-organisations.md) for the implemented boundary.
+
 ### P0 — required before any external pilot
 
 - [ ] Production identity provider with OIDC/SAML SSO, MFA enforcement, invite/domain controls, short-lived sessions, revocation, and no `LOCAL_DEV_AUTH`.

@@ -57,6 +57,7 @@ import {
   Risk,
   SeverityLabel
 } from "./components.js";
+import { parseGitHubRepositoryReference } from "./github-repository.js";
 
 const formatDate = (value: string): string =>
   new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(
@@ -1463,8 +1464,9 @@ export function RepositoriesPage({
   const [importRepository, setImportRepository] = useState<RepositorySummary>();
   const [installationId, setInstallationId] = useState(initialInstallationId ?? "");
   const [importLimit, setImportLimit] = useState<PullRequestImportLimit>(100);
-  const [owner, setOwner] = useState("");
-  const [name, setName] = useState("");
+  const [repositoryReference, setRepositoryReference] = useState("");
+  const [defaultBranch, setDefaultBranch] = useState("main");
+  const [connectError, setConnectError] = useState<string>();
   const [deleteRepository, setDeleteRepository] = useState<RepositorySummary>();
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [retentionRepository, setRetentionRepository] = useState<RepositorySummary>();
@@ -1483,15 +1485,21 @@ export function RepositoriesPage({
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     setSaving(true);
+    setConnectError(undefined);
     try {
+      const { owner, name } = parseGitHubRepositoryReference(repositoryReference);
       await onConnect({
         provider: "github",
         owner,
         name,
-        defaultBranch: "main",
+        defaultBranch,
         ...(installationId ? { providerInstallationId: installationId } : {})
       });
       setConnectOpen(false);
+      setRepositoryReference("");
+      setDefaultBranch("main");
+    } catch (error) {
+      setConnectError(error instanceof Error ? error.message : "Repository could not be connected");
     } finally {
       setSaving(false);
     }
@@ -1643,6 +1651,8 @@ export function RepositoriesPage({
                 type="submit"
                 disabled={
                   saving ||
+                  !repositoryReference.trim() ||
+                  !defaultBranch.trim() ||
                   !githubStatus.historicalImportReady ||
                   (githubStatus.mode === "app" && !installationId)
                 }
@@ -1689,25 +1699,29 @@ export function RepositoriesPage({
               </Button>
             )}
             <div className="form-grid">
-              <FormField label="Owner">
+              <FormField
+                label="GitHub repository"
+                hint="Paste the complete GitHub URL or enter OWNER/REPOSITORY."
+              >
                 <input
-                  name="repositoryOwner"
+                  name="repositoryReference"
                   required
-                  value={owner}
-                  onChange={(event) => setOwner(event.target.value)}
-                  placeholder="acme"
+                  value={repositoryReference}
+                  onChange={(event) => setRepositoryReference(event.target.value)}
+                  placeholder="https://github.com/D3R/soho-home"
                 />
               </FormField>
-              <FormField label="Repository">
+              <FormField label="Default branch" hint="Used by local indexing and context links.">
                 <input
-                  name="repositoryName"
+                  name="defaultBranch"
                   required
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="commerce"
+                  value={defaultBranch}
+                  onChange={(event) => setDefaultBranch(event.target.value)}
+                  placeholder="main"
                 />
               </FormField>
             </div>
+            {connectError && <div className="form-error">{connectError}</div>}
             {githubStatus.mode === "app" && (
               <FormField
                 label="GitHub App installation ID"

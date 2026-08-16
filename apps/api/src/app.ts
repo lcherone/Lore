@@ -239,12 +239,26 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   const jobs: JobDispatcher = options.dependencies?.jobs ?? (demoMode ? new InMemoryJobDispatcher() : new BullMqJobDispatcher(process.env.REDIS_URL));
   const aiProvider = options.dependencies?.aiProvider ?? createBundledMockAIProvider();
   const githubIdentityProvider = options.dependencies?.githubIdentityProvider ?? new GitHubOAuthProvider();
+  if (!demoMode && process.env.NODE_ENV === "production") {
+    if (sessionSecret.length < 32 || sessionSecret.startsWith("replace-with")) {
+      throw new Error("SESSION_SECRET must be a non-placeholder random value of at least 32 characters");
+    }
+    if (process.env.LOCAL_DEV_AUTH === "true") {
+      throw new Error("LOCAL_DEV_AUTH cannot be enabled in production mode");
+    }
+    if (!githubIdentityProvider.configured) {
+      throw new Error(
+        "GitHub login is required in production mode; configure GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET"
+      );
+    }
+  }
   const metrics = new ApiMetrics();
   const contextService = new TaskPreparationService();
   const verificationService = new ChangeVerificationService();
   const knowledgeService = new KnowledgeService(store);
   const candidateExtractionService = new KnowledgeCandidateExtractionService(store, aiProvider);
   const app = Fastify({
+    trustProxy: process.env.TRUST_PROXY === "true",
     logger: options.logger === false ? false : {
       level: process.env.LOG_LEVEL ?? "info",
       redact: {
@@ -439,11 +453,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   app.get("/api/organisations/:id", async (request) => {
     const auth = requireAuth(request);
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
-    await store.validateMembership(id, auth.userId);
+    const role = await store.getMembershipRole(id, auth.userId);
     const [organisation, members, invitations] = await Promise.all([
       store.listOrganisationAccess(auth.userId).then((items) => items.find((item) => item.id === id)),
       store.listOrganisationMembers(id),
-      store.listOrganisationInvitations(id)
+      role === "owner" || role === "admin" ? store.listOrganisationInvitations(id) : Promise.resolve([])
     ]);
     if (!organisation) throw new NotFoundError("Organisation", id);
     return { organisation, members, invitations };
