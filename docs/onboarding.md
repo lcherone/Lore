@@ -111,7 +111,9 @@ Set one `GITHUB_TOKEN`. The searchable repository picker lists everything the to
 
 Change the initial limit, interval, retention, or automatic extraction under **Settings → Organisation defaults** before connecting when a mature or sensitive repository needs a bounded first run. Follow the [GitHub integration guide](github.md), including classic/fine-grained PAT reach, organisation approval, and GitHub SAML SSO.
 
-Open the Candidates screen. Approve only statements whose evidence, class, and scope are accurate. Edit over-broad scope before approval. Reject noisy inferences with a reason; the audit trail records both decisions.
+Open **Candidates** and choose **Triage with AI**. Lore applies local quality checks first, then sends only ambiguous items to OpenAI in bounded batches of ten. Use the summary cards to separate **Ready to add**, **Likely noise**, **Human review**, and **Possible policy**; narrow further by repository, knowledge type, recommendation, text, or sort order. Select a page or individual rows for guarded bulk add/ignore. The confirmation states the exact eligible count, and the server skips anything stale or unsafe. Review wording, evidence, class, and scope individually whenever the recommendation calls for edits, merging, uncertainty, conflict, or policy review.
+
+AI triage is a recommendation layer, not an approval layer. Approve only statements whose evidence, class, and scope are accurate. Edit over-broad scope before approval. Ignoring a candidate retains its evidence and audit trail. Possible policies cannot be bulk approved; create one separately only after defining its human owner, severity, scope, and deterministic detector.
 
 ## Import existing engineering guidance
 

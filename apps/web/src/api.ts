@@ -1,6 +1,8 @@
 import type {
   AccountSession,
   AuthSessionSummary,
+  CandidateBulkReviewResult,
+  CandidateRecord,
   CodeEntity,
   CodeGraphPage,
   CodeRelationshipView,
@@ -128,10 +130,39 @@ export const loreApi = {
     request("/api/tasks/prepare", { method: "POST", body: JSON.stringify({ repositoryId, task }) }),
   approveCandidate: (id: string, input: Record<string, unknown>) =>
     request(`/api/knowledge-candidates/${id}/approve`, { method: "POST", body: JSON.stringify(input) }),
+  getCandidate: (id: string): Promise<CandidateRecord> =>
+    request(`/api/knowledge-candidates/${id}`),
   rejectCandidate: (id: string, reason: string) =>
     request(`/api/knowledge-candidates/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
   mergeCandidate: (id: string, targetId: string, reason: string): Promise<KnowledgeItem> =>
     request(`/api/knowledge-candidates/${id}/merge`, { method: "POST", body: JSON.stringify({ targetId, reason }) }),
+  triageCandidates: (
+    candidateIds?: string[],
+    force = false
+  ): Promise<{
+    status: "queued" | "dispatch_pending" | "completed" | "up_to_date";
+    queued: number;
+    skippedFresh?: number;
+    jobId?: string;
+  }> =>
+    request("/api/knowledge-candidates/triage", {
+      method: "POST",
+      body: JSON.stringify({ ...(candidateIds?.length ? { candidateIds } : {}), force })
+    }),
+  bulkReviewCandidates: (
+    action: "approve" | "ignore",
+    candidateIds: string[],
+    reason: string
+  ): Promise<CandidateBulkReviewResult> =>
+    request("/api/knowledge-candidates/bulk-review", {
+      method: "POST",
+      body: JSON.stringify({
+        action,
+        candidateIds,
+        confirmationCount: candidateIds.length,
+        reason
+      })
+    }),
   createKnowledge: (input: Record<string, unknown>): Promise<KnowledgeItem> =>
     request("/api/knowledge", { method: "POST", body: JSON.stringify(input) }),
   challengeKnowledge: (id: string, reason: string): Promise<KnowledgeItem> =>

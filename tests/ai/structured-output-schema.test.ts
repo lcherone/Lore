@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { zodTextFormat } from "openai/helpers/zod";
 import {
+  candidateTriageWireSchema,
   knowledgeExtractionScopeWireSchema,
   knowledgeExtractionWireSchema,
   parseKnowledgeExtractionWireResult
@@ -60,5 +61,29 @@ describe("OpenAI knowledge extraction schema", () => {
     });
 
     expect(parsed.candidates[0]!.proposedScope).toEqual({ paths: ["src/Refund/**"] });
+  });
+});
+
+describe("OpenAI candidate triage schema", () => {
+  it("makes every recommendation field required and uses nullable edit fields", () => {
+    const format = zodTextFormat(candidateTriageWireSchema, "CandidateTriageResult_v1");
+    const schema = format.schema as {
+      required: string[];
+      properties: { items: { items: { required: string[] } } };
+    };
+
+    expect(schema.required).toEqual(["items"]);
+    expect(schema.properties.items.items.required).toEqual([
+      "candidateId",
+      "action",
+      "durability",
+      "policyFit",
+      "recommendedKind",
+      "recommendedStatement",
+      "duplicateTargetId",
+      "confidence",
+      "explanation",
+      "reasons"
+    ]);
   });
 });

@@ -29,6 +29,7 @@ import {
 } from "@lore/github/index.js";
 import {
   createKnowledgeExtractionBatches,
+  CandidateTriageService,
   KnowledgeCandidateExtractionService,
   KnowledgeHealthService
 } from "@lore/knowledge/index.js";
@@ -95,6 +96,12 @@ const extractionJobSchema = z.object({
   organisationId: z.string().min(1),
   repositoryId: z.string().min(1),
   evidenceIds: z.array(z.string()).min(1)
+});
+
+const candidateTriageJobSchema = z.object({
+  organisationId: z.string().min(1),
+  candidateIds: z.array(z.string().min(1)).min(1).max(1_000),
+  force: z.boolean().default(false)
 });
 
 const mockProvider = createBundledMockAIProvider();
@@ -250,6 +257,25 @@ const executeJob = async (job: Job, runId?: string): Promise<unknown> => {
       proposals: result.proposals,
       candidatesCreated: result.candidatesCreated
     };
+  }
+
+  if (job.name === "candidate.triage") {
+    const input = candidateTriageJobSchema.parse(job.data);
+    return new CandidateTriageService(
+      store,
+      aiProvider,
+      `${aiRuntime.name}-ai:candidate-triage/v1${aiRuntime.model ? `:${aiRuntime.model}` : ""}`
+    ).triage({
+      ...input,
+      onProgress: async (progress) => {
+        if (!runId) return;
+        await jobLedger.recordProgress(
+          runId,
+          `Candidate triage ${progress.completed}/${progress.total}; ${progress.deterministic} deterministic, ${progress.ai} AI`,
+          progress
+        );
+      }
+    });
   }
 
   if (job.name === "knowledge.health") {

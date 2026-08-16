@@ -120,6 +120,9 @@ POST /api/knowledge/:id/approve
 POST /api/knowledge/:id/challenge
 POST /api/knowledge/:id/archive
 GET  /api/knowledge-candidates
+GET  /api/knowledge-candidates/:id
+POST /api/knowledge-candidates/triage
+POST /api/knowledge-candidates/bulk-review
 POST /api/knowledge-candidates/:id/approve
 POST /api/knowledge-candidates/:id/reject
 POST /api/knowledge-candidates/:id/merge
@@ -131,6 +134,14 @@ GET  /api/search?q=QUERY&repositoryId=REPOSITORY_ID
 `POST /api/knowledge` is explicitly human-authored. Lore creates a `manual_confirmation` evidence record, revision, and audit event in the same transaction. Import accepts up to 500 items through the same path. AI proposals cannot use this boundary.
 
 `POST /api/knowledge-import` accepts either `{ "items": [...] }` JSON or `{ "format": "markdown", "content": "...", "sourceName": "AGENTS.md", "repositoryId": "..." }`. Markdown headings become individually scoped, human-confirmed items and retain their source name as provenance. Candidate merge supersedes the duplicate, links its evidence to the target, and records both a proposal and an audit event.
+
+### Candidate triage and guarded bulk review
+
+`POST /api/knowledge-candidates/triage` accepts `{ "candidateIds": ["..."], "force": false }`; omit `candidateIds` to analyse the organisation's full queue. Up to 1,000 unique IDs are accepted. Current fingerprints are skipped unless `force` is true. Demo mode completes synchronously with the deterministic provider. Full mode returns `202` with a durable `candidate.triage` job ID and progressively persists validated recommendations, so a retry continues past already-completed items.
+
+Candidate list and bootstrap responses bound each evidence body to a 1,500-character preview so a large queue does not repeatedly transfer retained patches. `GET /api/knowledge-candidates/:id` returns the complete organisation-scoped candidate and evidence only when its detail is opened.
+
+`POST /api/knowledge-candidates/bulk-review` accepts `action` (`approve` or `ignore`), up to 1,000 unique `candidateIds`, an exact `confirmationCount`, and an audit `reason`. The server recomputes triage freshness and bulk eligibility for each ID immediately before mutation. It returns `processedIds`, approved records, and a reason for every safely skipped candidate. AI cannot call this route and triage never invokes it automatically.
 
 ### Communication evidence
 

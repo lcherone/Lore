@@ -14,6 +14,7 @@ import type {
   AgentSession,
   ApiTokenSummary,
   CandidateRecord,
+  CandidateTriageRecommendation,
   ChangeObservation,
   CodeEntity,
   CodeEntityListQuery,
@@ -51,6 +52,7 @@ import {
   DEFAULT_ORGANISATION_SETTINGS,
   DEFAULT_USER_SETTINGS,
   organisationSettingsSchema,
+  candidateTriageRecommendationSchema,
   userSettingsSchema
 } from "@lore/shared/schemas.js";
 
@@ -1271,6 +1273,10 @@ export class PrismaLoreStore implements LoreStore {
           })),
           skipDuplicates: true
         });
+        await this.prisma.knowledgeItem.update({
+          where: { id: existing.id },
+          data: { updatedAt: new Date() }
+        });
       }
       const refreshed = await this.prisma.knowledgeItem.findUniqueOrThrow({
         where: { id: existing.id },
@@ -1334,6 +1340,49 @@ export class PrismaLoreStore implements LoreStore {
     });
     if (!row) throw new NotFoundError("Knowledge candidate", candidateId);
     return this.#mapCandidate(row);
+  }
+
+  async saveCandidateTriage(
+    organisationId: string,
+    candidateId: string,
+    recommendation: CandidateTriageRecommendation
+  ): Promise<CandidateRecord> {
+    await this.#assertOrganisation(organisationId);
+    const existing = await this.prisma.knowledgeItem.findFirst({
+      where: { id: candidateId, organisationId, status: "candidate" },
+      select: { metadata: true }
+    });
+    if (!existing) throw new NotFoundError("Knowledge candidate", candidateId);
+    const triage = candidateTriageRecommendationSchema.parse(recommendation);
+    await this.prisma.$transaction([
+      this.prisma.knowledgeItem.update({
+        where: { id: candidateId },
+        data: {
+          metadata: {
+            ...asRecord(existing.metadata),
+            triage
+          } as unknown as Prisma.InputJsonValue
+        }
+      }),
+      this.prisma.auditEvent.create({
+        data: {
+          organisationId,
+          userId: triage.source,
+          action: "candidate.triaged",
+          targetType: "KnowledgeItem",
+          targetId: candidateId,
+          after: {
+            action: triage.action,
+            policyFit: triage.policyFit,
+            confidence: triage.confidence,
+            bulkEligibleAction: triage.bulkEligibleAction ?? null,
+            method: triage.method,
+            source: triage.source
+          }
+        }
+      })
+    ]);
+    return this.getCandidate(organisationId, candidateId);
   }
 
   async addRepository(
@@ -2428,6 +2477,9 @@ export class PrismaLoreStore implements LoreStore {
       ...(typeof metadata.proposalId === "string" ? { proposalId: metadata.proposalId } : {}),
       ...(typeof metadata.proposedExclusion === "string"
         ? { proposedExclusion: metadata.proposedExclusion }
+        : {}),
+      ...(Object.keys(asRecord(metadata.triage)).length
+        ? { triage: candidateTriageRecommendationSchema.parse(metadata.triage) }
         : {})
     };
   }

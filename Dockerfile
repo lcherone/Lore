@@ -9,8 +9,9 @@ COPY . .
 # Keep the compiler below the standard 2 GiB Colima VM ceiling so BuildKit and
 # the guest OS retain working memory while still avoiding Node's smaller
 # architecture-dependent default heap. The local rebuild command stops the
-# containers first so this bounded heap fits inside a 2 GiB Colima VM.
-RUN NODE_OPTIONS=--max-old-space-size=1024 npm run build
+# containers first so this bounded heap fits inside a 2 GiB Colima VM. The
+# complete workspace type-check now needs slightly more than 1 GiB.
+RUN NODE_OPTIONS=--max-old-space-size=1280 npm run build
 
 FROM builder AS tools
 

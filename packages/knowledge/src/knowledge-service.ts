@@ -1,8 +1,13 @@
 import type { LoreStore } from "@lore/core/index.js";
 import { calculateConfidence, freshnessFactor } from "@lore/core/index.js";
-import type { ConfidenceFactors, KnowledgeItem } from "@lore/shared/types.js";
+import type {
+  CandidateBulkReviewResult,
+  ConfidenceFactors,
+  KnowledgeItem
+} from "@lore/shared/types.js";
 import type { z } from "zod";
 import { approveCandidateSchema } from "@lore/shared/schemas.js";
+import { hasFreshCandidateTriage } from "./candidate-triage-service.js";
 
 export class KnowledgeService {
   public constructor(private readonly store: LoreStore) {}
@@ -35,6 +40,58 @@ export class KnowledgeService {
   ): Promise<KnowledgeItem> {
     if (reason.trim().length < 3) throw new Error("A merge reason is required for the audit trail.");
     return this.store.mergeCandidate(organisationId, candidateId, targetId, reason, actor);
+  }
+
+  async bulkReviewCandidates(
+    organisationId: string,
+    input: {
+      action: "approve" | "ignore";
+      candidateIds: string[];
+      reason: string;
+    },
+    actor: string
+  ): Promise<CandidateBulkReviewResult> {
+    const result: CandidateBulkReviewResult = {
+      action: input.action,
+      processedIds: [],
+      approved: [],
+      skipped: []
+    };
+    for (const candidateId of input.candidateIds) {
+      try {
+        const candidate = await this.store.getCandidate(organisationId, candidateId);
+        const expectedAction = input.action === "approve" ? "approve" : "ignore";
+        if (!hasFreshCandidateTriage(candidate)) {
+          result.skipped.push({ id: candidateId, reason: "AI triage is missing or stale" });
+          continue;
+        }
+        if (candidate.triage?.bulkEligibleAction !== expectedAction) {
+          result.skipped.push({
+            id: candidateId,
+            reason: `Candidate is not guarded for bulk ${input.action}`
+          });
+          continue;
+        }
+        if (input.action === "approve") {
+          const approved = await this.approveCandidate(
+            organisationId,
+            candidateId,
+            { reason: input.reason },
+            actor
+          );
+          result.approved.push(approved);
+        } else {
+          await this.rejectCandidate(organisationId, candidateId, input.reason, actor);
+        }
+        result.processedIds.push(candidateId);
+      } catch (error) {
+        result.skipped.push({
+          id: candidateId,
+          reason: error instanceof Error ? error.message : "Candidate review failed"
+        });
+      }
+    }
+    return result;
   }
 }
 

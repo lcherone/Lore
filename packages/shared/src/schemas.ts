@@ -109,6 +109,66 @@ export const approveCandidateSchema = z.object({
   reason: z.string().min(3).max(1_000).default("Approved after evidence review")
 });
 
+export const candidateTriageRequestSchema = z
+  .object({
+    candidateIds: z.array(z.string().min(1)).min(1).max(1_000).optional(),
+    force: z.boolean().default(false)
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.candidateIds && new Set(input.candidateIds).size !== input.candidateIds.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["candidateIds"],
+        message: "Candidate IDs must be unique"
+      });
+    }
+  });
+
+export const candidateBulkReviewSchema = z
+  .object({
+    action: z.enum(["approve", "ignore"]),
+    candidateIds: z.array(z.string().min(1)).min(1).max(1_000),
+    confirmationCount: z.number().int().positive(),
+    reason: z.string().trim().min(3).max(1_000)
+  })
+  .strict()
+  .superRefine((input, context) => {
+    const unique = new Set(input.candidateIds);
+    if (unique.size !== input.candidateIds.length) {
+      context.addIssue({ code: "custom", path: ["candidateIds"], message: "Candidate IDs must be unique" });
+    }
+    if (input.confirmationCount !== unique.size) {
+      context.addIssue({
+        code: "custom",
+        path: ["confirmationCount"],
+        message: "Confirmation count must match the number of candidates"
+      });
+    }
+  });
+
+export const candidateTriageRecommendationSchema = z
+  .object({
+    action: z.enum(["approve", "edit", "merge", "ignore", "review"]),
+    durability: z.enum(["durable", "situational", "one_off_change", "duplicate", "unclear"]),
+    policyFit: z.enum(["not_policy", "possible_policy"]),
+    recommendedKind: z.enum(["fact", "decision", "rule", "preference", "inference", "regression", "warning"]).optional(),
+    recommendedStatement: z.string().min(8).max(4_000).optional(),
+    duplicateTargetId: z.string().min(1).optional(),
+    confidence: z.number().min(0).max(1),
+    explanation: z.string().min(3).max(2_000),
+    reasons: z.array(z.string().min(3).max(500)).max(8),
+    bulkEligibleAction: z.enum(["approve", "ignore"]).optional(),
+    method: z.enum(["deterministic", "ai"]),
+    source: z.string().min(1).max(500),
+    promptVersion: z.string().min(1).max(200),
+    candidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    candidateUpdatedAt: z.string().datetime(),
+    evidenceCount: z.number().int().nonnegative(),
+    triagedAt: z.string().datetime()
+  })
+  .strict();
+
 export const communicationEvidenceSchema = z
   .object({
     repositoryId: z.string().min(1).optional(),

@@ -5,6 +5,7 @@ import { createDemoCodeGraph } from "@lore/shared/demo-graph.js";
 import type {
   AgentSession,
   CandidateRecord,
+  CandidateTriageRecommendation,
   ChangeObservation,
   CodeEntity,
   CodeEntityListQuery,
@@ -845,6 +846,20 @@ export class InMemoryLoreStore implements LoreStore {
       (item) => item.id === candidateId
     );
     if (!candidate) throw new NotFoundError("Knowledge candidate", candidateId);
+    return structuredClone(candidate);
+  }
+
+  async saveCandidateTriage(
+    organisationId: string,
+    candidateId: string,
+    recommendation: CandidateTriageRecommendation
+  ): Promise<CandidateRecord> {
+    this.#assertOrganisation(organisationId);
+    const candidate = this.#snapshotFor(organisationId).candidates.find(
+      (item) => item.id === candidateId
+    );
+    if (!candidate) throw new NotFoundError("Knowledge candidate", candidateId);
+    candidate.triage = structuredClone(recommendation);
     return structuredClone(candidate);
   }
 

@@ -1,6 +1,7 @@
 import type {
   AgentSession,
   CandidateRecord,
+  CandidateTriageRecommendation,
   ChangeObservation,
   ChangedFile,
   CodeEntity,
@@ -282,6 +283,11 @@ export interface LoreStore {
     candidate: CandidateRecord
   ): Promise<CandidateRecord>;
   getCandidate(organisationId: string, candidateId: string): Promise<CandidateRecord>;
+  saveCandidateTriage(
+    organisationId: string,
+    candidateId: string,
+    recommendation: CandidateTriageRecommendation
+  ): Promise<CandidateRecord>;
   addRepository(
     organisationId: string,
     input: Omit<

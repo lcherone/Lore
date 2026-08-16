@@ -186,6 +186,12 @@ Run `npm run github:check -- OWNER/REPOSITORY`. The token may lack owner/reposit
 
 Run `npm run ai:check`. Settings should show `openai · gpt-4.1-mini`. If the key exists but `AI_PROVIDER=mock`, rerun `npm run local:setup`.
 
+### Candidate triage is taking time
+
+Open **Activity** and find **AI candidate triage**. Lore checks obvious source-history, duplicate, conflict, and possible-policy cases locally, then sends the remaining candidates to OpenAI in batches of ten. Recommendations are checkpointed after every batch and the browser refreshes them about every ten seconds. A backlog of hundreds can therefore be reviewed progressively; do not restart it merely because it is still running. If the worker stops, the durable job retries and skips recommendations whose candidate/evidence fingerprint is already current.
+
+If a run reaches dead letter, inspect its safe error in **Activity**, correct the OpenAI configuration, and choose **Triage with AI** again. Leave **Re-analyse current recommendations** off so current results are reused. Turn it on only after evidence or the triage approach has materially changed.
+
 ### Docker is not running
 
 Start Docker Desktop or run `colima start`, then retry `npm run local:start`.

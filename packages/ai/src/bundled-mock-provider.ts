@@ -53,9 +53,80 @@ function parseEvidence(raw: string): EvidenceRecord[] {
   }
 }
 
+interface MockTriageCandidate {
+  candidateId: string;
+  kind: KnowledgeKind;
+  title: string;
+  statement: string;
+  candidateConfidence: number;
+  evidenceCount: number;
+  possibleMatches?: Array<{ id: string; similarity: number }>;
+}
+
+function parseTriageCandidates(raw: string): MockTriageCandidate[] {
+  try {
+    const value: unknown = JSON.parse(raw);
+    return Array.isArray(value) ? (value as MockTriageCandidate[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Deterministic local extractor used by demo mode and tests. It makes no network calls. */
 export function createBundledMockAIProvider(): MockAIProvider {
   return new MockAIProvider((request) => {
+    if (request.schemaName === "CandidateTriageResult/v1") {
+      const items = parseTriageCandidates(request.untrustedSourceContent).map((candidate) => {
+        const text = `${candidate.title} ${candidate.statement}`;
+        const duplicate = candidate.possibleMatches?.find((match) => match.similarity >= 0.9);
+        const oneOff = /\b(?:implemented|updated|upgraded|changed|merged|tests? passed|pull request|dependency)\b/i.test(text);
+        const possiblePolicy = candidate.kind === "rule" && /\b(?:must|never|required|prohibited)\b/i.test(text);
+        const action = duplicate
+          ? "merge"
+          : oneOff
+            ? "ignore"
+            : possiblePolicy
+              ? "review"
+              : candidate.evidenceCount >= 2 && candidate.candidateConfidence >= 0.72
+                ? "approve"
+                : "review";
+        return {
+          candidateId: candidate.candidateId,
+          action,
+          durability: duplicate
+            ? "duplicate"
+            : oneOff
+              ? "one_off_change"
+              : action === "approve"
+                ? "durable"
+                : "unclear",
+          policyFit: possiblePolicy ? "possible_policy" : "not_policy",
+          recommendedKind: null,
+          recommendedStatement: null,
+          duplicateTargetId: duplicate?.id ?? null,
+          confidence: oneOff || duplicate ? 0.96 : action === "approve" ? 0.92 : 0.78,
+          explanation: oneOff
+            ? "This describes completed implementation activity rather than reusable engineering guidance."
+            : duplicate
+              ? "A highly similar existing item is available for an evidence-preserving merge."
+              : possiblePolicy
+                ? "This may be an enforceable requirement and needs an explicit human-owned policy review."
+                : action === "approve"
+                  ? "Independent evidence supports durable future guidance."
+                  : "The evidence needs individual human review before a durable conclusion is recorded.",
+          reasons: [
+            oneOff
+              ? "One-off Git activity is evidence history, not durable knowledge."
+              : duplicate
+                ? "Statement similarity exceeds the duplicate threshold."
+                : possiblePolicy
+                  ? "Enforcement requires ownership, scope, severity, and a detector."
+                  : "The recommendation follows deterministic demo evidence thresholds."
+          ]
+        };
+      });
+      return { items };
+    }
     const evidence = parseEvidence(request.untrustedSourceContent);
     const ids = evidence.map((record) => record.id);
     const combined = evidence.map((record) => record.content).join("\n").toLowerCase();

@@ -222,15 +222,21 @@ Markdown imports split on headings and retain their source filename. They enter 
 
 ## Candidate review and human approval
 
-**What it does.** Keeps extracted engineering knowledge advisory until a person verifies its statement, type, evidence, confidence, contradictions, and scope.
+**What it does.** Keeps extracted engineering knowledge advisory until a person verifies its statement, type, evidence, confidence, contradictions, and scope. AI-assisted triage makes a queue of hundreds practical without turning model output into authority.
 
-**How it works.** Candidate confidence is calculated server-side from independent observations, PRs, reviewers, recency, explicitness, reliability, contradictions, human confirmation, scope stability, and current code match. GitHub extraction uses a bounded authored-content view: retained raw diffs, reusable PR-template checklists, compliance boilerplate, and link sections stay in the evidence record for audit but are excluded from the model input. Single-PR implementation facts, Git activity summaries, and AI-derived process policies fail validation instead of entering the review queue. A decision, rule, preference, warning, or regression from one pull request also needs an explicit authored signal of that kind; the changed code alone is not sufficient. A reviewer can edit, narrow, change type, merge, approve, or reject. Every decision is audited.
+**How it works.** Candidate confidence is calculated server-side from independent observations, PRs, reviewers, recency, explicitness, reliability, contradictions, human confirmation, scope stability, and current code match. GitHub extraction uses a bounded authored-content view: retained raw diffs, reusable PR-template checklists, compliance boilerplate, and link sections stay in the evidence record for audit but are excluded from the model input. Single-PR implementation facts, Git activity summaries, and AI-derived process policies fail validation instead of entering the review queue. A decision, rule, preference, warning, or regression from one pull request also needs an explicit authored signal of that kind; the changed code alone is not sufficient.
+
+Choose **Triage with AI** for the current filters, or select rows and choose **Analyse selection**. Lore first applies deterministic quality, duplicate, contradiction, and possible-policy checks. Only ambiguous candidates are sent to the configured structured-output provider in batches of ten. Each model request contains the candidate, at most three bounded evidence excerpts, and at most five potential matches; it does not contain the repository archive. Triage is persisted with its model/prompt provenance and becomes stale when the candidate or linked evidence changes.
+
+The result is one of **Ready to add**, **Likely noise**, **Edit first**, **Merge duplicate**, **Needs review**, or **Possible policy**. Use the summary cards, full-text search, repository/type/recommendation filters, priority/confidence/date sorting, 60-item pages, and row selection to work through a large queue. List refreshes carry only bounded evidence previews; opening one candidate loads its complete retained evidence on demand. Each detail view explains the recommendation, durability, policy fit, confidence, and reasons alongside the original evidence and server confidence.
+
+**Guarded bulk review.** Select candidates, then use **Add to knowledge** or **Ignore**. Bulk add is offered only when AI returned a durable, unchanged recommendation at 90% or greater, Lore confidence is at least 72%, two or more evidence sources exist, and no contradiction exists. Bulk ignore is offered only for a 90% or greater one-off/situational recommendation with no possible-policy signal or contradiction. The confirmation shows the exact count; the server revalidates every item and safely skips stale or ineligible rows. Approval creates audited active revisions. Ignore removes queue noise but retains source evidence and audit history.
 
 <p align="center">
   <img src="assets/screenshots/lore-candidate-review.png" alt="Lore candidate review with statement, scope, evidence, confidence factors, contradictions, and approval actions" width="100%" />
 </p>
 
-**Boundary.** Model output can propose a candidate but cannot approve itself, create policy, calculate its own authority, or write directly to the knowledge store.
+**Boundary.** Model output can propose a candidate and a triage recommendation but cannot approve/ignore/merge anything, create policy, calculate authority, or write directly to the knowledge store. Anything policy-like is routed to individual review because a real policy needs a human owner, severity, scope, and deterministic detector.
 
 ## Ad-hoc messages, calls, and standup transcripts
 

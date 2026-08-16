@@ -109,6 +109,9 @@ Every native API mode defaults to `127.0.0.1`. In full production, the API enfor
 | `POST /api/knowledge/:id/challenge`          | Challenge an active item without deleting history                |
 | `POST /api/knowledge/:id/archive`            | Archive an item with audit rationale                             |
 | `GET /api/knowledge-candidates`              | List review candidates                                           |
+| `GET /api/knowledge-candidates/:id`          | Load one candidate with complete retained evidence on demand     |
+| `POST /api/knowledge-candidates/triage`      | Queue bounded AI-assisted triage for up to 1,000 candidates      |
+| `POST /api/knowledge-candidates/bulk-review` | Human-confirm guarded add/ignore and report per-item safe skips   |
 | `POST /api/knowledge-candidates/:id/approve` | Edit and approve a candidate                                     |
 | `POST /api/knowledge/:id/approve`            | Compatibility approval route for a candidate ID                  |
 | `POST /api/knowledge-candidates/:id/reject`  | Reject a candidate while retaining evidence                      |
@@ -134,13 +137,14 @@ Every native API mode defaults to `127.0.0.1`. In full production, the API enfor
 | `repository.index`  | Validates a configured trusted root, indexes AST/Git history, and persists the graph |
 | `github.import`     | Resolves PAT/App credentials, incrementally persists paginated evidence, skips unchanged per-PR checkpoints, versions edits, and immediately queues new/changed evidence for extraction |
 | `knowledge.extract` | Runs the configured mock or real OpenAI structured-output provider and creates review candidates |
+| `candidate.triage`  | Runs deterministic checks plus bounded AI classification and persists recommendation progress |
 | `knowledge.health`  | Recalculates current knowledge health signals                                        |
 
 BullMQ supplies transport retries and recurring job schedulers. Repository connect queues a fresh initial job and upserts the organisation-configured sync schedule. PostgreSQL stores each API dispatch intent, its outbox state, append-only lifecycle events, attempts, errors, and terminal result summary. A 30-second API reconciler replays due outbox entries after transport recovery. Worker startup reconciles completed, failed, stalled, or missing BullMQ jobs so PostgreSQL cannot remain falsely active, and scheduled retries reuse one durable run. Cancellation, operator replay controls, progress percentages, and atomic business-event-plus-outbox writes remain planned.
 
 ## Human control surface
 
-The React application currently exposes PAT-backed automatic local identity, SaaS GitHub login, a demo login, GitHub-seeded editable profiles, active-session revocation, organisation creation/switching, role/member management, copyable verified-email invitations, personal and organisation settings, deployment/configuration status, SaaS agent-token management, searchable token-backed repository discovery and bulk connection, automatic/manual import, retention/deletion, durable background activity, ad-hoc communication evidence, transcript analysis, candidate review/merge, knowledge lifecycle, policy creation, reviewer views, sessions, safety reports, onboarding help, keyboard navigation, and explicit disconnected/loading states.
+The React application currently exposes PAT-backed automatic local identity, SaaS GitHub login, a demo login, GitHub-seeded editable profiles, active-session revocation, organisation creation/switching, role/member management, copyable verified-email invitations, personal and organisation settings, deployment/configuration status, SaaS agent-token management, searchable token-backed repository discovery and bulk connection, automatic/manual import, retention/deletion, durable background activity, ad-hoc communication evidence, transcript analysis, AI-assisted candidate triage, recommendation/repository/type filtering, guarded bulk add/ignore, individual candidate review/merge, knowledge lifecycle, policy creation, reviewer views, sessions, safety reports, onboarding help, keyboard navigation, and explicit disconnected/loading states.
 
 The following are not shipped: enterprise SSO/SAML, MFA policy enforcement, SCIM, ownership transfer/deletion recovery, email delivery, a durable GitHub installation ownership model, Jira/Linear/Slack/Stoker connectors, billing, hosted multi-tenant SaaS, job administration, GitHub Check publication, or automatic policy/knowledge approval.
 

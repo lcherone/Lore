@@ -26,6 +26,8 @@ import {
 import { TaskPreparationService } from "@lore/context/index.js";
 import {
   createKnowledgeExtractionBatches,
+  CandidateTriageService,
+  candidateTriageFingerprint,
   KnowledgeCandidateExtractionService,
   KnowledgeService
 } from "@lore/knowledge/index.js";
@@ -33,6 +35,8 @@ import { ChangeVerificationService } from "@lore/reporting/index.js";
 import { assertTrustedRepositoryPath } from "@lore/git/index.js";
 import {
   approveCandidateSchema,
+  candidateBulkReviewSchema,
+  candidateTriageRequestSchema,
   communicationEvidenceSchema,
   createSessionSchema,
   organisationSettingsSchema,
@@ -42,9 +46,11 @@ import {
   verifyChangeSchema
 } from "@lore/shared/schemas.js";
 import type {
+  CandidateRecord,
   CodeEntity,
   CodeRelationship,
   CommunicationEvidenceAnalysis,
+  DashboardSnapshot,
   EvidenceComparisonDisposition,
   EvidenceRecord,
   DeploymentConfiguration,
@@ -65,6 +71,7 @@ import {
   webhookEvidence,
   type GitHubRepositoryOption
 } from "@lore/github/index.js";
+
 import {
   accountSession,
   assertRole,
@@ -85,6 +92,24 @@ import {
   type GitHubIdentityProvider
 } from "./auth.js";
 import { ApiMetrics } from "./metrics.js";
+
+const CANDIDATE_LIST_EVIDENCE_PREVIEW_CHARS = 1_500;
+
+const candidateListView = (candidate: CandidateRecord): CandidateRecord => ({
+  ...candidate,
+  evidence: candidate.evidence.map((record) => ({
+    ...record,
+    content:
+      record.content.length > CANDIDATE_LIST_EVIDENCE_PREVIEW_CHARS
+        ? `${record.content.slice(0, CANDIDATE_LIST_EVIDENCE_PREVIEW_CHARS)}\n[… full retained source loads on candidate open …]`
+        : record.content
+  }))
+});
+
+const dashboardListView = (snapshot: DashboardSnapshot): DashboardSnapshot => ({
+  ...snapshot,
+  candidates: snapshot.candidates.map(candidateListView)
+});
 
 export interface ApiDependencies {
   store: LoreStore;
@@ -1281,7 +1306,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
 
   app.get("/api/bootstrap", async (request) => {
     const tenant = tenantContext(request, demoMode);
-    return store.getSnapshot(tenant.organisationId);
+    return dashboardListView(await store.getSnapshot(tenant.organisationId));
   });
 
   app.get("/api/onboarding", async (request) => {
@@ -2101,7 +2126,84 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
 
   app.get("/api/knowledge-candidates", async (request) => {
     const tenant = tenantContext(request, demoMode);
-    return { items: (await store.getSnapshot(tenant.organisationId)).candidates };
+    return {
+      items: (await store.getSnapshot(tenant.organisationId)).candidates.map(candidateListView)
+    };
+  });
+
+  app.get("/api/knowledge-candidates/:id", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    return store.getCandidate(tenant.organisationId, id);
+  });
+
+  app.post("/api/knowledge-candidates/triage", async (request, reply) => {
+    const tenant = tenantContext(request, demoMode);
+    const input = candidateTriageRequestSchema.parse(request.body ?? {});
+    const snapshot = await store.getSnapshot(tenant.organisationId);
+    const requestedIds = input.candidateIds ? new Set(input.candidateIds) : undefined;
+    const requested = input.candidateIds
+      ? snapshot.candidates.filter((candidate) => requestedIds?.has(candidate.id))
+      : snapshot.candidates;
+    if (input.candidateIds && requested.length !== new Set(input.candidateIds).size) {
+      const available = new Set(requested.map((candidate) => candidate.id));
+      throw new NotFoundError(
+        "Knowledge candidate",
+        input.candidateIds.find((candidateId) => !available.has(candidateId)) ?? "unknown"
+      );
+    }
+    const candidates = input.force
+      ? requested
+      : requested.filter(
+          (candidate) =>
+            candidate.triage?.candidateFingerprint !== candidateTriageFingerprint(candidate)
+        );
+    if (!candidates.length) {
+      return { status: "up_to_date", queued: 0, skippedFresh: requested.length };
+    }
+    const candidateIds = candidates.map((candidate) => candidate.id);
+    if (demoMode) {
+      const result = await new CandidateTriageService(
+        store,
+        aiProvider,
+        "mock-ai:candidate-triage/v1"
+      ).triage({ organisationId: tenant.organisationId, candidateIds, force: input.force });
+      return { status: "completed", queued: candidateIds.length, result };
+    }
+    const fingerprint = createHash("sha256")
+      .update(
+        candidates
+          .map((candidate) => `${candidate.id}:${candidateTriageFingerprint(candidate)}`)
+          .toSorted()
+          .join("\n")
+      )
+      .digest("hex")
+      .slice(0, 24);
+    const job = await jobs.dispatch(
+      "candidate.triage",
+      { organisationId: tenant.organisationId, candidateIds, force: input.force },
+      `candidate-triage-${tenant.organisationId}-${fingerprint}`
+    );
+    return reply.status(202).send({
+      status: job.deferred ? "dispatch_pending" : "queued",
+      queued: candidateIds.length,
+      skippedFresh: requested.length - candidateIds.length,
+      jobId: job.id
+    });
+  });
+
+  app.post("/api/knowledge-candidates/bulk-review", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    const input = candidateBulkReviewSchema.parse(request.body);
+    return knowledgeService.bulkReviewCandidates(
+      tenant.organisationId,
+      {
+        action: input.action,
+        candidateIds: input.candidateIds,
+        reason: input.reason
+      },
+      tenant.userId
+    );
   });
 
   app.post("/api/knowledge-candidates/:id/approve", async (request) => {

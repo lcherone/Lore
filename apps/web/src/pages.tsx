@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -6,6 +6,7 @@ import {
   Braces,
   Check,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   CircleHelp,
   Code2,
@@ -23,6 +24,7 @@ import {
   Mic,
   Play,
   Plus,
+  RefreshCw,
   Search,
   ShieldCheck,
   Sparkles,
@@ -31,6 +33,7 @@ import {
   UserRoundCheck
 } from "lucide-react";
 import type {
+  CandidateBulkReviewResult,
   CandidateRecord,
   CodeEntity,
   CodeGraphPage,
@@ -795,7 +798,10 @@ export function CandidatesPage({
   knowledge,
   onApprove,
   onReject,
-  onMerge
+  onMerge,
+  onTriage,
+  onBulkReview,
+  onLoadCandidate
 }: {
   candidates: CandidateRecord[];
   knowledge: KnowledgeItem[];
@@ -805,26 +811,114 @@ export function CandidatesPage({
   ) => Promise<void>;
   onReject: (candidate: CandidateRecord) => Promise<void>;
   onMerge: (candidate: CandidateRecord, targetId: string) => Promise<void>;
+  onTriage: (candidateIds?: string[], force?: boolean) => Promise<void>;
+  onBulkReview: (
+    action: "approve" | "ignore",
+    candidateIds: string[]
+  ) => Promise<CandidateBulkReviewResult>;
+  onLoadCandidate: (candidateId: string) => Promise<CandidateRecord>;
 }) {
+  const pageSize = 60;
   const [selectedId, setSelectedId] = useState(candidates[0]?.id);
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
+  const [triageFilter, setTriageFilter] = useState("all");
+  const [repositoryFilter, setRepositoryFilter] = useState("all");
+  const [sort, setSort] = useState("priority");
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [statement, setStatement] = useState(candidates[0]?.statement ?? "");
   const [draftKind, setDraftKind] = useState<KnowledgeKind>(candidates[0]?.kind ?? "rule");
   const [draftScope, setDraftScope] = useState<KnowledgeScope>(candidates[0]?.scope ?? {});
   const [scopeOpen, setScopeOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
+  const [triageOpen, setTriageOpen] = useState(false);
+  const [forceTriage, setForceTriage] = useState(false);
+  const [bulkAction, setBulkAction] = useState<"approve" | "ignore">();
+  const [loadedCandidate, setLoadedCandidate] = useState<CandidateRecord>();
   const [mergeTargetId, setMergeTargetId] = useState("");
   const [working, setWorking] = useState(false);
   const detailRef = useRef<HTMLElement>(null);
   const detailScrollRef = useRef<HTMLDivElement>(null);
-  const filtered = candidates.filter(
-    (candidate) =>
-      (filter === "all" || candidate.kind === filter) &&
-      `${candidate.title} ${candidate.statement}`.toLowerCase().includes(query.toLowerCase())
+  const repositories = useMemo(
+    () =>
+      [...new Set(candidates.map((candidate) => candidate.scope.repository).filter(Boolean))]
+        .toSorted() as string[],
+    [candidates]
   );
-  const selected = candidates.find((candidate) => candidate.id === selectedId) ?? filtered[0];
+  const triageCounts = useMemo(
+    () => ({
+      untriaged: candidates.filter((candidate) => !candidate.triage).length,
+      approve: candidates.filter((candidate) => candidate.triage?.bulkEligibleAction === "approve").length,
+      ignore: candidates.filter((candidate) => candidate.triage?.bulkEligibleAction === "ignore").length,
+      review: candidates.filter(
+        (candidate) =>
+          candidate.triage &&
+          !candidate.triage.bulkEligibleAction
+      ).length,
+      policy: candidates.filter((candidate) => candidate.triage?.policyFit === "possible_policy").length
+    }),
+    [candidates]
+  );
+  const filtered = useMemo(() => {
+    const needle = deferredQuery.trim().toLowerCase();
+    const result = candidates.filter((candidate) => {
+      const triageMatch =
+        triageFilter === "all" ||
+        (triageFilter === "untriaged" && !candidate.triage) ||
+        (triageFilter === "bulk_approve" && candidate.triage?.bulkEligibleAction === "approve") ||
+        (triageFilter === "bulk_ignore" && candidate.triage?.bulkEligibleAction === "ignore") ||
+        (triageFilter === "policy" && candidate.triage?.policyFit === "possible_policy") ||
+        candidate.triage?.action === triageFilter;
+      return (
+        (filter === "all" || candidate.kind === filter) &&
+        (repositoryFilter === "all" || candidate.scope.repository === repositoryFilter) &&
+        triageMatch &&
+        (!needle ||
+          `${candidate.title} ${candidate.statement} ${candidate.rationale}`
+            .toLowerCase()
+            .includes(needle))
+      );
+    });
+    return result.toSorted((left, right) => {
+      if (sort === "newest") return right.updatedAt.localeCompare(left.updatedAt);
+      if (sort === "confidence") return right.confidence - left.confidence;
+      const priority = (candidate: CandidateRecord): number => {
+        if (!candidate.triage) return 0;
+        if (candidate.triage.policyFit === "possible_policy") return 1;
+        if (candidate.triage.action === "review" || candidate.triage.action === "edit") return 2;
+        if (candidate.triage.action === "merge") return 3;
+        if (candidate.triage.bulkEligibleAction === "approve") return 4;
+        if (candidate.triage.bulkEligibleAction === "ignore") return 5;
+        return 6;
+      };
+      return priority(left) - priority(right) || right.confidence - left.confidence;
+    });
+  }, [candidates, deferredQuery, filter, repositoryFilter, sort, triageFilter]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const selectedSummary =
+    filtered.find((candidate) => candidate.id === selectedId) ?? filtered[0];
+  const selected: CandidateRecord | undefined =
+    selectedSummary && loadedCandidate?.id === selectedSummary.id
+      ? { ...loadedCandidate, ...selectedSummary, evidence: loadedCandidate.evidence }
+      : selectedSummary;
+  const selectedCandidates = candidates.filter((candidate) => selectedIds.has(candidate.id));
+  const bulkApproveIds = selectedCandidates
+    .filter((candidate) => candidate.triage?.bulkEligibleAction === "approve")
+    .map((candidate) => candidate.id);
+  const bulkIgnoreIds = selectedCandidates
+    .filter((candidate) => candidate.triage?.bulkEligibleAction === "ignore")
+    .map((candidate) => candidate.id);
+  const bulkActionIds = bulkAction === "approve" ? bulkApproveIds : bulkIgnoreIds;
+  const triageTargetIds = (
+    selectedIds.size ? selectedCandidates : filtered
+  )
+    .filter((candidate) => forceTriage || !candidate.triage)
+    .map((candidate) => candidate.id);
   const mergeTargets = [
     ...knowledge.filter((item) => item.status !== "rejected" && item.status !== "archived"),
     ...candidates.filter((item) => item.id !== selected?.id)
@@ -838,6 +932,38 @@ export function CandidatesPage({
     detailScrollRef.current?.scrollTo({ top: 0 });
   }, [selected?.id]);
 
+  useEffect(() => {
+    if (!selectedSummary) {
+      setLoadedCandidate(undefined);
+      return;
+    }
+    let active = true;
+    setLoadedCandidate(undefined);
+    void onLoadCandidate(selectedSummary.id)
+      .then((candidate) => {
+        if (active) setLoadedCandidate(candidate);
+      })
+      .catch(() => {
+        // The bounded list preview remains usable if a detail refresh is interrupted.
+      });
+    return () => {
+      active = false;
+    };
+  }, [onLoadCandidate, selectedSummary?.id, selectedSummary?.updatedAt]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [deferredQuery, filter, repositoryFilter, sort, triageFilter]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    const available = new Set(candidates.map((candidate) => candidate.id));
+    setSelectedIds((current) => new Set([...current].filter((id) => available.has(id))));
+  }, [candidates]);
+
   const select = (candidate: CandidateRecord): void => {
     setSelectedId(candidate.id);
     setStatement(candidate.statement);
@@ -850,13 +976,144 @@ export function CandidatesPage({
     }
   };
 
+  const toggleCandidate = (candidateId: string): void => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(candidateId)) next.delete(candidateId);
+      else next.add(candidateId);
+      return next;
+    });
+  };
+
+  const allVisibleSelected =
+    visible.length > 0 && visible.every((candidate) => selectedIds.has(candidate.id));
+  const toggleVisible = (): void => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const candidate of visible) {
+        if (allVisibleSelected) next.delete(candidate.id);
+        else next.add(candidate.id);
+      }
+      return next;
+    });
+  };
+
+  const triageActionLabel = (candidate: CandidateRecord): string => {
+    if (!candidate.triage) return "Not analysed";
+    if (candidate.triage.policyFit === "possible_policy") return "Policy review";
+    return {
+      approve: "Ready to add",
+      edit: "Edit first",
+      merge: "Merge duplicate",
+      ignore: "Likely noise",
+      review: "Needs review"
+    }[candidate.triage.action];
+  };
+
   return (
     <div className="candidate-page">
       <PageHeader
         title="Review what Lore learned"
-        description="Every candidate stays advisory until evidence and scope earn your trust."
-        actions={<span className="header-meta">{candidates.length} pending</span>}
+        description="Let AI sort the backlog, then make fast, evidence-backed human decisions."
+        actions={
+          <>
+            <span className="header-meta">{candidates.length} pending</span>
+            <Button
+              variant="primary"
+              icon={<Sparkles size={15} />}
+              onClick={() => {
+                setForceTriage(false);
+                setTriageOpen(true);
+              }}
+            >
+              Triage with AI
+            </Button>
+          </>
+        }
       />
+      <section className="candidate-triage-summary" aria-label="Candidate triage summary">
+        <button
+          className={triageFilter === "untriaged" ? "is-active" : ""}
+          onClick={() => setTriageFilter("untriaged")}
+        >
+          <span>Not analysed</span>
+          <strong>{triageCounts.untriaged}</strong>
+          <small>Send through triage</small>
+        </button>
+        <button
+          className={triageFilter === "bulk_approve" ? "is-active" : ""}
+          onClick={() => setTriageFilter("bulk_approve")}
+        >
+          <span>Ready to add</span>
+          <strong>{triageCounts.approve}</strong>
+          <small>Guarded bulk approval</small>
+        </button>
+        <button
+          className={triageFilter === "bulk_ignore" ? "is-active" : ""}
+          onClick={() => setTriageFilter("bulk_ignore")}
+        >
+          <span>Likely noise</span>
+          <strong>{triageCounts.ignore}</strong>
+          <small>One-off commit activity</small>
+        </button>
+        <button
+          className={triageFilter === "review" ? "is-active" : ""}
+          onClick={() => setTriageFilter("review")}
+        >
+          <span>Human review</span>
+          <strong>{triageCounts.review}</strong>
+          <small>Edit, merge, or inspect</small>
+        </button>
+        <button
+          className={triageFilter === "policy" ? "is-active" : ""}
+          onClick={() => setTriageFilter("policy")}
+        >
+          <span>Possible policy</span>
+          <strong>{triageCounts.policy}</strong>
+          <small>Never auto-created</small>
+        </button>
+      </section>
+      <div className="candidate-bulk-bar">
+        <label>
+          <input
+            type="checkbox"
+            checked={allVisibleSelected}
+            onChange={toggleVisible}
+          />
+          Select this page
+        </label>
+        <span>{selectedIds.size ? `${selectedIds.size} selected` : "Select candidates to act in batches"}</span>
+        {selectedIds.size > 0 && (
+          <Button variant="secondary" onClick={() => setSelectedIds(new Set())}>
+            Clear
+          </Button>
+        )}
+        <Button
+          variant="secondary"
+          disabled={!selectedIds.size}
+          icon={<Sparkles size={14} />}
+          onClick={() => {
+            setForceTriage(false);
+            setTriageOpen(true);
+          }}
+        >
+          Analyse selection
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={!bulkIgnoreIds.length}
+          onClick={() => setBulkAction("ignore")}
+        >
+          Ignore {bulkIgnoreIds.length || ""}
+        </Button>
+        <Button
+          variant="primary"
+          disabled={!bulkApproveIds.length}
+          onClick={() => setBulkAction("approve")}
+        >
+          Add {bulkApproveIds.length || ""} to knowledge
+        </Button>
+      </div>
       <div className="candidate-workspace">
         <aside className="candidate-list">
           <div className="candidate-search">
@@ -867,12 +1124,50 @@ export function CandidatesPage({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
-            <button aria-label="Filter">
+            <button
+              aria-label="Candidate filters"
+              className={filterOpen ? "is-active" : ""}
+              onClick={() => setFilterOpen((value) => !value)}
+            >
               <Filter size={17} />
             </button>
           </div>
+          {filterOpen && (
+            <div className="candidate-filter-panel">
+              <label>
+                <span>Recommendation</span>
+                <select value={triageFilter} onChange={(event) => setTriageFilter(event.target.value)}>
+                  <option value="all">All recommendations</option>
+                  <option value="untriaged">Not analysed</option>
+                  <option value="bulk_approve">Ready to add</option>
+                  <option value="bulk_ignore">Likely noise</option>
+                  <option value="edit">Edit first</option>
+                  <option value="merge">Merge duplicate</option>
+                  <option value="review">Needs review</option>
+                  <option value="policy">Possible policy</option>
+                </select>
+              </label>
+              <label>
+                <span>Repository</span>
+                <select value={repositoryFilter} onChange={(event) => setRepositoryFilter(event.target.value)}>
+                  <option value="all">All repositories</option>
+                  {repositories.map((repository) => (
+                    <option value={repository} key={repository}>{repository}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Sort</span>
+                <select value={sort} onChange={(event) => setSort(event.target.value)}>
+                  <option value="priority">Review priority</option>
+                  <option value="confidence">Confidence</option>
+                  <option value="newest">Newest</option>
+                </select>
+              </label>
+            </div>
+          )}
           <div className="candidate-tabs">
-            {["all", "decision", "rule", "preference", "warning"].map((item) => (
+            {["all", "decision", "rule", "fact", "preference", "regression", "warning", "inference"].map((item) => (
               <button
                 className={filter === item ? "is-active" : ""}
                 key={item}
@@ -883,25 +1178,36 @@ export function CandidatesPage({
             ))}
           </div>
           <div className="candidate-scroll">
-            {filtered.map((candidate) => (
-              <button
+            {visible.map((candidate) => (
+              <div
                 className={
                   candidate.id === selected?.id ? "candidate-row is-selected" : "candidate-row"
                 }
                 key={candidate.id}
-                onClick={() => select(candidate)}
               >
-                <KindIcon kind={candidate.kind} />
-                <span>
-                  <strong>{candidate.title}</strong>
-                  <small>
-                    {candidate.kind} · <em>{Math.round(candidate.confidence * 100)}% confidence</em>{" "}
-                    · {candidate.evidenceIds.length} sources
-                    {candidate.comparison ? ` · ${dispositionLabel(candidate.comparison.disposition)}` : ""}
-                  </small>
-                </span>
-                <ChevronRight size={17} />
-              </button>
+                <label className="candidate-row__check" title="Select candidate">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(candidate.id)}
+                    onChange={() => toggleCandidate(candidate.id)}
+                    aria-label={`Select ${candidate.title}`}
+                  />
+                </label>
+                <button className="candidate-row__open" onClick={() => select(candidate)}>
+                  <KindIcon kind={candidate.kind} />
+                  <span>
+                    <span className={`triage-pill triage-pill--${candidate.triage?.action ?? "untriaged"}`}>
+                      {triageActionLabel(candidate)}
+                    </span>
+                    <strong>{candidate.title}</strong>
+                    <small>
+                      {candidate.kind} · <em>{Math.round(candidate.confidence * 100)}% confidence</em>{" "}
+                      · {candidate.evidenceIds.length} sources
+                    </small>
+                  </span>
+                  <ChevronRight size={17} />
+                </button>
+              </div>
             ))}
             {!filtered.length && (
               <EmptyState
@@ -911,9 +1217,20 @@ export function CandidatesPage({
             )}
           </div>
           <footer>
-            {filtered.length
-              ? `1–${filtered.length} of ${candidates.length} candidates`
-              : "0 candidates"}
+            <span>
+              {filtered.length
+                ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, filtered.length)} of ${filtered.length}`
+                : "0 candidates"}
+            </span>
+            <span className="candidate-pagination">
+              <button aria-label="Previous candidate page" disabled={page === 1} onClick={() => setPage((value) => value - 1)}>
+                <ChevronLeft size={14} />
+              </button>
+              {page}/{totalPages}
+              <button aria-label="Next candidate page" disabled={page === totalPages} onClick={() => setPage((value) => value + 1)}>
+                <ChevronRight size={14} />
+              </button>
+            </span>
           </footer>
         </aside>
 
@@ -939,6 +1256,63 @@ export function CandidatesPage({
                   <strong>{dispositionLabel(selected.comparison.disposition)}</strong>
                   {selected.comparison.explanation}
                 </span>
+              </div>
+            )}
+            {selected.triage ? (
+              <section className={`candidate-triage-card candidate-triage-card--${selected.triage.action}`}>
+                <div className="candidate-triage-card__heading">
+                  <Sparkles size={17} />
+                  <div>
+                    <span>{selected.triage.method === "ai" ? "AI recommendation" : "Lore quality check"}</span>
+                    <strong>{triageActionLabel(selected)}</strong>
+                  </div>
+                  <em>{Math.round(selected.triage.confidence * 100)}% triage confidence</em>
+                </div>
+                <p>{selected.triage.explanation}</p>
+                <ul>
+                  {selected.triage.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+                </ul>
+                <div className="candidate-triage-card__meta">
+                  <span>Durability: {selected.triage.durability.replaceAll("_", " ")}</span>
+                  <span>
+                    {selected.triage.policyFit === "possible_policy"
+                      ? "Possible policy — individual review required"
+                      : "Not an enforcement policy"}
+                  </span>
+                  {selected.triage.bulkEligibleAction && (
+                    <span>Guarded for bulk {selected.triage.bulkEligibleAction}</span>
+                  )}
+                </div>
+                {(selected.triage.recommendedKind || selected.triage.recommendedStatement) && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      if (selected.triage?.recommendedKind) setDraftKind(selected.triage.recommendedKind);
+                      if (selected.triage?.recommendedStatement) setStatement(selected.triage.recommendedStatement);
+                    }}
+                  >
+                    Apply suggestion to draft
+                  </Button>
+                )}
+                <small>Recommendation only. No candidate changes until you confirm an action.</small>
+              </section>
+            ) : (
+              <div className="candidate-triage-empty">
+                <Sparkles size={17} />
+                <span>
+                  <strong>Not triaged yet</strong>
+                  Ask Lore to separate durable knowledge from one-off commit activity.
+                </span>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setSelectedIds(new Set([selected.id]));
+                    setForceTriage(false);
+                    setTriageOpen(true);
+                  }}
+                >
+                  Analyse candidate
+                </Button>
               </div>
             )}
             <label className="statement-editor">
@@ -1079,9 +1453,12 @@ export function CandidatesPage({
                 disabled={working || mergeTargets.length === 0}
                 onClick={() => {
                   setMergeTargetId(
-                    selected.comparison?.matchedKnowledgeIds.find((id) =>
-                      mergeTargets.some((item) => item.id === id)
-                    ) ?? mergeTargets[0]?.id ?? ""
+                    selected.triage?.duplicateTargetId &&
+                      mergeTargets.some((item) => item.id === selected.triage?.duplicateTargetId)
+                      ? selected.triage.duplicateTargetId
+                      : selected.comparison?.matchedKnowledgeIds.find((id) =>
+                          mergeTargets.some((item) => item.id === id)
+                        ) ?? mergeTargets[0]?.id ?? ""
                   );
                   setMergeOpen(true);
                 }}
@@ -1262,13 +1639,152 @@ export function CandidatesPage({
                         {candidates
                           .filter((item) => item.id !== selected.id)
                           .map((item) => (
-                          <option value={item.id} key={item.id}>
-                            {item.title}
-                          </option>
+                            <option value={item.id} key={item.id}>
+                              {item.title}
+                            </option>
                           ))}
                       </optgroup>
                     </select>
                   </FormField>
+                </div>
+              </Modal>
+            )}
+            {triageOpen && (
+              <Modal
+                title="Triage candidate backlog"
+                onClose={() => !working && setTriageOpen(false)}
+                footer={
+                  <>
+                    <span className="modal-note">
+                      <ShieldCheck size={14} /> Recommendations never change knowledge by themselves.
+                    </span>
+                    <Button
+                      variant="secondary"
+                      disabled={working}
+                      onClick={() => setTriageOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="primary"
+                      disabled={working || triageTargetIds.length === 0}
+                      icon={working ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />}
+                      onClick={() => {
+                        setWorking(true);
+                        void onTriage(triageTargetIds, forceTriage)
+                          .then(() => setTriageOpen(false))
+                          .finally(() => setWorking(false));
+                      }}
+                    >
+                      {working
+                        ? "Starting triage…"
+                        : `Analyse ${triageTargetIds.length} candidate${triageTargetIds.length === 1 ? "" : "s"}`}
+                    </Button>
+                  </>
+                }
+              >
+                <div className="triage-dialog">
+                  <div className="triage-dialog__summary">
+                    <Sparkles size={22} />
+                    <span>
+                      <strong>
+                        {selectedIds.size
+                          ? `${selectedIds.size} selected candidate${selectedIds.size === 1 ? "" : "s"}`
+                          : `${filtered.length} filtered candidate${filtered.length === 1 ? "" : "s"}`}
+                      </strong>
+                      {triageTargetIds.length
+                        ? `${triageTargetIds.length} will be checked in ${Math.ceil(triageTargetIds.length / 10)} small AI batch${Math.ceil(triageTargetIds.length / 10) === 1 ? "" : "es"}.`
+                        : "Every candidate in this group already has current triage."}
+                    </span>
+                  </div>
+                  <ol className="triage-dialog__steps">
+                    <li>
+                      <strong>Quality checks run first</strong>
+                      <span>Obvious one-off Git activity, duplicates, contradictions, and policy-like wording are separated without spending an AI request.</span>
+                    </li>
+                    <li>
+                      <strong>OpenAI reviews only the ambiguous items</strong>
+                      <span>Lore sends bounded candidate text and evidence excerpts—not an entire repository or pull request archive.</span>
+                    </li>
+                    <li>
+                      <strong>You keep final authority</strong>
+                      <span>AI may recommend add, edit, merge, ignore, or review. Possible policies always require individual human review.</span>
+                    </li>
+                  </ol>
+                  <label className="check-row">
+                    <input
+                      type="checkbox"
+                      checked={forceTriage}
+                      onChange={(event) => setForceTriage(event.target.checked)}
+                    />
+                    <RefreshCw size={15} />
+                    <span>
+                      <strong>Re-analyse current recommendations</strong>
+                      <small>Use this after the evidence or triage approach has materially changed.</small>
+                    </span>
+                  </label>
+                </div>
+              </Modal>
+            )}
+            {bulkAction && (
+              <Modal
+                title={bulkAction === "approve" ? "Add guarded candidates" : "Ignore likely noise"}
+                onClose={() => !working && setBulkAction(undefined)}
+                footer={
+                  <>
+                    <Button
+                      variant="secondary"
+                      disabled={working}
+                      onClick={() => setBulkAction(undefined)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant={bulkAction === "approve" ? "primary" : "danger"}
+                      disabled={working || bulkActionIds.length === 0}
+                      onClick={() => {
+                        setWorking(true);
+                        void onBulkReview(bulkAction, bulkActionIds)
+                          .then((result) => {
+                            const processed = new Set(result.processedIds);
+                            setSelectedIds(
+                              (current) => new Set([...current].filter((id) => !processed.has(id)))
+                            );
+                            setBulkAction(undefined);
+                          })
+                          .finally(() => setWorking(false));
+                      }}
+                    >
+                      {working
+                        ? "Applying…"
+                        : bulkAction === "approve"
+                          ? `Add ${bulkActionIds.length} to knowledge`
+                          : `Ignore ${bulkActionIds.length} candidates`}
+                    </Button>
+                  </>
+                }
+              >
+                <div className={`bulk-review-dialog bulk-review-dialog--${bulkAction}`}>
+                  <div className="bulk-review-dialog__count">
+                    <strong>{bulkActionIds.length}</strong>
+                    <span>
+                      candidate{bulkActionIds.length === 1 ? "" : "s"} pass the guarded bulk {bulkAction} checks
+                    </span>
+                  </div>
+                  <p>
+                    {bulkAction === "approve"
+                      ? "Lore will create an active, audited knowledge revision for each unchanged high-confidence candidate. Wording changes, possible policies, contradictions, and uncertain items are excluded automatically."
+                      : "Lore will remove these high-confidence one-off or non-durable items from the queue. Their original evidence and the review action remain in the audit trail."}
+                  </p>
+                  {selectedIds.size > bulkActionIds.length && (
+                    <div className="info-callout">
+                      <ShieldCheck size={17} />
+                      <span>
+                        <strong>{selectedIds.size - bulkActionIds.length} selected candidate{selectedIds.size - bulkActionIds.length === 1 ? "" : "s"} will not be changed.</strong>{" "}
+                        They did not pass the safeguards for this bulk action and remain available for individual review.
+                      </span>
+                    </div>
+                  )}
                 </div>
               </Modal>
             )}
@@ -2549,6 +3065,7 @@ const jobName = (value: JobRunRecord["name"]): string => ({
   "repository.index": "Repository indexing",
   "github.import": "GitHub evidence import",
   "knowledge.extract": "AI candidate extraction",
+  "candidate.triage": "AI candidate triage",
   "knowledge.health": "Knowledge health review"
 })[value];
 

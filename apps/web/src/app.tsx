@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import type {
   AccountSession,
+  CandidateBulkReviewResult,
   CandidateRecord,
   CommunicationEvidenceAnalysis,
   CommunicationEvidenceInput,
@@ -388,6 +389,59 @@ export function App() {
     }
   };
 
+  const triageCandidates = async (candidateIds?: string[], force = false): Promise<void> => {
+    try {
+      if (!apiConnected) throw new Error("Lore is disconnected; AI triage was not queued.");
+      const result = await loreApi.triageCandidates(candidateIds, force);
+      notify(
+        result.status === "up_to_date"
+          ? "All selected candidates already have current triage"
+          : result.status === "completed"
+            ? `${result.queued} candidate${result.queued === 1 ? "" : "s"} triaged`
+            : `${result.queued} candidate${result.queued === 1 ? "" : "s"} queued for triage`
+      );
+      if (result.status === "completed") {
+        const snapshot = await loreApi.bootstrap();
+        setData(snapshot);
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Candidate triage failed", "error");
+      throw error;
+    }
+  };
+
+  const bulkReviewCandidates = async (
+    action: "approve" | "ignore",
+    candidateIds: string[]
+  ): Promise<CandidateBulkReviewResult> => {
+    try {
+      if (!apiConnected) throw new Error("Lore is disconnected; no candidates were changed.");
+      const result = await loreApi.bulkReviewCandidates(
+        action,
+        candidateIds,
+        action === "approve"
+          ? "Bulk approved after guarded AI triage and human confirmation"
+          : "Bulk ignored after guarded AI triage and human confirmation"
+      );
+      const processed = new Set(result.processedIds);
+      setData((snapshot) => ({
+        ...snapshot,
+        candidates: snapshot.candidates.filter((candidate) => !processed.has(candidate.id)),
+        knowledge: [...result.approved, ...snapshot.knowledge]
+      }));
+      notify(
+        `${result.processedIds.length} candidate${result.processedIds.length === 1 ? "" : "s"} ${
+          action === "approve" ? "approved" : "ignored"
+        }${result.skipped.length ? `; ${result.skipped.length} skipped safely` : ""}`,
+        result.skipped.length && !result.processedIds.length ? "error" : "success"
+      );
+      return result;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Bulk review failed", "error");
+      throw error;
+    }
+  };
+
   const connectRepositories = async (
     inputs: Array<Record<string, unknown>>
   ): Promise<RepositoryBatchConnectionResult> => {
@@ -607,6 +661,9 @@ export function App() {
             onApprove={approveCandidate}
             onReject={rejectCandidate}
             onMerge={mergeCandidate}
+            onTriage={triageCandidates}
+            onBulkReview={bulkReviewCandidates}
+            onLoadCandidate={loreApi.getCandidate}
           />
         );
       case "policies":

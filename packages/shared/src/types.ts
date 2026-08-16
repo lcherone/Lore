@@ -124,7 +124,12 @@ export interface EvidenceRevisionRecord {
   createdAt: string;
 }
 
-export type LoreJobName = "repository.index" | "github.import" | "knowledge.extract" | "knowledge.health";
+export type LoreJobName =
+  | "repository.index"
+  | "github.import"
+  | "knowledge.extract"
+  | "candidate.triage"
+  | "knowledge.health";
 export type JobRunState = "queued" | "dispatched" | "running" | "retrying" | "succeeded" | "failed" | "dead_letter";
 
 export interface JobEventRecord {
@@ -159,6 +164,30 @@ export interface CandidateComparison {
   disposition: EvidenceComparisonDisposition;
   matchedKnowledgeIds: string[];
   explanation: string;
+}
+
+export type CandidateTriageAction = "approve" | "edit" | "merge" | "ignore" | "review";
+export type CandidateDurability = "durable" | "situational" | "one_off_change" | "duplicate" | "unclear";
+export type CandidatePolicyFit = "not_policy" | "possible_policy";
+
+export interface CandidateTriageRecommendation {
+  action: CandidateTriageAction;
+  durability: CandidateDurability;
+  policyFit: CandidatePolicyFit;
+  recommendedKind?: KnowledgeKind;
+  recommendedStatement?: string;
+  duplicateTargetId?: string;
+  confidence: number;
+  explanation: string;
+  reasons: string[];
+  bulkEligibleAction?: "approve" | "ignore";
+  method: "deterministic" | "ai";
+  source: string;
+  promptVersion: string;
+  candidateFingerprint: string;
+  candidateUpdatedAt: string;
+  evidenceCount: number;
+  triagedAt: string;
 }
 
 export interface KnowledgeItem {
@@ -203,6 +232,14 @@ export interface CandidateRecord extends KnowledgeItem {
   confidenceFactors: ConfidenceFactors;
   proposedExclusion?: string;
   comparison?: CandidateComparison;
+  triage?: CandidateTriageRecommendation;
+}
+
+export interface CandidateBulkReviewResult {
+  action: "approve" | "ignore";
+  processedIds: string[];
+  approved: KnowledgeItem[];
+  skipped: Array<{ id: string; reason: string }>;
 }
 
 export interface CommunicationEvidenceInput {
