@@ -8,7 +8,13 @@ import { ImpactGraph } from "@lore/impact/index.js";
 import { CliRuntime } from "../../cli/src/runtime.js";
 
 const runtime = new CliRuntime(process.env.LORE_REPOSITORY_PATH ?? process.cwd());
-const server = new McpServer({ name: "lore", version: "0.1.0" });
+const server = new McpServer(
+  { name: "lore", version: "0.1.0" },
+  {
+    instructions:
+      "Use Lore as the evidence-backed context boundary for repository work. Before changing code, call lore_prepare_task with the complete task and relevant paths. Inspect its rules, decisions, evidence, regressions, tests, warnings, provenance, and unknowns; use Lore search, history, symbol, impact, rule, decision, and explanation tools when useful. Before claiming completion, call lore_verify_change, resolve blockers, and report unresolved warnings or unknowns. Never present advisory knowledge as mandatory or bypass human approval for proposed knowledge."
+  }
+);
 
 const toStructuredContent = (value: unknown): Record<string, unknown> => {
   if (Array.isArray(value)) return { items: value };

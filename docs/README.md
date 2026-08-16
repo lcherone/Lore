@@ -25,7 +25,7 @@ Start with the path that matches what you want to do. The demo teaches the produ
 | Set up login, profiles, teams, roles, and invitations | [Authentication and organisations](authentication-and-organisations.md) | A real GitHub identity and private multi-organisation account |
 | Run the complete product locally | [Local production](local-production.md) | Built UI, real identity, durable services, bulk repository selection, and automatic imports |
 | Import GitHub history with a PAT | [GitHub integration](github.md) | Searchable multi-repository, read-only historical imports |
-| Connect a coding agent | [MCP guide](mcp.md) | Deterministic Lore tools available to the agent |
+| Connect a coding agent | [MCP guide](mcp.md) · [Codex tutorial](codex-tutorial.md) | Deterministic Lore tools plus a complete prepare, investigate, implement, and verify example |
 | Understand the internals | [Architecture](architecture.md) | Runtime, storage, queue, analysis, and trust-boundary model |
 | Operate or extend the project | [Development](development.md) · [API](api.md) | Local services, checks, endpoints, and contributor workflow |
 | Review data and security risk | [Security](security.md) · [AI safety](ai-safety.md) | Product security and model boundaries |

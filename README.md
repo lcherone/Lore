@@ -307,7 +307,7 @@ cd /Users/dev/Lore
 npm run mcp:check -- /absolute/path/to/checkout
 ```
 
-See the [MCP guide](docs/mcp.md) for Codex/Claude/Cursor configuration and the copyable agent setup prompt.
+See the [MCP guide](docs/mcp.md) for configuration and the [Complete Codex Tutorial](docs/codex-tutorial.md) for copyable prompts, expected tool calls, an `AGENTS.md` policy, and the daily prepare-to-verify workflow.
 
 ## Choose a runtime
 

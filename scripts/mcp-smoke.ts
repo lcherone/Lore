@@ -14,6 +14,10 @@ const client = new Client({ name: "lore-mcp-smoke", version: "0.1.0" });
 
 try {
   await client.connect(transport);
+  const instructions = client.getInstructions();
+  if (!instructions?.includes("lore_prepare_task") || !instructions.includes("lore_verify_change")) {
+    throw new Error("Lore MCP did not advertise its prepare-before-edit and verify-before-completion workflow");
+  }
   const tools = await client.listTools();
   const required = new Set(["lore_prepare_task", "lore_search", "lore_get_rules", "lore_find_history", "lore_verify_change"]);
   const missing = [...required].filter((name) => !tools.tools.some((tool) => tool.name === name));
@@ -43,6 +47,7 @@ try {
     throw new Error("lore_find_history did not return the documented commits/count contract");
   }
   process.stdout.write(`✓ MCP handshake completed for ${repositoryPath}\n`);
+  process.stdout.write("✓ Lore workflow instructions advertised to the MCP client\n");
   process.stdout.write(`✓ ${tools.tools.length} Lore tools advertised\n`);
   process.stdout.write("✓ lore_search returned service-backed structured content\n");
   process.stdout.write(`✓ lore_find_history returned ${history.count} commit(s) as object-backed structured content\n`);

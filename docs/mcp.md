@@ -13,6 +13,8 @@
 
 Lore’s MCP server gives Codex, Claude, Cursor, and other MCP clients the same evidence-backed context, rules, decisions, impact analysis, and change verification as the CLI. It uses stdio, so it does not open another network port.
 
+For a task-by-task walkthrough with copyable prompts, expected tool calls, project configuration, and an `AGENTS.md` policy, follow [Use Lore with Codex](codex-tutorial.md).
+
 ## Full local setup
 
 The local path does not need a Lore API token. The loopback-only Lore service already uses your single `GITHUB_TOKEN` identity.
@@ -65,6 +67,9 @@ Add this to `~/.codex/config.toml`:
 [mcp_servers.lore]
 command = "node"
 args = ["/Users/dev/Lore/dist/mcp.js"]
+required = true
+startup_timeout_sec = 20
+tool_timeout_sec = 120
 
 [mcp_servers.lore.env]
 LORE_REPOSITORY_PATH = "/absolute/path/to/soho-home"
@@ -89,6 +94,8 @@ Add this server to the client’s MCP JSON configuration:
 ```
 
 Use absolute paths. Restart the MCP client after changing its configuration.
+
+Lore advertises server-wide instructions asking Codex to prepare context before edits and verify the final change before completion. This makes the intended workflow discoverable to Codex; add the project `AGENTS.md` policy from the [Codex tutorial](codex-tutorial.md#5-make-lore-mandatory-for-the-project) when the workflow must be an explicit repository rule.
 
 ## Copyable setup prompt
 
