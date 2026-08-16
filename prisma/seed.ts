@@ -31,8 +31,20 @@ if (existing && process.env.SEED_FORCE !== "true") {
 await prisma.organisation.deleteMany({ where: { slug: snapshot.organisation.slug } });
 await prisma.user.upsert({
   where: { email: "casey@acme.example" },
-  create: { id: userId, email: "casey@acme.example", name: "Casey Hall" },
-  update: { name: "Casey Hall" }
+  create: {
+    id: userId,
+    email: "casey@acme.example",
+    emailNormalized: "casey@acme.example",
+    name: "Casey Hall",
+    githubLogin: "casey-hall",
+    githubProfileUrl: "https://github.com/casey-hall",
+    bio: "Engineering leader building safer software systems.",
+    company: "Acme Engineering",
+    jobTitle: "Engineering Lead",
+    location: "London, UK",
+    timezone: "Europe/London"
+  },
+  update: { name: "Casey Hall", emailNormalized: "casey@acme.example" }
 });
 await prisma.organisation.create({
   data: {

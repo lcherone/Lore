@@ -6,7 +6,7 @@ import cors from "@fastify/cors";
 import csrfProtection from "@fastify/csrf-protection";
 import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import rawBody from "fastify-raw-body";
 import { z, ZodError } from "zod";
 import type { AIProvider, JobDispatcher, LoreStore } from "@lore/core/index.js";
@@ -41,13 +41,31 @@ import {
   verifyGitHubWebhook,
   webhookEvidence
 } from "@lore/github/index.js";
-import { createOAuthState, encodeSession, tenantContext, verifyOAuthState } from "./auth.js";
+import {
+  accountSession,
+  assertRole,
+  createOAuthState,
+  createOAuthTransaction,
+  decodeOAuthTransaction,
+  encodeOAuthTransaction,
+  GitHubOAuthProvider,
+  issueSession,
+  OAUTH_COOKIE,
+  requireAuth,
+  resolveAuthentication,
+  SESSION_COOKIE,
+  tenantContext,
+  verifyOAuthState,
+  verifyOAuthTransaction,
+  type GitHubIdentityProvider
+} from "./auth.js";
 import { ApiMetrics } from "./metrics.js";
 
 export interface ApiDependencies {
   store: LoreStore;
   jobs: JobDispatcher;
   aiProvider: AIProvider;
+  githubIdentityProvider: GitHubIdentityProvider;
 }
 
 export interface CreateAppOptions {
@@ -149,6 +167,32 @@ const manualKnowledgeSchema = z.object({
   sourceName: z.string().min(1).max(500).optional()
 });
 
+const profileUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  bio: z.string().trim().max(500).optional(),
+  company: z.string().trim().max(160).optional(),
+  jobTitle: z.string().trim().max(160).optional(),
+  location: z.string().trim().max(160).optional(),
+  websiteUrl: z.union([z.string().trim().url().max(2_000), z.literal("")]).optional(),
+  timezone: z.string().trim().max(100).optional()
+}).strict();
+
+const organisationInputSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  slug: z.string().trim().toLowerCase().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).min(2).max(80)
+}).strict();
+
+const organisationUpdateSchema = organisationInputSchema.partial().refine((value) => Object.keys(value).length > 0, {
+  message: "At least one organisation field is required"
+});
+
+const organisationRoleSchema = z.enum(["admin", "member", "viewer"]);
+
+const invitationInputSchema = z.object({
+  email: z.string().trim().email().max(320),
+  role: organisationRoleSchema.default("member")
+}).strict();
+
 const markdownKnowledgeImportSchema = z.object({
   format: z.literal("markdown"),
   content: z.string().min(8).max(2_000_000),
@@ -194,6 +238,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   const store = options.dependencies?.store ?? createLoreStore({ ...process.env, DEMO_MODE: String(demoMode) });
   const jobs: JobDispatcher = options.dependencies?.jobs ?? (demoMode ? new InMemoryJobDispatcher() : new BullMqJobDispatcher(process.env.REDIS_URL));
   const aiProvider = options.dependencies?.aiProvider ?? createBundledMockAIProvider();
+  const githubIdentityProvider = options.dependencies?.githubIdentityProvider ?? new GitHubOAuthProvider();
   const metrics = new ApiMetrics();
   const contextService = new TaskPreparationService();
   const verificationService = new ChangeVerificationService();
@@ -244,10 +289,29 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   app.addHook("onRequest", async () => {
     metrics.requests += 1;
   });
+  const publicApiPaths = new Set([
+    "/api/auth/demo",
+    "/api/auth/github",
+    "/api/auth/github/callback",
+    "/api/auth/session",
+    "/api/auth/csrf",
+    "/api/github/webhook"
+  ]);
+  const accountApiPrefixes = ["/api/account", "/api/organisations", "/api/invitations", "/api/auth/logout", "/api/auth/sessions"];
   app.addHook("preHandler", async (request) => {
-    if (!request.url.startsWith("/api/") || request.url === "/api/github/webhook") return;
+    if (!request.url.startsWith("/api/")) return;
+    const path = request.url.split("?")[0]!;
+    if (path === "/api/github/webhook" || path === "/api/auth/github/callback") return;
+    request.loreAuth = await resolveAuthentication(request, store, demoMode);
+    if (publicApiPaths.has(path)) return;
+    const auth = requireAuth(request);
+    if (accountApiPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return;
     const tenant = tenantContext(request, demoMode);
     await store.validateMembership(tenant.organisationId, tenant.userId);
+    if (tenant.role === "viewer" && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
+      throw new LoreError("Viewer access is read-only", "FORBIDDEN", 403);
+    }
+    void auth;
   });
   app.addHook("onClose", async () => {
     await jobs.close?.();
@@ -278,18 +342,165 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   });
   app.get("/metrics", async (_request, reply) => reply.type("text/plain; version=0.0.4").send(metrics.render()));
 
-  app.post("/api/auth/demo", async (_request, reply) => {
+  const secureCookies = process.env.NODE_ENV === "production";
+  const setSessionCookie = (reply: FastifyReply, token: string, expiresAt: string): void => {
+    reply.setCookie(SESSION_COOKIE, token, {
+      signed: true,
+      httpOnly: true,
+      sameSite: "lax",
+      secure: secureCookies,
+      path: "/",
+      maxAge: Math.max(1, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000))
+    });
+  };
+
+  app.post("/api/auth/demo", async (request, reply) => {
     if (!demoMode) throw new LoreError("Demo sign-in is disabled", "NOT_AVAILABLE", 404);
-    reply.setCookie(
-      "lore_session",
-      encodeSession({ organisationId: "org_acme", userId: "user_casey", name: "Casey Hall" }),
-      { signed: true, httpOnly: true, sameSite: "strict", secure: false, path: "/", maxAge: 28_800 }
-    );
+    const issued = await issueSession(request, store, "user_casey", "org_acme");
+    setSessionCookie(reply, issued.token, issued.expiresAt);
     return { ok: true };
   });
 
-  app.get("/api/auth/session", async (request) => ({ user: tenantContext(request, demoMode), demoMode }));
+  app.get("/api/auth/github", async (request, reply) => {
+    const { returnTo } = z.object({ returnTo: z.string().max(500).optional() }).parse(request.query);
+    const safeReturnTo = returnTo?.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/";
+    const transaction = createOAuthTransaction(safeReturnTo);
+    reply.setCookie(OAUTH_COOKIE, encodeOAuthTransaction(transaction), {
+      signed: true, httpOnly: true, sameSite: "lax", secure: secureCookies, path: "/api/auth", maxAge: 600
+    });
+    return reply.redirect(githubIdentityProvider.authorizationUrl(transaction));
+  });
+
+  app.get("/api/auth/github/callback", async (request, reply) => {
+    const query = z.object({ code: z.string().min(1).optional(), state: z.string().min(1).optional(), error: z.string().optional() }).parse(request.query);
+    const signed = request.cookies[OAUTH_COOKIE];
+    const unsigned = signed ? request.unsignCookie(signed) : undefined;
+    const transaction = unsigned?.valid && unsigned.value ? decodeOAuthTransaction(unsigned.value) : undefined;
+    reply.clearCookie(OAUTH_COOKIE, { path: "/api/auth" });
+    if (query.error) throw new LoreError("GitHub sign-in was cancelled", "GITHUB_AUTH_CANCELLED", 401);
+    if (!query.code || !query.state || !transaction || !verifyOAuthTransaction(transaction, query.state)) {
+      throw new LoreError("GitHub sign-in state is missing, expired, or invalid", "INVALID_OAUTH_STATE", 401);
+    }
+    const identity = await githubIdentityProvider.authenticate(query.code, transaction.verifier);
+    const user = await store.signInWithGitHub(identity);
+    const organisations = await store.listOrganisationAccess(user.id);
+    const issued = await issueSession(request, store, user.id, organisations[0]?.id);
+    setSessionCookie(reply, issued.token, issued.expiresAt);
+    const appUrl = (process.env.APP_URL ?? "http://localhost:5173").replace(/\/$/, "");
+    return reply.redirect(`${appUrl}${transaction.returnTo}`);
+  });
+
+  app.get("/api/auth/session", async (request) => accountSession(request, store, demoMode, githubIdentityProvider.configured));
   app.get("/api/auth/csrf", async (_request, reply) => ({ enabled: csrfEnabled, token: csrfEnabled ? reply.generateCsrf() : undefined }));
+
+  app.post("/api/auth/logout", async (request, reply) => {
+    const auth = requireAuth(request);
+    if (!auth.synthetic) await store.revokeAuthSession(auth.sessionId, auth.userId);
+    reply.clearCookie(SESSION_COOKIE, { path: "/" });
+    return reply.status(204).send();
+  });
+
+  app.get("/api/auth/sessions", async (request) => {
+    const auth = requireAuth(request);
+    return { items: await store.listAuthSessions(auth.userId, auth.sessionId) };
+  });
+
+  app.delete("/api/auth/sessions/others", async (request) => {
+    const auth = requireAuth(request);
+    return { revoked: await store.revokeOtherAuthSessions(auth.userId, auth.sessionId) };
+  });
+
+  app.get("/api/account/profile", async (request) => store.getUserProfile(requireAuth(request).userId));
+  app.patch("/api/account/profile", async (request) => {
+    const auth = requireAuth(request);
+    return store.updateUserProfile(auth.userId, profileUpdateSchema.parse(request.body));
+  });
+
+  app.get("/api/organisations", async (request) => ({ items: await store.listOrganisationAccess(requireAuth(request).userId) }));
+  app.post("/api/organisations", async (request, reply) => {
+    const auth = requireAuth(request);
+    const organisation = await store.createOrganisation(auth.userId, organisationInputSchema.parse(request.body));
+    const issued = await issueSession(request, store, auth.userId, organisation.id);
+    if (!auth.synthetic) await store.revokeAuthSession(auth.sessionId, auth.userId);
+    setSessionCookie(reply, issued.token, issued.expiresAt);
+    return reply.status(201).send(organisation);
+  });
+
+  app.post("/api/organisations/:id/switch", async (request, reply) => {
+    const auth = requireAuth(request);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    await store.validateMembership(id, auth.userId);
+    const issued = await issueSession(request, store, auth.userId, id);
+    if (!auth.synthetic) await store.revokeAuthSession(auth.sessionId, auth.userId);
+    setSessionCookie(reply, issued.token, issued.expiresAt);
+    return { activeOrganisationId: id };
+  });
+
+  app.get("/api/organisations/:id", async (request) => {
+    const auth = requireAuth(request);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    await store.validateMembership(id, auth.userId);
+    const [organisation, members, invitations] = await Promise.all([
+      store.listOrganisationAccess(auth.userId).then((items) => items.find((item) => item.id === id)),
+      store.listOrganisationMembers(id),
+      store.listOrganisationInvitations(id)
+    ]);
+    if (!organisation) throw new NotFoundError("Organisation", id);
+    return { organisation, members, invitations };
+  });
+
+  app.patch("/api/organisations/:id", async (request) => {
+    const auth = requireAuth(request);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    return store.updateOrganisation(id, organisationUpdateSchema.parse(request.body), auth.userId);
+  });
+
+  app.post("/api/organisations/:id/invitations", async (request, reply) => {
+    const auth = requireAuth(request);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    assertRole(await store.getMembershipRole(id, auth.userId), ["owner", "admin"]);
+    const input = invitationInputSchema.parse(request.body);
+    const invitation = await store.createOrganisationInvitation(id, {
+      ...input,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+    }, auth.userId);
+    const appUrl = (process.env.APP_URL ?? "http://localhost:5173").replace(/\/$/, "");
+    return reply.status(201).send({ ...invitation, inviteUrl: `${appUrl}/?invite=${invitation.id}#organisations` });
+  });
+
+  app.delete("/api/organisations/:id/invitations/:invitationId", async (request, reply) => {
+    const auth = requireAuth(request);
+    const { id, invitationId } = z.object({ id: z.string().min(1), invitationId: z.string().min(1) }).parse(request.params);
+    assertRole(await store.getMembershipRole(id, auth.userId), ["owner", "admin"]);
+    await store.revokeOrganisationInvitation(id, invitationId);
+    return reply.status(204).send();
+  });
+
+  app.post("/api/invitations/:id/accept", async (request, reply) => {
+    const auth = requireAuth(request);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const organisation = await store.acceptOrganisationInvitation(id, auth.userId);
+    const issued = await issueSession(request, store, auth.userId, organisation.id);
+    if (!auth.synthetic) await store.revokeAuthSession(auth.sessionId, auth.userId);
+    setSessionCookie(reply, issued.token, issued.expiresAt);
+    return organisation;
+  });
+
+  app.patch("/api/organisations/:id/members/:userId", async (request) => {
+    const auth = requireAuth(request);
+    const { id, userId } = z.object({ id: z.string().min(1), userId: z.string().min(1) }).parse(request.params);
+    assertRole(await store.getMembershipRole(id, auth.userId), ["owner", "admin"]);
+    const { role } = z.object({ role: organisationRoleSchema }).parse(request.body);
+    return store.updateOrganisationMemberRole(id, userId, role);
+  });
+
+  app.delete("/api/organisations/:id/members/:userId", async (request, reply) => {
+    const auth = requireAuth(request);
+    const { id, userId } = z.object({ id: z.string().min(1), userId: z.string().min(1) }).parse(request.params);
+    assertRole(await store.getMembershipRole(id, auth.userId), ["owner", "admin"]);
+    await store.removeOrganisationMember(id, userId);
+    return reply.status(204).send();
+  });
 
   app.get("/api/bootstrap", async (request) => {
     const tenant = tenantContext(request, demoMode);

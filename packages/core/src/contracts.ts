@@ -11,6 +11,12 @@ import type {
   EvidenceRecord,
   KnowledgeItem,
   KnowledgeProposalRecord,
+  GitHubUserIdentity,
+  AuthSessionSummary,
+  OrganisationAccess,
+  OrganisationInvitation,
+  OrganisationMember,
+  OrganisationRole,
   PolicyRecord,
   PullRequestImportLimit,
   RepositoryRetentionConfig,
@@ -19,6 +25,27 @@ import type {
   SafetyReport,
   SessionEvent
 } from "@lore/shared/types.js";
+
+export interface AuthSessionRecord {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  activeOrganisationId?: string;
+  expiresAt: string;
+  lastSeenAt: string;
+  revokedAt?: string;
+  createdAt: string;
+}
+
+export interface UserProfileUpdate {
+  name?: string;
+  bio?: string;
+  company?: string;
+  jobTitle?: string;
+  location?: string;
+  websiteUrl?: string;
+  timezone?: string;
+}
 
 export interface PullRequestImport {
   externalId: string;
@@ -104,6 +131,46 @@ export interface LanguageAnalyzer {
 export interface LoreStore {
   health(): Promise<void>;
   validateMembership(organisationId: string, userId: string): Promise<void>;
+  getMembershipRole(organisationId: string, userId: string): Promise<OrganisationRole>;
+  signInWithGitHub(identity: GitHubUserIdentity): Promise<import("@lore/shared/types.js").UserProfile>;
+  getUserProfile(userId: string): Promise<import("@lore/shared/types.js").UserProfile>;
+  updateUserProfile(userId: string, input: UserProfileUpdate): Promise<import("@lore/shared/types.js").UserProfile>;
+  createAuthSession(input: {
+    userId: string;
+    tokenHash: string;
+    activeOrganisationId?: string;
+    expiresAt: string;
+    userAgentHash?: string;
+    ipHash?: string;
+  }): Promise<AuthSessionRecord>;
+  getAuthSession(tokenHash: string): Promise<AuthSessionRecord | undefined>;
+  touchAuthSession(sessionId: string, seenAt: string): Promise<void>;
+  revokeAuthSession(sessionId: string, userId: string): Promise<void>;
+  revokeOtherAuthSessions(userId: string, currentSessionId: string): Promise<number>;
+  listAuthSessions(userId: string, currentSessionId: string): Promise<AuthSessionSummary[]>;
+  listOrganisationAccess(userId: string): Promise<OrganisationAccess[]>;
+  createOrganisation(userId: string, input: { name: string; slug: string }): Promise<OrganisationAccess>;
+  updateOrganisation(
+    organisationId: string,
+    input: { name?: string; slug?: string },
+    actorUserId: string
+  ): Promise<OrganisationAccess>;
+  listOrganisationMembers(organisationId: string): Promise<OrganisationMember[]>;
+  listOrganisationInvitations(organisationId: string): Promise<OrganisationInvitation[]>;
+  listPendingInvitations(userId: string): Promise<OrganisationInvitation[]>;
+  createOrganisationInvitation(
+    organisationId: string,
+    input: { email: string; role: Exclude<OrganisationRole, "owner">; expiresAt: string },
+    invitedByUserId: string
+  ): Promise<OrganisationInvitation>;
+  revokeOrganisationInvitation(organisationId: string, invitationId: string): Promise<void>;
+  acceptOrganisationInvitation(invitationId: string, userId: string): Promise<OrganisationAccess>;
+  updateOrganisationMemberRole(
+    organisationId: string,
+    memberUserId: string,
+    role: Exclude<OrganisationRole, "owner">
+  ): Promise<OrganisationMember>;
+  removeOrganisationMember(organisationId: string, memberUserId: string): Promise<void>;
   getSnapshot(organisationId: string): Promise<DashboardSnapshot>;
   getEvidence(organisationId: string): Promise<EvidenceRecord[]>;
   getRepository(organisationId: string, repositoryId: string): Promise<RepositorySummary>;

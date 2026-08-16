@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
-import type { LoreStore, ManualKnowledgeInput, RepositoryAnalysisOutput } from "@lore/core/index.js";
+import type { AuthSessionRecord, LoreStore, ManualKnowledgeInput, RepositoryAnalysisOutput, UserProfileUpdate } from "@lore/core/index.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "@lore/core/index.js";
 import { createChangeObservation } from "./change-observation.js";
 import type {
@@ -15,6 +15,12 @@ import type {
   EvidenceRecord,
   KnowledgeItem,
   KnowledgeProposalRecord,
+  AuthSessionSummary,
+  GitHubUserIdentity,
+  OrganisationAccess,
+  OrganisationInvitation,
+  OrganisationMember,
+  OrganisationRole,
   KnowledgeScope,
   PolicyDetector,
   PolicyRecord,
@@ -23,7 +29,8 @@ import type {
   RegressionRecord,
   ReviewerProfile,
   SafetyReport,
-  SessionEvent
+  SessionEvent,
+  UserProfile
 } from "@lore/shared/types.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -42,6 +49,47 @@ interface EvidenceRow {
   occurredAt: Date;
   metadata: unknown;
   contentHash?: string | null;
+}
+
+interface UserRow {
+  id: string;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  githubLogin: string | null;
+  githubProfileUrl: string | null;
+  bio: string | null;
+  company: string | null;
+  jobTitle: string | null;
+  location: string | null;
+  websiteUrl: string | null;
+  timezone: string | null;
+  profileEditedAt: Date | null;
+  lastLoginAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface AuthSessionRow {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  activeOrganisationId: string | null;
+  expiresAt: Date;
+  lastSeenAt: Date;
+  revokedAt: Date | null;
+  createdAt: Date;
+}
+
+interface InvitationRow {
+  id: string;
+  organisationId: string;
+  email: string;
+  role: OrganisationRole;
+  expiresAt: Date;
+  createdAt: Date;
+  organisation: { name: string };
+  invitedBy: { name: string };
 }
 
 interface KnowledgeRowBase {
@@ -89,6 +137,247 @@ export class PrismaLoreStore implements LoreStore {
   async validateMembership(organisationId: string, userId: string): Promise<void> {
     const membership = await this.prisma.membership.findFirst({ where: { organisationId, userId } });
     if (!membership) throw new ForbiddenError("The current user is not an active organisation member");
+  }
+
+  async getMembershipRole(organisationId: string, userId: string): Promise<OrganisationRole> {
+    const membership = await this.prisma.membership.findUnique({
+      where: { organisationId_userId: { organisationId, userId } },
+      select: { role: true }
+    });
+    if (!membership) throw new ForbiddenError("The current user is not an active organisation member");
+    return membership.role;
+  }
+
+  async signInWithGitHub(identity: GitHubUserIdentity): Promise<UserProfile> {
+    const emailNormalized = identity.email.trim().toLowerCase();
+    const now = new Date();
+    const user = await this.prisma.$transaction(async (transaction) => {
+      const existingIdentity = await transaction.authIdentity.findUnique({
+        where: { provider_providerUserId: { provider: "github", providerUserId: identity.providerUserId } },
+        include: { user: true }
+      });
+      const existingUser = existingIdentity?.user ?? await transaction.user.findUnique({ where: { emailNormalized } });
+      const preserveEditedProfile = Boolean(existingUser?.profileEditedAt);
+      const profileData = {
+        email: identity.email,
+        emailNormalized,
+        githubLogin: identity.login,
+        githubProfileUrl: identity.profileUrl,
+        avatarUrl: identity.avatarUrl ?? existingUser?.avatarUrl,
+        name: preserveEditedProfile ? existingUser!.name : identity.name,
+        bio: preserveEditedProfile ? existingUser?.bio : identity.bio,
+        company: preserveEditedProfile ? existingUser?.company : identity.company,
+        location: preserveEditedProfile ? existingUser?.location : identity.location,
+        websiteUrl: preserveEditedProfile ? existingUser?.websiteUrl : identity.websiteUrl,
+        lastLoginAt: now
+      };
+      const savedUser = existingUser
+        ? await transaction.user.update({ where: { id: existingUser.id }, data: profileData })
+        : await transaction.user.create({ data: profileData });
+      await transaction.authIdentity.upsert({
+        where: { provider_providerUserId: { provider: "github", providerUserId: identity.providerUserId } },
+        create: { userId: savedUser.id, provider: "github", providerUserId: identity.providerUserId, providerLogin: identity.login },
+        update: { providerLogin: identity.login }
+      });
+      return savedUser;
+    });
+    return this.#mapUser(user);
+  }
+
+  async getUserProfile(userId: string): Promise<UserProfile> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundError("User", userId);
+    return this.#mapUser(user);
+  }
+
+  async updateUserProfile(userId: string, input: UserProfileUpdate): Promise<UserProfile> {
+    await this.getUserProfile(userId);
+    const user = await this.prisma.user.update({ where: { id: userId }, data: { ...input, profileEditedAt: new Date() } });
+    return this.#mapUser(user);
+  }
+
+  async createAuthSession(input: {
+    userId: string;
+    tokenHash: string;
+    activeOrganisationId?: string;
+    expiresAt: string;
+    userAgentHash?: string;
+    ipHash?: string;
+  }): Promise<AuthSessionRecord> {
+    if (input.activeOrganisationId) await this.validateMembership(input.activeOrganisationId, input.userId);
+    const session = await this.prisma.authSession.create({
+      data: {
+        userId: input.userId,
+        tokenHash: input.tokenHash,
+        activeOrganisationId: input.activeOrganisationId,
+        expiresAt: new Date(input.expiresAt),
+        userAgentHash: input.userAgentHash,
+        ipHash: input.ipHash
+      }
+    });
+    return this.#mapAuthSession(session);
+  }
+
+  async getAuthSession(tokenHash: string): Promise<AuthSessionRecord | undefined> {
+    const session = await this.prisma.authSession.findUnique({ where: { tokenHash } });
+    return session ? this.#mapAuthSession(session) : undefined;
+  }
+
+  async touchAuthSession(sessionId: string, seenAt: string): Promise<void> {
+    await this.prisma.authSession.updateMany({ where: { id: sessionId, revokedAt: null }, data: { lastSeenAt: new Date(seenAt) } });
+  }
+
+  async revokeAuthSession(sessionId: string, userId: string): Promise<void> {
+    await this.prisma.authSession.updateMany({ where: { id: sessionId, userId, revokedAt: null }, data: { revokedAt: new Date() } });
+  }
+
+  async revokeOtherAuthSessions(userId: string, currentSessionId: string): Promise<number> {
+    const result = await this.prisma.authSession.updateMany({
+      where: { userId, id: { not: currentSessionId }, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+    return result.count;
+  }
+
+  async listAuthSessions(userId: string, currentSessionId: string): Promise<AuthSessionSummary[]> {
+    const sessions = await this.prisma.authSession.findMany({
+      where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { lastSeenAt: "desc" }
+    });
+    return sessions.map((session) => ({
+      id: session.id,
+      ...optional(session.activeOrganisationId, "activeOrganisationId"),
+      createdAt: session.createdAt.toISOString(),
+      lastSeenAt: session.lastSeenAt.toISOString(),
+      expiresAt: session.expiresAt.toISOString(),
+      current: session.id === currentSessionId
+    }));
+  }
+
+  async listOrganisationAccess(userId: string): Promise<OrganisationAccess[]> {
+    const memberships = await this.prisma.membership.findMany({
+      where: { userId },
+      include: { organisation: { include: { _count: { select: { memberships: true } } } } },
+      orderBy: { createdAt: "asc" }
+    });
+    return memberships.map((membership) => ({
+      id: membership.organisation.id,
+      name: membership.organisation.name,
+      slug: membership.organisation.slug,
+      role: membership.role,
+      memberCount: membership.organisation._count.memberships,
+      createdAt: membership.organisation.createdAt.toISOString()
+    }));
+  }
+
+  async createOrganisation(userId: string, input: { name: string; slug: string }): Promise<OrganisationAccess> {
+    const duplicate = await this.prisma.organisation.findUnique({ where: { slug: input.slug } });
+    if (duplicate) throw new ConflictError("That organisation URL is already in use");
+    const organisation = await this.prisma.organisation.create({
+      data: { name: input.name, slug: input.slug, memberships: { create: { userId, role: "owner" } } }
+    });
+    return { id: organisation.id, name: organisation.name, slug: organisation.slug, role: "owner", memberCount: 1, createdAt: organisation.createdAt.toISOString() };
+  }
+
+  async updateOrganisation(organisationId: string, input: { name?: string; slug?: string }, actorUserId: string): Promise<OrganisationAccess> {
+    const role = await this.getMembershipRole(organisationId, actorUserId);
+    if (role !== "owner" && role !== "admin") throw new ForbiddenError("Owner or admin access is required");
+    try {
+      await this.prisma.organisation.update({ where: { id: organisationId }, data: input });
+    } catch (error) {
+      if (String(error).includes("Unique constraint")) throw new ConflictError("That organisation URL is already in use");
+      throw error;
+    }
+    return (await this.listOrganisationAccess(actorUserId)).find((item) => item.id === organisationId)!;
+  }
+
+  async listOrganisationMembers(organisationId: string): Promise<OrganisationMember[]> {
+    const memberships = await this.prisma.membership.findMany({ where: { organisationId }, include: { user: true }, orderBy: { createdAt: "asc" } });
+    return memberships.map((membership) => ({
+      membershipId: membership.id,
+      userId: membership.user.id,
+      name: membership.user.name,
+      email: membership.user.email,
+      ...optional(membership.user.githubLogin, "githubLogin"),
+      ...optional(membership.user.avatarUrl, "avatarUrl"),
+      role: membership.role,
+      joinedAt: membership.createdAt.toISOString()
+    }));
+  }
+
+  async listOrganisationInvitations(organisationId: string): Promise<OrganisationInvitation[]> {
+    const rows = await this.prisma.organisationInvitation.findMany({
+      where: { organisationId, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
+      include: { organisation: true, invitedBy: true },
+      orderBy: { createdAt: "desc" }
+    });
+    return rows.map((row) => this.#mapInvitation(row));
+  }
+
+  async listPendingInvitations(userId: string): Promise<OrganisationInvitation[]> {
+    const user = await this.getUserProfile(userId);
+    const rows = await this.prisma.organisationInvitation.findMany({
+      where: { emailNormalized: user.email.toLowerCase(), acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
+      include: { organisation: true, invitedBy: true },
+      orderBy: { createdAt: "desc" }
+    });
+    return rows.map((row) => this.#mapInvitation(row));
+  }
+
+  async createOrganisationInvitation(
+    organisationId: string,
+    input: { email: string; role: Exclude<OrganisationRole, "owner">; expiresAt: string },
+    invitedByUserId: string
+  ): Promise<OrganisationInvitation> {
+    const emailNormalized = input.email.trim().toLowerCase();
+    const existing = await this.prisma.organisationInvitation.findFirst({
+      where: { organisationId, emailNormalized, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }
+    });
+    if (existing) throw new ConflictError("A pending invitation already exists for this email");
+    const row = await this.prisma.organisationInvitation.create({
+      data: { organisationId, email: emailNormalized, emailNormalized, role: input.role, invitedByUserId, expiresAt: new Date(input.expiresAt) },
+      include: { organisation: true, invitedBy: true }
+    });
+    return this.#mapInvitation(row);
+  }
+
+  async revokeOrganisationInvitation(organisationId: string, invitationId: string): Promise<void> {
+    const result = await this.prisma.organisationInvitation.updateMany({
+      where: { id: invitationId, organisationId, acceptedAt: null, revokedAt: null }, data: { revokedAt: new Date() }
+    });
+    if (result.count === 0) throw new NotFoundError("Invitation", invitationId);
+  }
+
+  async acceptOrganisationInvitation(invitationId: string, userId: string): Promise<OrganisationAccess> {
+    const user = await this.getUserProfile(userId);
+    const invitation = await this.prisma.organisationInvitation.findFirst({
+      where: { id: invitationId, emailNormalized: user.email.toLowerCase(), acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }
+    });
+    if (!invitation) throw new NotFoundError("Invitation", invitationId);
+    await this.prisma.$transaction([
+      this.prisma.membership.upsert({
+        where: { organisationId_userId: { organisationId: invitation.organisationId, userId } },
+        create: { organisationId: invitation.organisationId, userId, role: invitation.role },
+        update: {}
+      }),
+      this.prisma.organisationInvitation.update({ where: { id: invitation.id }, data: { acceptedAt: new Date() } })
+    ]);
+    return (await this.listOrganisationAccess(userId)).find((item) => item.id === invitation.organisationId)!;
+  }
+
+  async updateOrganisationMemberRole(organisationId: string, memberUserId: string, role: Exclude<OrganisationRole, "owner">): Promise<OrganisationMember> {
+    const membership = await this.prisma.membership.findUnique({ where: { organisationId_userId: { organisationId, userId: memberUserId } } });
+    if (!membership) throw new NotFoundError("Organisation member", memberUserId);
+    if (membership.role === "owner") throw new ConflictError("The organisation owner role cannot be changed here");
+    await this.prisma.membership.update({ where: { id: membership.id }, data: { role } });
+    return (await this.listOrganisationMembers(organisationId)).find((item) => item.userId === memberUserId)!;
+  }
+
+  async removeOrganisationMember(organisationId: string, memberUserId: string): Promise<void> {
+    const membership = await this.prisma.membership.findUnique({ where: { organisationId_userId: { organisationId, userId: memberUserId } } });
+    if (!membership) throw new NotFoundError("Organisation member", memberUserId);
+    if (membership.role === "owner") throw new ConflictError("The organisation owner cannot be removed");
+    await this.prisma.membership.delete({ where: { id: membership.id } });
   }
 
   async getSnapshot(organisationId: string): Promise<DashboardSnapshot> {
@@ -1234,6 +1523,54 @@ export class PrismaLoreStore implements LoreStore {
   async #assertOrganisation(organisationId: string): Promise<void> {
     const count = await this.prisma.organisation.count({ where: { id: organisationId } });
     if (count === 0) throw new ForbiddenError();
+  }
+
+  #mapUser(row: UserRow): UserProfile {
+    return {
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      ...optional(row.githubLogin, "githubLogin"),
+      ...optional(row.githubProfileUrl, "githubProfileUrl"),
+      ...optional(row.avatarUrl, "avatarUrl"),
+      ...optional(row.bio, "bio"),
+      ...optional(row.company, "company"),
+      ...optional(row.jobTitle, "jobTitle"),
+      ...optional(row.location, "location"),
+      ...optional(row.websiteUrl, "websiteUrl"),
+      ...optional(row.timezone, "timezone"),
+      ...(row.profileEditedAt ? { profileEditedAt: row.profileEditedAt.toISOString() } : {}),
+      ...(row.lastLoginAt ? { lastLoginAt: row.lastLoginAt.toISOString() } : {}),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString()
+    };
+  }
+
+  #mapAuthSession(row: AuthSessionRow): AuthSessionRecord {
+    return {
+      id: row.id,
+      userId: row.userId,
+      tokenHash: row.tokenHash,
+      ...optional(row.activeOrganisationId, "activeOrganisationId"),
+      expiresAt: row.expiresAt.toISOString(),
+      lastSeenAt: row.lastSeenAt.toISOString(),
+      ...(row.revokedAt ? { revokedAt: row.revokedAt.toISOString() } : {}),
+      createdAt: row.createdAt.toISOString()
+    };
+  }
+
+  #mapInvitation(row: InvitationRow): OrganisationInvitation {
+    if (row.role === "owner") throw new ConflictError("Owner invitations are not supported");
+    return {
+      id: row.id,
+      organisationId: row.organisationId,
+      organisationName: row.organisation.name,
+      email: row.email,
+      role: row.role,
+      invitedByName: row.invitedBy.name,
+      expiresAt: row.expiresAt.toISOString(),
+      createdAt: row.createdAt.toISOString()
+    };
   }
 
   #mapEvidence(row: EvidenceRow): EvidenceRecord {

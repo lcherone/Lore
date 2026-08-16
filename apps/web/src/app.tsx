@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Bell,
   BookOpen,
+  Building2,
   ChevronDown,
   Command,
   Database,
@@ -15,9 +16,11 @@ import {
   Sparkles,
   TerminalSquare,
   UsersRound,
+  UserRound,
   X
 } from "lucide-react";
 import type {
+  AccountSession,
   CandidateRecord,
   CommunicationEvidenceAnalysis,
   CommunicationEvidenceInput,
@@ -43,6 +46,7 @@ import {
   SessionsPage,
   SettingsPage
 } from "./pages.js";
+import { LoginPage, OrganisationOnboardingPage, OrganisationsPage, ProfilePage } from "./account-pages.js";
 
 type PageId =
   | "dashboard"
@@ -54,6 +58,8 @@ type PageId =
   | "sessions"
   | "reports"
   | "reviewers"
+  | "organisations"
+  | "profile"
   | "settings";
 
 const navItems: Array<{ id: PageId; label: string; icon: typeof Home }> = [
@@ -81,7 +87,7 @@ const emptySnapshot: DashboardSnapshot = {
 
 const pageFromHash = (): PageId => {
   const page = window.location.hash.slice(1) as PageId;
-  return [...navItems.map((item) => item.id), "settings"].includes(page) ? page : "dashboard";
+  return [...navItems.map((item) => item.id), "organisations", "profile", "settings"].includes(page) ? page : "dashboard";
 };
 
 const listCommunicationEvidence = async () => (await loreApi.listCommunicationEvidence()).items;
@@ -92,6 +98,7 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [apiConnected, setApiConnected] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
+  const [account, setAccount] = useState<AccountSession>();
   const [githubStatus, setGitHubStatus] = useState<GitHubIntegrationStatus>({
     mode: "disabled",
     historicalImportReady: false,
@@ -101,6 +108,7 @@ export function App() {
   const [loadError, setLoadError] = useState<string>();
   const [mobileNav, setMobileNav] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [organisationMenuOpen, setOrganisationMenuOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" }>();
   const [githubInstallationId] = useState(
     () => new URLSearchParams(window.location.search).get("githubInstallationId") ?? undefined
@@ -120,29 +128,32 @@ export function App() {
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, [githubInstallationId]);
 
-  useEffect(() => {
-    let active = true;
-    void Promise.all([loreApi.bootstrap(), loreApi.session(), loreApi.githubStatus()])
-      .then(([snapshot, session, integration]) => {
-        if (active) {
-          setData(snapshot);
-          setApiConnected(true);
-          setDemoMode(session.demoMode);
-          setGitHubStatus(integration);
-          setLoadError(undefined);
-        }
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setApiConnected(false);
-          setLoadError(error instanceof Error ? error.message : "Lore API is unavailable");
-        }
-      })
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
+  const loadApplication = useCallback(async (): Promise<void> => {
+    try {
+      const session = await loreApi.session();
+      setAccount(session);
+      setDemoMode(session.demoMode);
+      setApiConnected(true);
+      setLoadError(undefined);
+      if (session.authenticated && session.activeOrganisation) {
+        const [snapshot, integration] = await Promise.all([loreApi.bootstrap(), loreApi.githubStatus()]);
+        setData(snapshot);
+        setGitHubStatus(integration);
+      } else {
+        setData(emptySnapshot);
+      }
+      if (session.authenticated && new URLSearchParams(window.location.search).has("invite")) {
+        window.location.hash = "organisations";
+      }
+    } catch (error) {
+      setApiConnected(false);
+      setLoadError(error instanceof Error ? error.message : "Lore API is unavailable");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { void loadApplication(); }, [loadApplication]);
 
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
@@ -157,7 +168,7 @@ export function App() {
   }, []);
 
   const navigate = (next: string): void => {
-    const safePage = [...navItems.map((item) => item.id), "settings"].includes(next as PageId)
+    const safePage = [...navItems.map((item) => item.id), "organisations", "profile", "settings"].includes(next as PageId)
       ? (next as PageId)
       : "dashboard";
     window.location.hash = safePage;
@@ -441,6 +452,26 @@ export function App() {
     }
   };
 
+  const demoLogin = async (): Promise<void> => {
+    await loreApi.demoLogin();
+    await loadApplication();
+  };
+
+  const logout = async (): Promise<void> => {
+    await loreApi.logout();
+    setAccount(undefined);
+    setData(emptySnapshot);
+    await loadApplication();
+  };
+
+  const switchOrganisation = async (organisationId: string): Promise<void> => {
+    if (organisationId === account?.activeOrganisation?.id) return;
+    await loreApi.switchOrganisation(organisationId);
+    setOrganisationMenuOpen(false);
+    setLoading(true);
+    await loadApplication();
+  };
+
   const pageContent = (() => {
     switch (page) {
       case "dashboard":
@@ -495,6 +526,16 @@ export function App() {
         return <ReportsPage reports={data.reports} />;
       case "reviewers":
         return <ReviewersPage data={data} />;
+      case "organisations":
+        return account ? <OrganisationsPage session={account} onRefresh={loadApplication} /> : null;
+      case "profile":
+        return account?.user ? (
+          <ProfilePage
+            profile={account.user}
+            onUpdated={(user) => setAccount((current) => current ? { ...current, user } : current)}
+            onLogout={logout}
+          />
+        ) : null;
       case "settings":
         return <SettingsPage mode={demoMode ? "demo" : "persistent"} />;
     }

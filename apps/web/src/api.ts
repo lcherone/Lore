@@ -1,14 +1,21 @@
 import type {
+  AccountSession,
+  AuthSessionSummary,
   CommunicationEvidenceAnalysis,
   CommunicationEvidenceInput,
   ContextPackage,
   DashboardSnapshot,
   EvidenceRecord,
   KnowledgeItem,
+  OrganisationAccess,
+  OrganisationInvitation,
+  OrganisationMember,
+  OrganisationRole,
   PolicyRecord,
   PullRequestImportLimit,
   RepositoryRetentionConfig,
-  RepositorySummary
+  RepositorySummary,
+  UserProfile
 } from "@lore/shared/types.js";
 
 export interface GitHubIntegrationStatus {
@@ -16,6 +23,12 @@ export interface GitHubIntegrationStatus {
   historicalImportReady: boolean;
   installFlowReady: boolean;
   webhooksReady: boolean;
+}
+
+export interface OrganisationDetails {
+  organisation: OrganisationAccess;
+  members: OrganisationMember[];
+  invitations: OrganisationInvitation[];
 }
 
 let csrfToken: string | undefined;
@@ -35,14 +48,38 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const loreApi = {
-  session: async (): Promise<{ user: { organisationId: string; userId: string; name: string }; demoMode: boolean }> => {
-    const session = await request<{ user: { organisationId: string; userId: string; name: string }; demoMode: boolean }>("/api/auth/session");
-    if (!session.demoMode) {
+  session: async (): Promise<AccountSession> => {
+    const session = await request<AccountSession>("/api/auth/session");
+    if (session.authenticated && !session.demoMode) {
       const csrf = await request<{ enabled: boolean; token?: string }>("/api/auth/csrf");
       csrfToken = csrf.token;
     }
     return session;
   },
+  demoLogin: (): Promise<{ ok: boolean }> => request("/api/auth/demo", { method: "POST" }),
+  logout: (): Promise<void> => request("/api/auth/logout", { method: "POST" }),
+  profile: (): Promise<UserProfile> => request("/api/account/profile"),
+  updateProfile: (input: Partial<Pick<UserProfile, "name" | "bio" | "company" | "jobTitle" | "location" | "websiteUrl" | "timezone">>): Promise<UserProfile> =>
+    request("/api/account/profile", { method: "PATCH", body: JSON.stringify(input) }),
+  authSessions: (): Promise<{ items: AuthSessionSummary[] }> => request("/api/auth/sessions"),
+  revokeOtherSessions: (): Promise<{ revoked: number }> => request("/api/auth/sessions/others", { method: "DELETE" }),
+  organisations: (): Promise<{ items: OrganisationAccess[] }> => request("/api/organisations"),
+  organisation: (id: string): Promise<OrganisationDetails> => request(`/api/organisations/${id}`),
+  createOrganisation: (input: { name: string; slug: string }): Promise<OrganisationAccess> =>
+    request("/api/organisations", { method: "POST", body: JSON.stringify(input) }),
+  updateOrganisation: (id: string, input: { name?: string; slug?: string }): Promise<OrganisationAccess> =>
+    request(`/api/organisations/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+  switchOrganisation: (id: string): Promise<{ activeOrganisationId: string }> =>
+    request(`/api/organisations/${id}/switch`, { method: "POST" }),
+  inviteMember: (id: string, input: { email: string; role: Exclude<OrganisationRole, "owner"> }): Promise<OrganisationInvitation & { inviteUrl: string }> =>
+    request(`/api/organisations/${id}/invitations`, { method: "POST", body: JSON.stringify(input) }),
+  revokeInvitation: (organisationId: string, invitationId: string): Promise<void> =>
+    request(`/api/organisations/${organisationId}/invitations/${invitationId}`, { method: "DELETE" }),
+  acceptInvitation: (id: string): Promise<OrganisationAccess> => request(`/api/invitations/${id}/accept`, { method: "POST" }),
+  updateMemberRole: (organisationId: string, userId: string, role: Exclude<OrganisationRole, "owner">): Promise<OrganisationMember> =>
+    request(`/api/organisations/${organisationId}/members/${userId}`, { method: "PATCH", body: JSON.stringify({ role }) }),
+  removeMember: (organisationId: string, userId: string): Promise<void> =>
+    request(`/api/organisations/${organisationId}/members/${userId}`, { method: "DELETE" }),
   bootstrap: (): Promise<DashboardSnapshot> => request("/api/bootstrap"),
   githubStatus: (): Promise<GitHubIntegrationStatus> => request("/api/github/status"),
   githubInstall: (): Promise<{ url: string }> => request("/api/github/install"),

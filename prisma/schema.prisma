@@ -138,6 +138,13 @@ enum RiskLevel {
   critical
 }
 
+enum OrganisationRole {
+  owner
+  admin
+  member
+  viewer
+}
+
 model Organisation {
   id               String            @id @default(uuid()) @db.Uuid
   name             String
@@ -155,29 +162,97 @@ model Organisation {
   observations     ChangeObservation[]
   auditEvents      AuditEvent[]
   memberships      Membership[]
+  authSessions     AuthSession[]
+  invitations      OrganisationInvitation[]
   ingestionReceipts IngestionReceipt[]
 }
 
 model User {
-  id          String       @id @default(uuid()) @db.Uuid
-  email       String       @unique
-  name        String
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  memberships Membership[]
+  id                 String       @id @default(uuid()) @db.Uuid
+  email              String       @unique
+  emailNormalized    String       @unique
+  name               String
+  avatarUrl          String?
+  githubLogin        String?
+  githubProfileUrl   String?
+  bio                String?
+  company            String?
+  jobTitle           String?
+  location           String?
+  websiteUrl         String?
+  timezone           String?
+  profileEditedAt    DateTime?
+  lastLoginAt        DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  memberships        Membership[]
+  identities         AuthIdentity[]
+  authSessions       AuthSession[]
+  invitationsSent    OrganisationInvitation[] @relation("invitationSender")
 }
 
 model Membership {
   id             String       @id @default(uuid()) @db.Uuid
   organisationId String       @db.Uuid
   userId         String       @db.Uuid
-  role           String
+  role           OrganisationRole
   createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([organisationId, userId])
   @@index([userId])
+}
+
+model AuthIdentity {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  provider       String
+  providerUserId String
+  providerLogin  String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+model AuthSession {
+  id                   String        @id @default(uuid()) @db.Uuid
+  userId               String        @db.Uuid
+  activeOrganisationId String?       @db.Uuid
+  tokenHash            String        @unique
+  userAgentHash        String?
+  ipHash                String?
+  expiresAt             DateTime
+  lastSeenAt            DateTime      @default(now())
+  revokedAt             DateTime?
+  createdAt             DateTime      @default(now())
+  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeOrganisation    Organisation? @relation(fields: [activeOrganisationId], references: [id], onDelete: SetNull)
+
+  @@index([userId, revokedAt, expiresAt])
+  @@index([activeOrganisationId])
+}
+
+model OrganisationInvitation {
+  id              String           @id @default(uuid()) @db.Uuid
+  organisationId  String           @db.Uuid
+  email            String
+  emailNormalized  String
+  role             OrganisationRole
+  invitedByUserId  String           @db.Uuid
+  expiresAt        DateTime
+  acceptedAt       DateTime?
+  revokedAt        DateTime?
+  createdAt        DateTime         @default(now())
+  organisation     Organisation     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  invitedBy        User             @relation("invitationSender", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([organisationId, createdAt])
+  @@index([emailNormalized, acceptedAt, revokedAt, expiresAt])
 }
 
 model Repository {

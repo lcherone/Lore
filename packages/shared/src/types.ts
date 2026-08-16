@@ -437,3 +437,87 @@ export interface DashboardSnapshot {
   reviewers: ReviewerProfile[];
   sessions: AgentSession[];
 }
+
+export type OrganisationRole = "owner" | "admin" | "member" | "viewer";
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  name: string;
+  githubLogin?: string;
+  githubProfileUrl?: string;
+  avatarUrl?: string;
+  bio?: string;
+  company?: string;
+  jobTitle?: string;
+  location?: string;
+  websiteUrl?: string;
+  timezone?: string;
+  profileEditedAt?: string;
+  lastLoginAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrganisationAccess {
+  id: string;
+  name: string;
+  slug: string;
+  role: OrganisationRole;
+  memberCount: number;
+  createdAt: string;
+}
+
+export interface OrganisationMember {
+  membershipId: string;
+  userId: string;
+  name: string;
+  email: string;
+  githubLogin?: string;
+  avatarUrl?: string;
+  role: OrganisationRole;
+  joinedAt: string;
+}
+
+export interface OrganisationInvitation {
+  id: string;
+  organisationId: string;
+  organisationName: string;
+  email: string;
+  role: Exclude<OrganisationRole, "owner">;
+  invitedByName: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface AuthSessionSummary {
+  id: string;
+  activeOrganisationId?: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  current: boolean;
+}
+
+export interface AccountSession {
+  authenticated: boolean;
+  demoMode: boolean;
+  githubLoginEnabled: boolean;
+  user?: UserProfile;
+  activeOrganisation?: OrganisationAccess;
+  organisations: OrganisationAccess[];
+  pendingInvitations: OrganisationInvitation[];
+}
+
+export interface GitHubUserIdentity {
+  providerUserId: string;
+  login: string;
+  email: string;
+  name: string;
+  avatarUrl?: string;
+  profileUrl: string;
+  bio?: string;
+  company?: string;
+  location?: string;
+  websiteUrl?: string;
+}
