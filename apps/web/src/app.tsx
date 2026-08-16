@@ -8,6 +8,7 @@ import {
   Database,
   Home,
   Menu,
+  MessageSquareText,
   Search,
   Settings,
   ShieldCheck,
@@ -18,6 +19,8 @@ import {
 } from "lucide-react";
 import type {
   CandidateRecord,
+  CommunicationEvidenceAnalysis,
+  CommunicationEvidenceInput,
   ContextPackage,
   DashboardSnapshot,
   KnowledgeItem,
@@ -31,6 +34,7 @@ import { loreApi, type GitHubIntegrationStatus } from "./api.js";
 import {
   CandidatesPage,
   DashboardPage,
+  EvidencePage,
   KnowledgePage,
   PoliciesPage,
   RepositoriesPage,
@@ -44,6 +48,7 @@ type PageId =
   | "dashboard"
   | "repositories"
   | "knowledge"
+  | "evidence"
   | "candidates"
   | "policies"
   | "sessions"
@@ -55,6 +60,7 @@ const navItems: Array<{ id: PageId; label: string; icon: typeof Home }> = [
   { id: "dashboard", label: "Dashboard", icon: Home },
   { id: "repositories", label: "Repositories", icon: Database },
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
+  { id: "evidence", label: "Add evidence", icon: MessageSquareText },
   { id: "candidates", label: "Candidates", icon: Sparkles },
   { id: "policies", label: "Policies", icon: ShieldCheck },
   { id: "sessions", label: "Sessions", icon: TerminalSquare },
@@ -77,6 +83,8 @@ const pageFromHash = (): PageId => {
   const page = window.location.hash.slice(1) as PageId;
   return [...navItems.map((item) => item.id), "settings"].includes(page) ? page : "dashboard";
 };
+
+const listCommunicationEvidence = async () => (await loreApi.listCommunicationEvidence()).items;
 
 export function App() {
   const [data, setData] = useState<DashboardSnapshot>(emptySnapshot);
@@ -211,6 +219,27 @@ export function App() {
       notify(error instanceof Error ? error.message : "Knowledge creation failed", "error");
       throw error;
     }
+  };
+
+  const analyseCommunication = async (
+    input: CommunicationEvidenceInput
+  ): Promise<CommunicationEvidenceAnalysis> => {
+    if (!apiConnected) throw new Error("Lore is disconnected; no evidence was saved.");
+    const analysis = await loreApi.analyseCommunication(input);
+    setData((snapshot) => {
+      const incoming = analysis.candidates.map((item) => item.candidate);
+      const incomingIds = new Set(incoming.map((item) => item.id));
+      return {
+        ...snapshot,
+        candidates: [...incoming, ...snapshot.candidates.filter((item) => !incomingIds.has(item.id))]
+      };
+    });
+    notify(
+      analysis.candidates.length
+        ? `${analysis.candidates.length} suggestion${analysis.candidates.length === 1 ? "" : "s"} ready for review`
+        : "Evidence saved; no decision or rule signals were found"
+    );
+    return analysis;
   };
 
   const changeKnowledgeStatus = async (
@@ -439,10 +468,20 @@ export function App() {
             onStatusChange={changeKnowledgeStatus}
           />
         );
+      case "evidence":
+        return (
+          <EvidencePage
+            repositories={data.repositories}
+            onAnalyse={analyseCommunication}
+            onList={listCommunicationEvidence}
+            onReview={() => navigate("candidates")}
+          />
+        );
       case "candidates":
         return (
           <CandidatesPage
             candidates={data.candidates}
+            knowledge={data.knowledge}
             onApprove={approveCandidate}
             onReject={rejectCandidate}
             onMerge={mergeCandidate}

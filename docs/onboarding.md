@@ -137,6 +137,16 @@ lore knowledge import previous-lore-export.json --organisation-wide
 
 Markdown headings become separate knowledge items. `AGENTS.md` and contributing conventions are classified as rules; ADR and architecture sections are classified as decisions. Every item records its source filename and enters as an explicit human confirmation. Review the imported scope in the Knowledge screen after import.
 
+## Add a Slack note, call, or standup transcript
+
+Open **Add evidence** in the web application. Choose the source type, optionally scope it to a repository, paste the communication, and confirm the retention/privacy acknowledgement. **Use example transcript** fills a safe sample so you can try the complete flow without real company data.
+
+Lore retains the source and shows extracted suggestions underneath the form. Review the four outcome groups—new, already added, supporting, and conflicting—then choose **Review candidates**. Correct wording, class, and scope before approval; merge duplicate/supporting evidence into an existing item; reject noise. No suggestion becomes active merely because a model extracted it.
+
+The local bundled extractor is deterministic and does not call an external AI service. That makes the first evaluation safe to run without an API key, but its language recognition is deliberately narrower than a production model. Before configuring any future hosted model, complete the provider data-retention, training, region, subprocessor, DPA, and incident-response review in [SaaS readiness](saas-readiness.md).
+
+For API use, see the copy-ready `curl` request and outcome contract in [REST API](api.md#communication-evidence).
+
 ## Privacy and repository removal
 
 Use **Repositories → Retention** before importing GitHub history. Summary-only mode omits raw PR bodies/diffs and disables code snippet retention. Review comments can be retained or discarded independently.

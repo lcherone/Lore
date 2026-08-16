@@ -1,9 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { Queue, Worker } from "bullmq";
 import { z } from "zod";
 import { TypeScriptAnalyzer, PhpLanguageAnalyzer, LocalRepositoryIndexer, addGitHistoryRelationships } from "@lore/analysis/index.js";
-import { MockAIProvider, KnowledgeExtractionService, selectAIProvider } from "@lore/ai/index.js";
-import { validateKnowledgeProposal } from "@lore/core/index.js";
+import { createBundledMockAIProvider, selectAIProvider } from "@lore/ai/index.js";
 import { createLoreStore, createRedisConnection, LORE_QUEUE_NAME } from "@lore/database/index.js";
 import { assertTrustedRepositoryPath, LocalGit } from "@lore/git/index.js";
 import {
@@ -11,8 +9,7 @@ import {
   GitHubSourceControlProvider,
   GitHubTokenSourceControlProvider
 } from "@lore/github/index.js";
-import { KnowledgeHealthService } from "@lore/knowledge/index.js";
-import type { CandidateRecord, ConfidenceFactors } from "@lore/shared/types.js";
+import { KnowledgeCandidateExtractionService, KnowledgeHealthService } from "@lore/knowledge/index.js";
 import { loadGitHubPrivateKey, loadGitHubToken } from "./github-credentials.js";
 
 const store = createLoreStore({ ...process.env, DEMO_MODE: "false" });
@@ -59,26 +56,7 @@ const extractionJobSchema = z.object({
   evidenceIds: z.array(z.string()).min(1)
 });
 
-const mockProvider = new MockAIProvider((request) => {
-  const ids = [...request.untrustedSourceContent.matchAll(/<evidence id="([^"]+)"/g)].map((match) => match[1]).filter((id): id is string => Boolean(id));
-  const content = request.untrustedSourceContent.toLowerCase();
-  if (ids.length >= 2 && content.includes("repository interface")) {
-    return {
-      candidates: [
-        {
-          kind: "preference",
-          title: "Prefer repository interfaces at service boundaries",
-          statement: "The observed reviewer tends to prefer repository interfaces at application service boundaries.",
-          rationale: "The same explicit review request appears in independent evidence.",
-          proposedScope: { repository: "current", paths: ["src/**/Service/**"] },
-          evidenceIds: ids.slice(0, 5),
-          possibleContradictionIds: []
-        }
-      ]
-    };
-  }
-  return { candidates: [] };
-});
+const mockProvider = createBundledMockAIProvider();
 const aiProvider = selectAIProvider(process.env.AI_PROVIDER ?? "mock", { mock: mockProvider });
 
 const worker = new Worker(
@@ -148,84 +126,12 @@ const worker = new Worker(
 
     if (job.name === "knowledge.extract") {
       const input = extractionJobSchema.parse(job.data);
-      const [allEvidence, snapshot] = await Promise.all([
-        store.getEvidence(input.organisationId),
-        store.getSnapshot(input.organisationId)
-      ]);
-      const sourceEvidence = allEvidence.filter((record) => input.evidenceIds.includes(record.id));
-      const extraction = await new KnowledgeExtractionService(aiProvider).extract(sourceEvidence);
-      let created = 0;
-      for (const proposed of extraction.candidates) {
-        const payload = {
-          kind: proposed.kind,
-          title: proposed.title,
-          statement: proposed.statement,
-          rationale: proposed.rationale,
-          scope: proposed.proposedScope,
-          evidenceIds: proposed.evidenceIds
-        };
-        const validation = validateKnowledgeProposal({
-          organisationId: input.organisationId,
-          repositoryId: input.repositoryId,
-          payload,
-          evidence: allEvidence,
-          existingKnowledge: snapshot.knowledge,
-          humanInitiated: false
-        });
-        const proposal = await store.saveKnowledgeProposal(input.organisationId, {
-          repositoryId: input.repositoryId,
-          operation: "create",
-          payload,
-          source: "mock-ai:knowledge-extractor/v1",
-          status: validation.valid ? "pending" : "failed_validation",
-          validationErrors: validation.errors
-        });
-        if (!validation.valid) continue;
-        const evidenceRecords = allEvidence.filter((record) => proposed.evidenceIds.includes(record.id));
-        const factors: ConfidenceFactors = {
-          supportingObservations: evidenceRecords.length,
-          independentPullRequests: new Set(evidenceRecords.map((record) => {
-            const pullRequest = record.metadata.pullRequest;
-            return typeof pullRequest === "string" || typeof pullRequest === "number" ? String(pullRequest) : record.externalId;
-          })).size,
-          independentReviewers: new Set(evidenceRecords.map((record) => record.author).filter(Boolean)).size,
-          recency: 0.9,
-          explicitness: 0.78,
-          sourceReliability: 0.82,
-          contradictions: validation.contradictions.length,
-          humanConfirmed: false,
-          scopeStable: proposed.proposedScope.paths?.length ? true : false,
-          codeStillMatches: true
-        };
-        const confidence = new KnowledgeHealthService().recalculateCandidate(proposed.kind, factors);
-        const now = new Date().toISOString();
-        const candidate: CandidateRecord = {
-          id: randomUUID(),
-          organisationId: input.organisationId,
-          repositoryId: input.repositoryId,
-          kind: proposed.kind,
-          status: "candidate",
-          title: proposed.title,
-          statement: proposed.statement,
-          rationale: proposed.rationale,
-          confidence,
-          severity: proposed.kind === "regression" ? "warning" : proposed.kind === "preference" ? "suggestion" : "warning",
-          scope: proposed.proposedScope,
-          createdBy: "mock-ai:knowledge-extractor/v1",
-          createdAt: now,
-          updatedAt: now,
-          evidenceIds: proposed.evidenceIds,
-          contradictionCount: validation.contradictions.length,
-          health: validation.contradictions.length ? "conflicted" : "needs_review",
-          evidence: evidenceRecords,
-          contradictionSummaries: validation.contradictions.map((item) => item.statement),
-          confidenceFactors: factors,
-          proposalId: proposal.id
-        };
-        await store.createKnowledgeCandidate(input.organisationId, candidate);
-        created += 1;
-      }
-      return { evidenceAnalysed: sourceEvidence.length, proposals: extraction.candidates.length, candidatesCreated: created };
+      const result = await new KnowledgeCandidateExtractionService(store, aiProvider).extract(input);
+      return {
+        evidenceAnalysed: result.evidenceAnalysed,
+        proposals: result.proposals,
+        candidatesCreated: result.candidatesCreated
+      };
     }
 
     if (job.name === "knowledge.health") {

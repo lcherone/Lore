@@ -25,12 +25,17 @@ export class KnowledgeExtractionService {
   public constructor(private readonly provider: AIProvider) {}
 
   async extract(evidence: EvidenceRecord[]): Promise<KnowledgeExtractionResult> {
-    const untrustedSourceContent = evidence
-      .map(
-        (record) =>
-          `<evidence id="${record.id}" type="${record.type}" provider="${record.provider}">\n${record.content}\n</evidence>`
-      )
-      .join("\n\n");
+    const untrustedSourceContent = JSON.stringify(
+      evidence.map((record) => ({
+        id: record.id,
+        type: record.type,
+        provider: record.provider,
+        title: record.title,
+        content: record.content,
+        author: record.author,
+        metadata: record.metadata
+      }))
+    );
     return this.provider.generateStructured({
       task: "Extract evidence-backed engineering knowledge candidates",
       schemaName: "KnowledgeExtractionResult/v1",
@@ -44,4 +49,3 @@ export class KnowledgeExtractionService {
     });
   }
 }
-

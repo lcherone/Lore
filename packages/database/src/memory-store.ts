@@ -4,6 +4,7 @@ import { createDemoCodeGraph } from "@lore/shared/demo-graph.js";
 import type {
   AgentSession,
   CandidateRecord,
+  ChangeObservation,
   CodeEntity,
   CodeRelationship,
   ContextPackage,
@@ -27,12 +28,14 @@ import {
   type ManualKnowledgeInput,
   type RepositoryAnalysisOutput
 } from "@lore/core/index.js";
+import { createChangeObservation } from "./change-observation.js";
 
 export class InMemoryLoreStore implements LoreStore {
   readonly #snapshot: DashboardSnapshot;
   readonly #evidence: EvidenceRecord[];
   readonly #receipts = new Set<string>();
   readonly #proposals: KnowledgeProposalRecord[] = [];
+  readonly #observations: ChangeObservation[] = [];
   readonly #contexts = new Map<string, ContextPackageRecord[]>();
   readonly #sessionEvents = new Map<string, SessionEvent[]>();
   readonly #graphs = new Map<string, { entities: CodeEntity[]; relationships: CodeRelationship[]; regressions: RegressionRecord[] }>();
@@ -126,7 +129,13 @@ export class InMemoryLoreStore implements LoreStore {
   async createKnowledgeCandidate(organisationId: string, candidate: CandidateRecord): Promise<CandidateRecord> {
     this.#assertOrganisation(organisationId);
     const duplicate = this.#snapshot.candidates.find((item) => item.id === candidate.id || item.statement === candidate.statement);
-    if (duplicate) return structuredClone(duplicate);
+    if (duplicate) {
+      duplicate.evidenceIds = [...new Set([...duplicate.evidenceIds, ...candidate.evidenceIds])];
+      const evidenceIds = new Set(duplicate.evidence.map((item) => item.id));
+      duplicate.evidence.push(...candidate.evidence.filter((item) => !evidenceIds.has(item.id)));
+      duplicate.updatedAt = new Date().toISOString();
+      return structuredClone(duplicate);
+    }
     this.#snapshot.candidates.unshift(structuredClone(candidate));
     return structuredClone(candidate);
   }
@@ -453,23 +462,58 @@ export class InMemoryLoreStore implements LoreStore {
     return structuredClone(this.#contexts.get(sessionId)?.at(-1));
   }
 
-  async saveReport(organisationId: string, report: SafetyReport, sessionId?: string): Promise<SafetyReport> {
+  async saveReport(
+    organisationId: string,
+    report: SafetyReport,
+    sessionId?: string,
+    contextRevision?: number
+  ): Promise<SafetyReport> {
     this.#assertOrganisation(organisationId);
-    const linked = sessionId ? { ...report, sessionId } : report;
+    let linked = sessionId ? { ...report, sessionId } : report;
     if (sessionId) {
       const session = this.#snapshot.sessions.find((item) => item.id === sessionId && item.organisationId === organisationId);
       if (!session) throw new NotFoundError("Agent session", sessionId);
       if (session.repositoryId !== report.repositoryId) throw new ForbiddenError("Report repository does not belong to the session");
+      if (!report.contextId || !contextRevision) throw new ConflictError("A persisted context revision is required before saving a session report");
+      const context = this.#contexts.get(sessionId)?.find((record) => record.id === report.contextId && record.revision === contextRevision);
+      if (!context) throw new ForbiddenError("Report context does not belong to the session revision");
+      const observation = createChangeObservation({
+        organisationId,
+        sessionId,
+        contextId: report.contextId,
+        contextRevision,
+        report
+      });
+      this.#observations.unshift(observation);
+      linked = { ...linked, contextRevision, observationId: observation.id };
       session.status = "completed";
+      session.currentCommit = report.currentCommit;
       session.completedAt = new Date().toISOString();
       session.warningCount = report.warnings.length;
       session.filesChanged = report.changedFiles.map((file) => file.path);
-      this.#appendSessionEvent(sessionId, "verification_started", { contextId: report.contextId });
-      this.#appendSessionEvent(sessionId, "verification_finished", { reportId: report.id, risk: report.risk });
+      this.#appendSessionEvent(sessionId, "verification_started", {
+        contextId: report.contextId,
+        contextRevision,
+        observationId: observation.id
+      });
+      this.#appendSessionEvent(sessionId, "verification_finished", {
+        reportId: report.id,
+        observationId: observation.id,
+        risk: report.risk
+      });
       this.#appendSessionEvent(sessionId, "completed", { reportId: report.id });
     }
     this.#snapshot.reports.unshift(structuredClone(linked));
     return structuredClone(linked);
+  }
+
+  async getChangeObservation(organisationId: string, observationId: string): Promise<ChangeObservation> {
+    this.#assertOrganisation(organisationId);
+    const observation = this.#observations.find(
+      (item) => item.id === observationId && item.organisationId === organisationId
+    );
+    if (!observation) throw new NotFoundError("Change observation", observationId);
+    return structuredClone(observation);
   }
 
   async ingestEvidence(records: EvidenceRecord[]): Promise<number> {
@@ -477,7 +521,10 @@ export class InMemoryLoreStore implements LoreStore {
     for (const record of records) {
       this.#assertOrganisation(record.organisationId);
       const duplicate = this.#evidence.some(
-        (existing) => existing.provider === record.provider && existing.externalId === record.externalId
+        (existing) =>
+          existing.organisationId === record.organisationId &&
+          existing.provider === record.provider &&
+          existing.externalId === record.externalId
       );
       if (!duplicate) {
         this.#evidence.push(structuredClone(record));

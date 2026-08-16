@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { LoreStore, ManualKnowledgeInput, RepositoryAnalysisOutput } from "@lore/core/index.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "@lore/core/index.js";
+import { createChangeObservation } from "./change-observation.js";
 import type {
   AgentSession,
   CandidateRecord,
+  ChangeObservation,
   CodeEntity,
   CodeRelationship,
   ContextPackage,
@@ -39,6 +41,7 @@ interface EvidenceRow {
   author: string | null;
   occurredAt: Date;
   metadata: unknown;
+  contentHash?: string | null;
 }
 
 interface KnowledgeRowBase {
@@ -389,7 +392,26 @@ export class PrismaLoreStore implements LoreStore {
       },
       include: { evidenceLinks: { include: { evidence: true } }, challenges: true }
     });
-    if (existing) return this.#mapCandidate(existing);
+    if (existing) {
+      const linked = new Set(existing.evidenceLinks.map((link) => link.evidenceId));
+      const missingEvidenceIds = candidate.evidenceIds.filter((evidenceId) => !linked.has(evidenceId));
+      if (missingEvidenceIds.length > 0) {
+        await this.prisma.knowledgeEvidence.createMany({
+          data: missingEvidenceIds.map((evidenceId) => ({
+            knowledgeItemId: existing.id,
+            evidenceId,
+            relationship: "supports" as const,
+            weight: 1
+          })),
+          skipDuplicates: true
+        });
+      }
+      const refreshed = await this.prisma.knowledgeItem.findUniqueOrThrow({
+        where: { id: existing.id },
+        include: { evidenceLinks: { include: { evidence: true } }, challenges: true }
+      });
+      return this.#mapCandidate(refreshed);
+    }
     const row = await this.prisma.knowledgeItem.create({
       data: {
         id: candidate.id,
@@ -406,6 +428,7 @@ export class PrismaLoreStore implements LoreStore {
         metadata: {
           confidenceFactors: candidate.confidenceFactors,
           contradictionSummaries: candidate.contradictionSummaries,
+          ...(candidate.comparison ? { comparison: candidate.comparison } : {}),
           ...(candidate.proposalId ? { proposalId: candidate.proposalId } : {}),
           ...(candidate.proposedExclusion ? { proposedExclusion: candidate.proposedExclusion } : {})
         } as unknown as Prisma.InputJsonValue,
@@ -1057,21 +1080,62 @@ export class PrismaLoreStore implements LoreStore {
     };
   }
 
-  async saveReport(organisationId: string, report: SafetyReport, sessionId?: string): Promise<SafetyReport> {
+  async saveReport(
+    organisationId: string,
+    report: SafetyReport,
+    sessionId?: string,
+    contextRevision?: number
+  ): Promise<SafetyReport> {
     await this.#assertOrganisation(organisationId);
     const session = sessionId
       ? await this.prisma.agentSession.findFirst({ where: { id: sessionId, organisationId } })
       : undefined;
     if (sessionId && !session) throw new NotFoundError("Agent session", sessionId);
     if (session && session.repositoryId !== report.repositoryId) throw new ForbiddenError("Report repository does not belong to the session");
-    const linked = sessionId ? { ...report, sessionId } : report;
+    if (sessionId && (!report.contextId || !contextRevision)) {
+      throw new ConflictError("A persisted context revision is required before saving a session report");
+    }
+    const context = sessionId && report.contextId
+      ? await this.prisma.contextPackageRecord.findFirst({ where: { id: report.contextId, sessionId } })
+      : undefined;
+    if (sessionId && !context) throw new ForbiddenError("Report context does not belong to the session");
+    const observation = sessionId && report.contextId && contextRevision
+      ? createChangeObservation({ organisationId, sessionId, contextId: report.contextId, contextRevision, report })
+      : undefined;
+    const linked = observation
+      ? { ...report, sessionId, contextRevision, observationId: observation.id }
+      : sessionId
+        ? { ...report, sessionId }
+        : report;
     await this.prisma.$transaction(async (transaction) => {
+      if (observation) {
+        await transaction.changeObservation.create({
+          data: {
+            id: observation.id,
+            organisationId,
+            repositoryId: observation.repositoryId,
+            sessionId: observation.sessionId,
+            contextPackageId: observation.contextId,
+            contextRevision: observation.contextRevision,
+            baseCommit: observation.baseCommit,
+            currentCommit: observation.currentCommit,
+            manifest: observation.files as unknown as Prisma.InputJsonValue,
+            contentHash: observation.contentHash,
+            capturedAt: new Date(observation.capturedAt)
+          }
+        });
+      }
       await transaction.changeSafetyReport.create({
         data: {
           id: report.id,
           organisationId,
           repositoryId: report.repositoryId,
           sessionId,
+          contextPackageId: report.contextId,
+          contextRevision,
+          observationId: observation?.id,
+          baseCommit: report.baseCommit,
+          currentCommit: report.currentCommit,
           task: report.task,
           risk: report.risk.toLowerCase() as "low" | "medium" | "high" | "critical",
           payload: linked as unknown as Prisma.InputJsonValue,
@@ -1083,8 +1147,8 @@ export class PrismaLoreStore implements LoreStore {
         const sequence = (await transaction.sessionEvent.count({ where: { sessionId } })) + 1;
         await transaction.sessionEvent.createMany({
           data: [
-            { id: randomUUID(), sessionId, sequence, type: "verification_started", data: { contextId: report.contextId } },
-            { id: randomUUID(), sessionId, sequence: sequence + 1, type: "verification_finished", data: { reportId: report.id, risk: report.risk } },
+            { id: randomUUID(), sessionId, sequence, type: "verification_started", data: { contextId: report.contextId, contextRevision, observationId: observation?.id } },
+            { id: randomUUID(), sessionId, sequence: sequence + 1, type: "verification_finished", data: { reportId: report.id, observationId: observation?.id, risk: report.risk } },
             { id: randomUUID(), sessionId, sequence: sequence + 2, type: "completed", data: { reportId: report.id } }
           ]
         });
@@ -1092,6 +1156,7 @@ export class PrismaLoreStore implements LoreStore {
           where: { id: sessionId },
           data: {
             status: "completed",
+            currentCommit: report.currentCommit,
             completedAt: new Date(),
             filesChanged: report.changedFiles.map((file) => file.path),
             metadata: { warningCount: report.warnings.length }
@@ -1100,6 +1165,27 @@ export class PrismaLoreStore implements LoreStore {
       }
     });
     return linked;
+  }
+
+  async getChangeObservation(organisationId: string, observationId: string): Promise<ChangeObservation> {
+    await this.#assertOrganisation(organisationId);
+    const observation = await this.prisma.changeObservation.findFirst({
+      where: { id: observationId, organisationId }
+    });
+    if (!observation) throw new NotFoundError("Change observation", observationId);
+    return {
+      id: observation.id,
+      organisationId: observation.organisationId,
+      repositoryId: observation.repositoryId,
+      sessionId: observation.sessionId,
+      contextId: observation.contextPackageId,
+      contextRevision: observation.contextRevision,
+      ...(observation.baseCommit ? { baseCommit: observation.baseCommit } : {}),
+      ...(observation.currentCommit ? { currentCommit: observation.currentCommit } : {}),
+      files: observation.manifest as unknown as ChangeObservation["files"],
+      contentHash: observation.contentHash,
+      capturedAt: observation.capturedAt.toISOString()
+    };
   }
 
   async ingestEvidence(records: EvidenceRecord[]): Promise<number> {
@@ -1117,7 +1203,8 @@ export class PrismaLoreStore implements LoreStore {
         content: record.content,
         author: record.author,
         occurredAt: new Date(record.occurredAt),
-        metadata: record.metadata as Prisma.InputJsonValue
+        metadata: record.metadata as Prisma.InputJsonValue,
+        contentHash: record.contentHash
       })),
       skipDuplicates: true
     });
@@ -1162,7 +1249,8 @@ export class PrismaLoreStore implements LoreStore {
       content: row.content,
       ...optional(row.author, "author"),
       occurredAt: row.occurredAt.toISOString(),
-      metadata: asRecord(row.metadata)
+      metadata: asRecord(row.metadata),
+      ...optional(row.contentHash, "contentHash")
     } as EvidenceRecord;
   }
 
@@ -1199,6 +1287,9 @@ export class PrismaLoreStore implements LoreStore {
       evidence: row.evidenceLinks.map((link) => this.#mapEvidence(link.evidence)),
       contradictionSummaries: asStringArray(metadata.contradictionSummaries),
       confidenceFactors: asRecord(metadata.confidenceFactors) as unknown as CandidateRecord["confidenceFactors"],
+      ...(Object.keys(asRecord(metadata.comparison)).length
+        ? { comparison: asRecord(metadata.comparison) as unknown as CandidateRecord["comparison"] }
+        : {}),
       ...(typeof metadata.proposalId === "string" ? { proposalId: metadata.proposalId } : {}),
       ...(typeof metadata.proposedExclusion === "string" ? { proposedExclusion: metadata.proposedExclusion } : {})
     };

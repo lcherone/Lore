@@ -92,6 +92,7 @@ It stays quiet when nothing applies and specific when something does.
 | **Local repository graph** | Structural and historical relationships without uploading the checkout | TypeScript/JavaScript and PHP ASTs plus bounded Git/co-change analysis |
 | **GitHub memory** | Merged PRs, review bodies, inline/conversation comments, commits, paths, and patches | Fine-grained PAT or App installation, fully paginated and idempotent |
 | **Knowledge registry** | Typed facts, decisions, rules, preferences, regressions, warnings, and policies | Scoped, revisioned, evidence-linked records with health and confidence |
+| **Communication evidence** | Decisions and cautions from Slack, calls, meetings, email, in-person notes, and full standup transcripts | Retains provenance, extracts explicit signals, and labels new, duplicate, supporting, or conflicting suggestions for review |
 | **Candidate review** | Human control over what Lore learned | Edit, narrow, change type, merge, approve, reject, or challenge with audit history |
 | **Deterministic policy** | Explainable blockers and warnings | Human-owned detectors inspect changed paths and added lines—not model opinion |
 | **Agent sessions** | Context and change observation around an agent run | Prepare, observe working-set expansion, refresh, and verify the terminal diff |
@@ -121,6 +122,8 @@ lore context
 </p>
 
 Evidence can create a candidate, never automatic authority. Candidate review shows the proposed statement, type, exact repository/path/symbol scope, sources, contradictions, and every confidence factor. Approval creates an audited knowledge revision; rejection keeps the evidence without polluting active guidance.
+
+Use **Add evidence** for context that never reached GitHub. Paste one message or an entire standup transcript; Lore retains the original source, ignores ordinary status updates, rewords explicit decisions/rules/preferences into candidates, and compares them with approved knowledge. Exact re-submissions are idempotent. The bundled local extractor makes no external AI request, and every result still requires human review. See [Ad-hoc communication evidence](docs/features.md#ad-hoc-messages-calls-and-standup-transcripts) for the privacy boundary and a complete example.
 
 ## Verify the final change
 
@@ -445,7 +448,7 @@ docs           product, setup, architecture, security, and governance guides
 
 The local vertical slice is runnable today: demo UI, local AST/Git indexing, context preparation, knowledge lifecycle, policies, sessions, verification, PAT/App GitHub history, queue workers, CLI, MCP, and PostgreSQL storage.
 
-The next implementation slice is persistent store conformance plus explicit change-observation/report provenance. Durable job/outbox state, source/evidence revisions, and production identity follow it. The full, conflict-checked sequence is in the [`.ideas2` compatibility roadmap](docs/roadmap.md). External deployment gates are tracked separately in [SaaS readiness](docs/saas-readiness.md) and must not be marketed as completed.
+The next implementation slice is a shared memory/PostgreSQL store-conformance suite plus idempotent lifecycle writes. First-class change-observation/report provenance now exists; durable job/outbox state, source/evidence revisions, and production identity follow it. The full, conflict-checked sequence is in the [`.ideas2` compatibility roadmap](docs/roadmap.md). External deployment gates are tracked separately in [SaaS readiness](docs/saas-readiness.md) and must not be marketed as completed.
 
 ## Brand
 

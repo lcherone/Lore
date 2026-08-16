@@ -61,7 +61,22 @@ export const approveCandidateSchema = z.object({
   reason: z.string().min(3).max(1_000).default("Approved after evidence review")
 });
 
+export const communicationEvidenceSchema = z
+  .object({
+    repositoryId: z.string().min(1).optional(),
+    sourceType: z.enum(["slack", "standup", "meeting", "call", "in_person", "email", "note", "other"]),
+    title: z.string().trim().min(3).max(200),
+    content: z.string().trim().min(8).max(500_000),
+    participants: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+    occurredAt: z.string().datetime().optional(),
+    sourceUrl: z.string().url().max(2_000).optional(),
+    sourceReference: z.string().trim().min(1).max(500).optional(),
+    authorityConfirmed: z.literal(true)
+  })
+  .strict();
+
 export type PrepareTaskInput = z.infer<typeof prepareTaskSchema>;
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type VerifyChangeInput = z.infer<typeof verifyChangeSchema>;
 export type ProposalPayload = z.infer<typeof proposalPayloadSchema>;
+export type CommunicationEvidencePayload = z.infer<typeof communicationEvidenceSchema>;

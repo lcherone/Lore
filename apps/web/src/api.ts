@@ -1,6 +1,9 @@
 import type {
+  CommunicationEvidenceAnalysis,
+  CommunicationEvidenceInput,
   ContextPackage,
   DashboardSnapshot,
+  EvidenceRecord,
   KnowledgeItem,
   PolicyRecord,
   PullRequestImportLimit,
@@ -67,5 +70,9 @@ export const loreApi = {
   updateRepositoryRetention: (id: string, retentionConfig: RepositoryRetentionConfig): Promise<RepositorySummary> =>
     request(`/api/repositories/${id}/retention`, { method: "PATCH", body: JSON.stringify(retentionConfig) }),
   createPolicy: (policy: Omit<PolicyRecord, "id" | "organisationId" | "createdAt" | "updatedAt">) =>
-    request("/api/policies", { method: "POST", body: JSON.stringify(policy) })
+    request("/api/policies", { method: "POST", body: JSON.stringify(policy) }),
+  analyseCommunication: (input: CommunicationEvidenceInput): Promise<CommunicationEvidenceAnalysis> =>
+    request("/api/evidence/communications", { method: "POST", body: JSON.stringify(input) }),
+  listCommunicationEvidence: (): Promise<{ items: EvidenceRecord[]; count: number; total: number; truncated: boolean }> =>
+    request("/api/evidence?type=communication&limit=50")
 };

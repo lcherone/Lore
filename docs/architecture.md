@@ -66,7 +66,7 @@ sequenceDiagram
   Lore->>Lore: create evidence that can confirm or challenge knowledge
 ```
 
-Context records are immutable revisions. Session events are append-only and monotonically sequenced. Verification requires persisted context and atomically links the report, context, base/current commits, and completed session. An interrupted wrapper records an abandoned terminal event instead of a successful report.
+Context records are immutable revisions. Session events are append-only and monotonically sequenced. Verification requires persisted context, captures a bounded `ChangeObservation` manifest without duplicating raw patches, and atomically links the observation, report, context revision, base/current commits, and completed session. An interrupted wrapper records an abandoned terminal event instead of a successful report.
 
 ## Adapter boundaries
 

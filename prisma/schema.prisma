@@ -81,6 +81,7 @@ enum EvidenceType {
   ci_result
   manual_confirmation
   incident
+  communication
 }
 
 enum EvidenceRelationship {
@@ -151,6 +152,7 @@ model Organisation {
   reviewerProfiles ReviewerProfile[]
   sessions         AgentSession[]
   reports          ChangeSafetyReport[]
+  observations     ChangeObservation[]
   auditEvents      AuditEvent[]
   memberships      Membership[]
   ingestionReceipts IngestionReceipt[]
@@ -205,6 +207,7 @@ model Repository {
   regressions          RegressionRecord[]
   sessions             AgentSession[]
   reports              ChangeSafetyReport[]
+  observations         ChangeObservation[]
 
   @@unique([organisationId, provider, owner, name])
   @@index([provider, providerInstallationId, providerRepositoryId])
@@ -438,6 +441,7 @@ model AgentSession {
   contexts        ContextPackageRecord[]
   reports         ChangeSafetyReport[]
   events          SessionEvent[]
+  observations    ChangeObservation[]
 
   @@index([organisationId, repositoryId, status])
 }
@@ -461,8 +465,33 @@ model ContextPackageRecord {
   payload   Json
   createdAt DateTime     @default(now())
   session   AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  reports   ChangeSafetyReport[]
+  observations ChangeObservation[]
 
   @@index([sessionId, createdAt])
+}
+
+model ChangeObservation {
+  id               String               @id @default(uuid()) @db.Uuid
+  organisationId   String               @db.Uuid
+  repositoryId     String               @db.Uuid
+  sessionId        String               @db.Uuid
+  contextPackageId String               @db.Uuid
+  contextRevision  Int
+  baseCommit       String?
+  currentCommit    String?
+  manifest         Json
+  contentHash      String
+  capturedAt       DateTime             @default(now())
+  organisation     Organisation         @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository       Repository           @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  session          AgentSession         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  contextPackage   ContextPackageRecord @relation(fields: [contextPackageId], references: [id], onDelete: Cascade)
+  report           ChangeSafetyReport?
+
+  @@index([organisationId, repositoryId, capturedAt])
+  @@index([sessionId, capturedAt])
+  @@index([contentHash])
 }
 
 model ChangeSafetyReport {
@@ -470,6 +499,11 @@ model ChangeSafetyReport {
   organisationId String        @db.Uuid
   repositoryId   String        @db.Uuid
   sessionId      String?       @db.Uuid
+  contextPackageId String?     @db.Uuid
+  contextRevision Int?
+  observationId  String?       @unique @db.Uuid
+  baseCommit     String?
+  currentCommit  String?
   task           String
   risk           RiskLevel
   payload        Json
@@ -479,6 +513,8 @@ model ChangeSafetyReport {
   organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   repository     Repository    @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   session        AgentSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  contextPackage ContextPackageRecord? @relation(fields: [contextPackageId], references: [id], onDelete: SetNull)
+  observation    ChangeObservation? @relation(fields: [observationId], references: [id], onDelete: SetNull)
 
   @@index([organisationId, repositoryId, createdAt])
 }

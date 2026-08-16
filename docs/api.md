@@ -49,6 +49,7 @@ Worker-backed index and import requests return `202` with a job ID. Demo mode la
 ```text
 GET  /api/knowledge
 GET  /api/evidence
+POST /api/evidence/communications
 POST /api/knowledge
 GET  /api/knowledge/:id
 POST /api/knowledge/:id/approve
@@ -67,6 +68,37 @@ GET  /api/search?q=QUERY&repositoryId=REPOSITORY_ID
 
 `POST /api/knowledge-import` accepts either `{ "items": [...] }` JSON or `{ "format": "markdown", "content": "...", "sourceName": "AGENTS.md", "repositoryId": "..." }`. Markdown headings become individually scoped, human-confirmed items and retain their source name as provenance. Candidate merge supersedes the duplicate, links its evidence to the target, and records both a proposal and an audit event.
 
+### Communication evidence
+
+`POST /api/evidence/communications` accepts one short note or a complete standup, meeting, call, Slack, email, or in-person transcript. The original text is retained as `communication` evidence with its source type, participants, submitter, optional reference/URL, occurrence time, content hash, and repository scope. `authorityConfirmed` must be the literal `true`; clients should require the submitter to confirm that they may retain the communication and have removed secrets, payment data, and unnecessary customer data.
+
+```bash
+curl -X POST http://127.0.0.1:3001/api/evidence/communications \
+  -H 'content-type: application/json' \
+  -d '{
+    "repositoryId":"repo_soho_ecom",
+    "sourceType":"standup",
+    "title":"Payments standup · 16 August",
+    "participants":["Alex","Sam","Priya"],
+    "sourceReference":"#payments-eng",
+    "authorityConfirmed":true,
+    "content":"Alex: We agreed that refund tax changes must include RefundTaxTransactionTest.\nSam: The team prefers repository interfaces at application service boundaries."
+  }'
+```
+
+The response returns the stored evidence plus extracted review candidates. Each candidate has one comparison outcome:
+
+| Outcome | Meaning | Review action |
+| --- | --- | --- |
+| `new` | No close approved knowledge was found | Check wording and scope, then approve or reject |
+| `already_added` | Equivalent knowledge is already recorded | Merge the new evidence or reject the duplicate wording |
+| `supports_existing` | Similar approved knowledge exists | Review it as additional support and merge where appropriate |
+| `conflicts` | The statement appears to oppose active knowledge | Investigate and create an explicit challenge; do not silently replace either side |
+
+Exact resubmissions reuse the same stable evidence identity and return `evidenceAdded: false`; they do not add another candidate. Distinct communications remain separate evidence even when they support the same decision. The bundled provider is deterministic and local, makes no external AI request, and recognises explicit phrases such as “we agreed”, “decision”, “must”, “never”, “prefer”, “warning”, and “regression”. Ordinary standup status updates are retained but not promoted into candidates. A real provider is not bundled yet.
+
+Filter retained evidence with `GET /api/evidence?type=communication&repositoryId=REPOSITORY_ID&limit=50`. Supported filters are `type`, `provider`, `repositoryId`, and `limit` (1–1,000); results are newest first and include `total` plus `truncated`.
+
 Retention settings are applied before GitHub evidence is written. Summary-only mode cannot also retain raw diffs or snippets. Repository deletion requires the exact `owner/name`; repository-scoped rows cascade, while organisation-wide knowledge backed by removed evidence is challenged for reconfirmation.
 
 GitHub import accepts `limit` values `50`, `100`, `250`, `500`, `1000`, or `"all"`. `/api/github/status` exposes only authentication mode and readiness booleans; it never returns a token, private key, or webhook secret.
@@ -81,12 +113,13 @@ GET  /api/sessions/:id/events
 POST /api/sessions/:id/refresh-context
 POST /api/sessions/:id/verify
 POST /api/sessions/:id/abandon
+GET  /api/observations/:id
 GET  /api/policies
 POST /api/policies
 GET  /api/reports/:id
 ```
 
-Session context revisions are immutable records. Verification requires a persisted context revision; report creation and the terminal session update are one store transaction, and append-only events expose the lifecycle sequence.
+Session context revisions are immutable records. Verification requires a persisted context revision and creates a first-class `ChangeObservation`: a bounded file manifest with patch hashes, base/current commits, context revision, and its own content hash. Raw patch content is not duplicated into the observation. Observation creation, report creation, lifecycle events, and the terminal session update share one store transaction; the returned report includes `observationId` and `contextRevision`.
 
 Every body is validated with Zod. Errors use:
 

@@ -17,7 +17,7 @@ const tokens = (value: string): Set<string> =>
       .filter((token) => token.length >= 4)
   );
 
-const overlap = (left: string, right: string): number => {
+export const knowledgeStatementOverlap = (left: string, right: string): number => {
   const leftTokens = tokens(left);
   const rightTokens = tokens(right);
   if (!leftTokens.size || !rightTokens.size) return 0;
@@ -60,7 +60,7 @@ export function validateKnowledgeProposal(input: {
   }
 
   const supportScore = referencedEvidence.reduce(
-    (best, record) => Math.max(best, overlap(input.payload.statement, `${record.title ?? ""} ${record.content}`)),
+    (best, record) => Math.max(best, knowledgeStatementOverlap(input.payload.statement, `${record.title ?? ""} ${record.content}`)),
     0
   );
   if (referencedEvidence.length > 0 && supportScore < 0.12) {
@@ -72,13 +72,13 @@ export function validateKnowledgeProposal(input: {
   }
 
   const duplicates = input.existingKnowledge.filter(
-    (item) => item.status !== "rejected" && overlap(item.statement, input.payload.statement) >= 0.72
+    (item) => item.status !== "rejected" && knowledgeStatementOverlap(item.statement, input.payload.statement) >= 0.72
   );
   if (duplicates.length > 0) warnings.push("Similar knowledge already exists; consider merging instead of creating a duplicate.");
 
   const negations = /\b(?:not|never|must not|do not|forbid)\b/i;
   const contradictions = input.existingKnowledge.filter((item) => {
-    const similar = overlap(item.statement, input.payload.statement) >= 0.45;
+    const similar = knowledgeStatementOverlap(item.statement, input.payload.statement) >= 0.45;
     const oppositePolarity = negations.test(item.statement) !== negations.test(input.payload.statement);
     return item.status === "active" && similar && oppositePolarity;
   });

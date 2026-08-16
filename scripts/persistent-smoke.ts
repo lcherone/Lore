@@ -10,6 +10,7 @@ const app = await createApp({
   logger: false,
   dependencies: { store: new PrismaLoreStore(prisma), jobs: new InMemoryJobDispatcher() }
 });
+let persistedObservationId: string | undefined;
 
 try {
   const bootstrapResponse = await app.inject({ method: "GET", url: "/api/bootstrap" });
@@ -48,9 +49,10 @@ try {
   });
   if (reportResponse.statusCode !== 200) throw new Error(`Report persistence failed: ${reportResponse.body}`);
   const report = reportResponse.json<SafetyReport>();
-  if (!isUuid(report.id) || report.sessionId !== session.id || report.contextId !== persistedContext.id) {
+  if (!isUuid(report.id) || !report.observationId || !isUuid(report.observationId) || report.sessionId !== session.id || report.contextId !== persistedContext.id || report.contextRevision !== 1) {
     throw new Error("Safety report lost its session/context provenance");
   }
+  persistedObservationId = report.observationId;
 
   const smokeRepositoryResponse = await app.inject({
     method: "POST",
@@ -102,6 +104,7 @@ try {
     session: session.id,
     contextRevision: persistedContext.revision,
     report: report.id,
+    observation: report.observationId,
     reportLinked: report.sessionId === session.id,
     runtimeGraph: { entities: analysis.entities.length, relationships: analysis.relationships.length },
     regressions: context.historicalRegressions.length,
@@ -125,7 +128,10 @@ try {
   if (!snapshot.sessions.some((session) => session.status === "completed") || !snapshot.reports.some((report) => Boolean(report.sessionId))) {
     throw new Error("Restarted service could not retrieve the completed linked lifecycle");
   }
-  process.stdout.write(`${JSON.stringify({ restart: true, completedSessions: snapshot.sessions.filter((session) => session.status === "completed").length, linkedReports: snapshot.reports.filter((report) => Boolean(report.sessionId)).length })}\n`);
+  if (!persistedObservationId) throw new Error("Persistent smoke did not capture an observation ID");
+  const observationResponse = await restartedApp.inject({ method: "GET", url: `/api/observations/${persistedObservationId}` });
+  if (observationResponse.statusCode !== 200) throw new Error("Restarted service could not retrieve the change observation");
+  process.stdout.write(`${JSON.stringify({ restart: true, observationReadback: true, completedSessions: snapshot.sessions.filter((session) => session.status === "completed").length, linkedReports: snapshot.reports.filter((report) => Boolean(report.sessionId)).length })}\n`);
 } finally {
   await restartedApp.close();
   await restartedPrisma.$disconnect();

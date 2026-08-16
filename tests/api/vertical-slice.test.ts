@@ -52,12 +52,35 @@ describe("working API vertical slice", () => {
     });
     expect(report.statusCode).toBe(200);
     expect(["MEDIUM", "HIGH", "CRITICAL"]).toContain(report.json<SafetyReport>().risk);
-    expect(report.json<SafetyReport>()).toMatchObject({ sessionId, contextId: persistedContext.json<{ id: string }>().id });
+    const safetyReport = report.json<SafetyReport>();
+    expect(safetyReport).toMatchObject({
+      sessionId,
+      contextId: persistedContext.json<{ id: string }>().id,
+      contextRevision: 1
+    });
+    expect(safetyReport.observationId).toMatch(/^[0-9a-f-]{36}$/);
+    const observation = await app.inject({
+      method: "GET",
+      url: `/api/observations/${safetyReport.observationId}`
+    });
+    expect(observation.statusCode).toBe(200);
+    expect(observation.json()).toMatchObject({
+      id: safetyReport.observationId,
+      sessionId,
+      contextId: persistedContext.json<{ id: string }>().id,
+      contextRevision: 1,
+      files: [{ path: "src/Tax/Avalara/AddressCode.php", status: "modified" }]
+    });
+    expect(JSON.stringify(observation.json())).not.toContain("return $role");
     expect((await store.getSnapshot("org_acme")).sessions.find((item) => item.id === sessionId)?.status).toBe("completed");
     const events = await app.inject({ method: "GET", url: `/api/sessions/${sessionId}/events` });
     expect(events.json<{ items: Array<{ sequence: number; type: string }> }>().items.map((event) => event.type)).toEqual([
       "started", "context_prepared", "verification_started", "verification_finished", "completed"
     ]);
+    expect(events.json<{ items: Array<{ type: string; data: Record<string, unknown> }> }>().items[2]?.data).toMatchObject({
+      observationId: safetyReport.observationId,
+      contextRevision: 1
+    });
     expect(events.json<{ items: Array<{ sequence: number }> }>().items.map((event) => event.sequence)).toEqual([1, 2, 3, 4, 5]);
 
     const abandonedSession = await app.inject({

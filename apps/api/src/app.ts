@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import cookie from "@fastify/cookie";
@@ -9,21 +9,31 @@ import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import rawBody from "fastify-raw-body";
 import { z, ZodError } from "zod";
-import type { JobDispatcher, LoreStore } from "@lore/core/index.js";
+import type { AIProvider, JobDispatcher, LoreStore } from "@lore/core/index.js";
 import { LoreError, NotFoundError } from "@lore/core/index.js";
+import { createBundledMockAIProvider } from "@lore/ai/index.js";
 import { BullMqJobDispatcher, createLoreStore, InMemoryJobDispatcher } from "@lore/database/index.js";
 import { TaskPreparationService } from "@lore/context/index.js";
-import { KnowledgeService } from "@lore/knowledge/index.js";
+import { KnowledgeCandidateExtractionService, KnowledgeService } from "@lore/knowledge/index.js";
 import { ChangeVerificationService } from "@lore/reporting/index.js";
 import { assertTrustedRepositoryPath } from "@lore/git/index.js";
 import {
   approveCandidateSchema,
+  communicationEvidenceSchema,
   createSessionSchema,
   prepareTaskSchema,
   verifyChangeSchema
 } from "@lore/shared/schemas.js";
-import type { CodeEntity, CodeRelationship, PolicyDetector, PolicyRecord } from "@lore/shared/types.js";
-import { newUuid } from "@lore/shared/ids.js";
+import type {
+  CodeEntity,
+  CodeRelationship,
+  CommunicationEvidenceAnalysis,
+  EvidenceComparisonDisposition,
+  EvidenceRecord,
+  PolicyDetector,
+  PolicyRecord
+} from "@lore/shared/types.js";
+import { deterministicUuid, newUuid } from "@lore/shared/ids.js";
 import { policyPatternError } from "@lore/shared/policy-patterns.js";
 import {
   githubIntegrationStatus,
@@ -37,6 +47,7 @@ import { ApiMetrics } from "./metrics.js";
 export interface ApiDependencies {
   store: LoreStore;
   jobs: JobDispatcher;
+  aiProvider: AIProvider;
 }
 
 export interface CreateAppOptions {
@@ -182,10 +193,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   const sessionSecret = process.env.SESSION_SECRET ?? "demo-only-session-secret-change-before-production";
   const store = options.dependencies?.store ?? createLoreStore({ ...process.env, DEMO_MODE: String(demoMode) });
   const jobs: JobDispatcher = options.dependencies?.jobs ?? (demoMode ? new InMemoryJobDispatcher() : new BullMqJobDispatcher(process.env.REDIS_URL));
+  const aiProvider = options.dependencies?.aiProvider ?? createBundledMockAIProvider();
   const metrics = new ApiMetrics();
   const contextService = new TaskPreparationService();
   const verificationService = new ChangeVerificationService();
   const knowledgeService = new KnowledgeService(store);
+  const candidateExtractionService = new KnowledgeCandidateExtractionService(store, aiProvider);
   const app = Fastify({
     logger: options.logger === false ? false : {
       level: process.env.LOG_LEVEL ?? "info",
@@ -590,7 +603,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       ...(body.currentCommit ? { currentCommit: body.currentCommit } : session.currentCommit ? { currentCommit: session.currentCommit } : {})
     };
     metrics.verifications += 1;
-    return store.saveReport(tenant.organisationId, report, id);
+    return store.saveReport(tenant.organisationId, report, id, contextRecord.revision);
   });
 
   app.get("/api/knowledge", async (request) => {
@@ -606,8 +619,92 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
 
   app.get("/api/evidence", async (request) => {
     const tenant = tenantContext(request, demoMode);
-    const items = await store.getEvidence(tenant.organisationId);
-    return { items: items.slice(0, 1_000), count: Math.min(items.length, 1_000), truncated: items.length > 1_000 };
+    const query = z.object({
+      type: z.enum(["pull_request", "review_comment", "commit", "ticket", "code", "documentation", "test_result", "ci_result", "manual_confirmation", "incident", "communication"]).optional(),
+      provider: z.string().min(1).max(100).optional(),
+      repositoryId: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(1_000).default(1_000)
+    }).parse(request.query);
+    const allItems = await store.getEvidence(tenant.organisationId);
+    const filtered = allItems
+      .filter((item) =>
+        (!query.type || item.type === query.type) &&
+        (!query.provider || item.provider === query.provider) &&
+        (!query.repositoryId || item.repositoryId === query.repositoryId)
+      )
+      .sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt));
+    return {
+      items: filtered.slice(0, query.limit),
+      count: Math.min(filtered.length, query.limit),
+      total: filtered.length,
+      truncated: filtered.length > query.limit
+    };
+  });
+
+  app.post("/api/evidence/communications", async (request, reply) => {
+    const tenant = tenantContext(request, demoMode);
+    const input = communicationEvidenceSchema.parse(request.body);
+    if (input.repositoryId) await store.getRepository(tenant.organisationId, input.repositoryId);
+
+    const canonicalContent = input.content.replace(/\r\n/g, "\n").trim();
+    const identity = JSON.stringify({
+      repositoryId: input.repositoryId ?? null,
+      sourceType: input.sourceType,
+      title: input.title,
+      content: canonicalContent,
+      sourceReference: input.sourceReference ?? null,
+      occurredAt: input.occurredAt ?? null
+    });
+    const contentHash = createHash("sha256").update(canonicalContent).digest("hex");
+    const identityHash = createHash("sha256").update(identity).digest("hex");
+    const externalId = `communication:${input.sourceType}:${identityHash}`;
+    const evidence: EvidenceRecord = {
+      id: deterministicUuid("lore.evidence", `${tenant.organisationId}:${externalId}`),
+      organisationId: tenant.organisationId,
+      ...(input.repositoryId ? { repositoryId: input.repositoryId } : {}),
+      type: "communication",
+      provider: "human-communication",
+      externalId,
+      ...(input.sourceUrl ? { url: input.sourceUrl } : {}),
+      title: input.title,
+      content: canonicalContent,
+      author: tenant.name,
+      occurredAt: input.occurredAt ?? new Date().toISOString(),
+      metadata: {
+        sourceType: input.sourceType,
+        participants: input.participants ?? [],
+        ...(input.sourceReference ? { sourceReference: input.sourceReference } : {}),
+        submittedBy: tenant.userId,
+        submittedByName: tenant.name,
+        humanSubmitted: true,
+        authorityConfirmed: true,
+        aiTreatment: "untrusted-source"
+      },
+      contentHash
+    };
+    const evidenceAdded = (await store.ingestEvidence([evidence])) === 1;
+    const storedEvidence = (await store.getEvidence(tenant.organisationId)).find((item) => item.id === evidence.id) ?? evidence;
+    const extraction = await candidateExtractionService.extract({
+      organisationId: tenant.organisationId,
+      ...(input.repositoryId ? { repositoryId: input.repositoryId } : {}),
+      evidenceIds: [storedEvidence.id]
+    });
+    const counts: Record<EvidenceComparisonDisposition, number> = {
+      new: 0,
+      already_added: 0,
+      supports_existing: 0,
+      conflicts: 0
+    };
+    extraction.items.forEach((item) => {
+      counts[item.disposition] += 1;
+    });
+    const analysis: CommunicationEvidenceAnalysis = {
+      evidence: storedEvidence,
+      evidenceAdded,
+      candidates: extraction.items,
+      counts
+    };
+    return reply.status(evidenceAdded ? 201 : 200).send(analysis);
   });
 
   app.get("/api/search", async (request) => {
@@ -739,6 +836,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     const report = (await store.getSnapshot(tenant.organisationId)).reports.find((item) => item.id === id);
     if (!report) throw new NotFoundError("Safety report", id);
     return report;
+  });
+
+  app.get("/api/observations/:id", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+    return store.getChangeObservation(tenant.organisationId, id);
   });
 
   app.get("/api/github/install", async (request, reply) => {

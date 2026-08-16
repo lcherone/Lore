@@ -173,6 +173,31 @@ Markdown imports split on headings and retain their source filename. They enter 
 
 **Boundary.** Model output can propose a candidate but cannot approve itself, create policy, calculate its own authority, or write directly to the knowledge store.
 
+## Ad-hoc messages, calls, and standup transcripts
+
+**What it does.** Captures engineering context that never appears in a pull request: a Slack request, an in-person decision, call notes, an email, or a complete standup transcript. Lore preserves the original communication as evidence and turns only explicit decision, rule, preference, fact, warning, or regression signals into review candidates.
+
+**How it works.** Open **Add evidence**, choose the communication type and optional repository, add a title, paste the source text, and confirm that you are allowed to retain it. Lore sends the text through the same structured extraction, evidence validation, confidence, proposal, and candidate pipeline used for imported review evidence. The source is treated as untrusted data, so instructions inside a transcript cannot create policy or bypass validation. In the current local build, the bundled deterministic extractor makes no network request.
+
+<p align="center">
+  <img src="assets/screenshots/lore-communication-evidence.png" alt="Lore communication evidence screen with a standup transcript, privacy confirmation, comparison counts, and review candidates" width="100%" />
+</p>
+
+```text
+Alex: We agreed that refund tax changes must include RefundTaxTransactionTest.
+Sam: The checkout team prefers repository interfaces at application service boundaries.
+Priya: Remember: never log full external API payloads because they may contain customer data.
+Alex: Yesterday I updated the release notes.
+```
+
+The first three lines become a decision, preference, and rule candidate. The ordinary status update remains in the evidence transcript but does not become knowledge.
+
+**Comparison outcomes.** Every suggestion is marked **New suggestion**, **Already added**, **Supports existing**, or **Possible conflict**. Matching knowledge is linked in the result so the reviewer can merge supporting evidence, reject duplicate wording, or investigate a conflict. Exact re-submission is idempotent.
+
+**Human control.** Extracted wording can be corrected in **Candidates** before approval. Nothing from a communication becomes active knowledge automatically, and conversational evidence receives lower source-reliability confidence than independent reviewed PR evidence.
+
+**Privacy boundary.** The original text is retained for provenance. Only paste communications you are authorised to store. Remove passwords, tokens, cardholder data, authentication data, and unnecessary customer or employee personal data first. Local demo storage resets on restart; persistent mode writes the text to PostgreSQL under the repository/organisation boundary. DLP, redaction, legal hold, and configurable raw-text retention are SaaS gates, not completed protections.
+
 ## Deterministic policies
 
 **What it does.** Applies explicit human-owned rules such as forbidden secret logging, required tests, or path-specific review constraints.
@@ -189,7 +214,7 @@ Policies can block completion; inferred preferences cannot silently promote them
 
 **What it does.** Records who or what performed a task, the initial context, the changing file set, refreshes, and the terminal verification state.
 
-**How it works.** The verified Codex wrapper prepares context, writes `.lore/LORE_CONTEXT.md`, observes changed paths, refreshes context when the working set expands, then verifies the final diff. Non-zero agent exits remain visible as abandoned sessions.
+**How it works.** The verified Codex wrapper prepares context, writes `.lore/LORE_CONTEXT.md`, observes changed paths, refreshes context when the working set expands, then verifies the final diff. Persistent verification records a bounded immutable manifest with per-patch hashes, the exact context revision, and base/current commits; it does not duplicate raw patches into the observation. Non-zero agent exits remain visible as abandoned sessions.
 
 ```bash
 lore session start "Update refund address mapping" --agent codex
@@ -273,4 +298,3 @@ Press <kbd>⌘K</kbd> or <kbd>Ctrl+K</kbd> anywhere in the web app. The palette 
 - AI is optional; the bundled provider is deterministic mock data, while enforcement remains deterministic.
 
 Read [Security](security.md), [AI safety](ai-safety.md), and [SaaS readiness](saas-readiness.md) before connecting sensitive customer repositories or exposing Lore externally.
-

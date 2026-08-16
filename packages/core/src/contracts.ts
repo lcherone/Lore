@@ -1,6 +1,7 @@
 import type {
   AgentSession,
   CandidateRecord,
+  ChangeObservation,
   ChangedFile,
   CodeEntity,
   CodeRelationship,
@@ -174,7 +175,13 @@ export interface LoreStore {
   getSessionEvents(organisationId: string, sessionId: string): Promise<SessionEvent[]>;
   saveContextPackage(organisationId: string, sessionId: string, context: ContextPackage): Promise<ContextPackageRecord>;
   getLatestContextPackage(organisationId: string, sessionId: string): Promise<ContextPackageRecord | undefined>;
-  saveReport(organisationId: string, report: SafetyReport, sessionId?: string): Promise<SafetyReport>;
+  saveReport(
+    organisationId: string,
+    report: SafetyReport,
+    sessionId?: string,
+    contextRevision?: number
+  ): Promise<SafetyReport>;
+  getChangeObservation(organisationId: string, observationId: string): Promise<ChangeObservation>;
   ingestEvidence(records: EvidenceRecord[]): Promise<number>;
   hasIngestionReceipt(organisationId: string, provider: string, externalId: string): Promise<boolean>;
   saveIngestionReceipt(organisationId: string, provider: string, externalId: string, eventType: string): Promise<void>;

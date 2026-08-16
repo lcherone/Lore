@@ -18,6 +18,8 @@ import {
   History,
   Link2,
   ListFilter,
+  MessageSquareText,
+  Mic,
   Play,
   Plus,
   Search,
@@ -29,8 +31,12 @@ import {
 } from "lucide-react";
 import type {
   CandidateRecord,
+  CommunicationEvidenceAnalysis,
+  CommunicationEvidenceInput,
+  CommunicationSourceType,
   ContextPackage,
   DashboardSnapshot,
+  EvidenceRecord,
   KnowledgeItem,
   KnowledgeKind,
   KnowledgeScope,
@@ -63,6 +69,236 @@ const relativeTime = (value: string): string => {
   const days = Math.round(hours / 24);
   return `${days}d ago`;
 };
+
+const communicationExample = `Alex: We agreed that refund tax changes must include RefundTaxTransactionTest.
+Sam: The checkout team prefers repository interfaces at application service boundaries.
+Priya: Remember: never log full external API payloads because they may contain customer data.
+Alex: Yesterday I finished the release notes and today I am reviewing the deployment.`;
+
+const dispositionLabel = (value: CommunicationEvidenceAnalysis["candidates"][number]["disposition"]): string =>
+  ({
+    new: "New suggestion",
+    already_added: "Already added",
+    supports_existing: "Supports existing",
+    conflicts: "Possible conflict"
+  })[value];
+
+const communicationSourceLabel = (evidence: EvidenceRecord): string => {
+  const sourceType = evidence.metadata.sourceType;
+  return typeof sourceType === "string" ? sourceType.replace("_", " ") : "communication";
+};
+
+export function EvidencePage({
+  repositories,
+  onAnalyse,
+  onList,
+  onReview
+}: {
+  repositories: RepositorySummary[];
+  onAnalyse: (input: CommunicationEvidenceInput) => Promise<CommunicationEvidenceAnalysis>;
+  onList: () => Promise<EvidenceRecord[]>;
+  onReview: () => void;
+}) {
+  const [form, setForm] = useState({
+    sourceType: "standup" as CommunicationSourceType,
+    repositoryId: "",
+    title: "",
+    content: "",
+    participants: "",
+    occurredAt: "",
+    sourceReference: "",
+    sourceUrl: "",
+    authorityConfirmed: false
+  });
+  const [result, setResult] = useState<CommunicationEvidenceAnalysis>();
+  const [recent, setRecent] = useState<EvidenceRecord[]>([]);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let active = true;
+    void onList()
+      .then((items) => active && setRecent(items))
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [onList]);
+
+  const submit = async (event: FormEvent): Promise<void> => {
+    event.preventDefault();
+    if (!form.authorityConfirmed) {
+      setError("Confirm that you are allowed to retain this communication before continuing.");
+      return;
+    }
+    setWorking(true);
+    setError(undefined);
+    try {
+      const analysis = await onAnalyse({
+        sourceType: form.sourceType,
+        title: form.title,
+        content: form.content,
+        authorityConfirmed: true,
+        ...(form.repositoryId ? { repositoryId: form.repositoryId } : {}),
+        ...(form.participants.trim()
+          ? { participants: form.participants.split(",").map((item) => item.trim()).filter(Boolean) }
+          : {}),
+        ...(form.occurredAt ? { occurredAt: new Date(form.occurredAt).toISOString() } : {}),
+        ...(form.sourceReference ? { sourceReference: form.sourceReference } : {}),
+        ...(form.sourceUrl ? { sourceUrl: form.sourceUrl } : {})
+      });
+      setResult(analysis);
+      setRecent((items) => [analysis.evidence, ...items.filter((item) => item.id !== analysis.evidence.id)]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Lore could not analyse this communication");
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <div className="page-pad evidence-page">
+      <PageHeader
+        title="Add communication evidence"
+        description="Turn a Slack note, call, meeting, or full standup transcript into evidence-backed suggestions."
+        actions={
+          <Button variant="secondary" icon={<Mic size={15} />} onClick={() => setForm((value) => ({ ...value, title: "Example engineering standup", content: communicationExample, sourceType: "standup" }))}>
+            Use example transcript
+          </Button>
+        }
+      />
+
+      <div className="evidence-safety" role="note">
+        <ShieldCheck size={19} />
+        <span>
+          <strong>Private by design in this local demo.</strong> Lore stores the original text for provenance, treats it as untrusted input, and never activates extracted knowledge without human review. Remove secrets, payment data, and unnecessary customer information before pasting.
+        </span>
+      </div>
+
+      <div className="evidence-layout">
+        <section className="evidence-compose">
+          <header>
+            <MessageSquareText size={19} />
+            <div>
+              <h2>Paste a note or transcript</h2>
+              <p>Keep speaker names and context. Lore ignores ordinary status updates unless they contain an explicit decision, rule, preference, fact, warning, or regression signal.</p>
+            </div>
+          </header>
+          <form className="form-stack" onSubmit={(event) => void submit(event)}>
+            <div className="form-grid">
+              <FormField label="Communication type">
+                <select value={form.sourceType} onChange={(event) => setForm((value) => ({ ...value, sourceType: event.target.value as CommunicationSourceType }))}>
+                  <option value="standup">Standup transcript</option>
+                  <option value="slack">Slack or chat</option>
+                  <option value="meeting">Meeting</option>
+                  <option value="call">Call</option>
+                  <option value="in_person">In person</option>
+                  <option value="email">Email</option>
+                  <option value="note">Personal note</option>
+                  <option value="other">Other</option>
+                </select>
+              </FormField>
+              <FormField label="Repository" hint="Optional; leave blank for organisation-wide evidence">
+                <select value={form.repositoryId} onChange={(event) => setForm((value) => ({ ...value, repositoryId: event.target.value }))}>
+                  <option value="">Organisation-wide</option>
+                  {repositories.map((repository) => <option key={repository.id} value={repository.id}>{repository.owner}/{repository.name}</option>)}
+                </select>
+              </FormField>
+            </div>
+            <FormField label="Title">
+              <input required minLength={3} maxLength={200} placeholder="Payments standup · 16 August" value={form.title} onChange={(event) => setForm((value) => ({ ...value, title: event.target.value }))} />
+            </FormField>
+            <FormField label="Communication text" hint={`${form.content.length.toLocaleString()} / 500,000 characters`}>
+              <textarea className="evidence-transcript" required minLength={8} maxLength={500_000} placeholder="Paste one message, meeting notes, or the complete transcript…" value={form.content} onChange={(event) => setForm((value) => ({ ...value, content: event.target.value }))} />
+            </FormField>
+            <div className="form-grid">
+              <FormField label="Participants" hint="Optional; comma separated">
+                <input placeholder="Alex, Sam, Priya" value={form.participants} onChange={(event) => setForm((value) => ({ ...value, participants: event.target.value }))} />
+              </FormField>
+              <FormField label="When it happened" hint="Optional">
+                <input type="datetime-local" value={form.occurredAt} onChange={(event) => setForm((value) => ({ ...value, occurredAt: event.target.value }))} />
+              </FormField>
+            </div>
+            <div className="form-grid">
+              <FormField label="Source reference" hint="Optional channel, meeting ID, or location">
+                <input placeholder="#payments-eng" value={form.sourceReference} onChange={(event) => setForm((value) => ({ ...value, sourceReference: event.target.value }))} />
+              </FormField>
+              <FormField label="Source URL" hint="Optional; access controls still apply">
+                <input type="url" placeholder="https://…" value={form.sourceUrl} onChange={(event) => setForm((value) => ({ ...value, sourceUrl: event.target.value }))} />
+              </FormField>
+            </div>
+            <label className="evidence-consent">
+              <input type="checkbox" required checked={form.authorityConfirmed} onChange={(event) => setForm((value) => ({ ...value, authorityConfirmed: event.target.checked }))} />
+              <span>I am allowed to add this communication and have removed secrets, payment data, and unnecessary customer data.</span>
+            </label>
+            {error && <div className="form-error" role="alert">{error}</div>}
+            <div className="evidence-submit">
+              <span>Suggestions go to Candidates. Nothing is approved automatically.</span>
+              <Button type="submit" variant="primary" icon={<Sparkles size={15} />} disabled={working || !form.authorityConfirmed || !form.title.trim() || !form.content.trim()}>
+                {working ? "Analysing…" : "Save and analyse evidence"}
+              </Button>
+            </div>
+          </form>
+        </section>
+
+        <aside className="evidence-aside">
+          <section>
+            <h2>What Lore looks for</h2>
+            <ol>
+              <li><strong>Explicit decisions</strong><span>“We agreed…” or “Decision:”</span></li>
+              <li><strong>Rules and cautions</strong><span>“Must”, “never”, “do not”, risks, and regressions</span></li>
+              <li><strong>Team preferences</strong><span>“Prefer” and “should”, kept advisory</span></li>
+              <li><strong>Existing context</strong><span>Duplicates, supporting evidence, and possible conflicts</span></li>
+            </ol>
+          </section>
+          <section>
+            <h2>Recent communications</h2>
+            <div className="recent-evidence">
+              {recent.slice(0, 5).map((item) => (
+                <article key={item.id}>
+                  <MessageSquareText size={15} />
+                  <span><strong>{item.title}</strong><small>{communicationSourceLabel(item)} · {relativeTime(item.occurredAt)}</small></span>
+                </article>
+              ))}
+              {!recent.length && <p>No communication evidence has been added yet.</p>}
+            </div>
+          </section>
+        </aside>
+      </div>
+
+      {result && (
+        <section className="evidence-results" aria-live="polite">
+          <header>
+            <div>
+              <span className="eyebrow">Analysis complete</span>
+              <h2>{result.candidates.length ? `${result.candidates.length} review candidate${result.candidates.length === 1 ? "" : "s"}` : "Evidence saved — no actionable signals found"}</h2>
+              <p>{result.evidenceAdded ? "A new evidence record was retained." : "This exact evidence was already retained, so Lore reused it."}</p>
+            </div>
+            {result.candidates.length > 0 && <Button variant="primary" icon={<ArrowRight size={15} />} onClick={onReview}>Review candidates</Button>}
+          </header>
+          <div className="evidence-counts">
+            {(["new", "already_added", "supports_existing", "conflicts"] as const).map((key) => <div key={key} className={`evidence-count evidence-count--${key}`}><strong>{result.counts[key]}</strong><span>{dispositionLabel(key)}</span></div>)}
+          </div>
+          <div className="evidence-suggestions">
+            {result.candidates.map((item) => (
+              <article key={item.candidate.id}>
+                <span className={`comparison-badge comparison-badge--${item.disposition}`}>{dispositionLabel(item.disposition)}</span>
+                <KindIcon kind={item.candidate.kind} />
+                <div>
+                  <h3>{item.candidate.title}</h3>
+                  <p>{item.candidate.statement}</p>
+                  <small>{item.explanation}</small>
+                  {item.matches.length > 0 && <em>Matched: {item.matches.map((match) => match.title).join(", ")}</em>}
+                </div>
+                <Confidence value={item.candidate.confidence} />
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
 
 export function DashboardPage({
   data,
@@ -395,11 +631,13 @@ function ContextModal({ context, onClose }: { context: ContextPackage; onClose: 
 
 export function CandidatesPage({
   candidates,
+  knowledge,
   onApprove,
   onReject,
   onMerge
 }: {
   candidates: CandidateRecord[];
+  knowledge: KnowledgeItem[];
   onApprove: (
     candidate: CandidateRecord,
     draft: Pick<CandidateRecord, "statement" | "kind" | "scope">
@@ -425,6 +663,10 @@ export function CandidatesPage({
       `${candidate.title} ${candidate.statement}`.toLowerCase().includes(query.toLowerCase())
   );
   const selected = candidates.find((candidate) => candidate.id === selectedId) ?? filtered[0];
+  const mergeTargets = [
+    ...knowledge.filter((item) => item.status !== "rejected" && item.status !== "archived"),
+    ...candidates.filter((item) => item.id !== selected?.id)
+  ];
 
   useEffect(() => {
     if (!selected) return;
@@ -490,6 +732,7 @@ export function CandidatesPage({
                   <small>
                     {candidate.kind} · <em>{Math.round(candidate.confidence * 100)}% confidence</em>{" "}
                     · {candidate.evidenceIds.length} sources
+                    {candidate.comparison ? ` · ${dispositionLabel(candidate.comparison.disposition)}` : ""}
                   </small>
                 </span>
                 <ChevronRight size={17} />
@@ -523,6 +766,15 @@ export function CandidatesPage({
                 <span className="status-label">Candidate</span>
               </div>
             </div>
+            {selected.comparison && (
+              <div className={`candidate-comparison candidate-comparison--${selected.comparison.disposition}`}>
+                <Sparkles size={16} />
+                <span>
+                  <strong>{dispositionLabel(selected.comparison.disposition)}</strong>
+                  {selected.comparison.explanation}
+                </span>
+              </div>
+            )}
             <label className="statement-editor">
               <span>Statement</span>
               <textarea
@@ -633,9 +885,13 @@ export function CandidatesPage({
               </Button>
               <Button
                 variant="secondary"
-                disabled={working || candidates.length < 2}
+                disabled={working || mergeTargets.length === 0}
                 onClick={() => {
-                  setMergeTargetId(candidates.find((item) => item.id !== selected.id)?.id ?? "");
+                  setMergeTargetId(
+                    selected.comparison?.matchedKnowledgeIds.find((id) =>
+                      mergeTargets.some((item) => item.id === id)
+                    ) ?? mergeTargets[0]?.id ?? ""
+                  );
                   setMergeOpen(true);
                 }}
               >
@@ -802,13 +1058,24 @@ export function CandidatesPage({
                       value={mergeTargetId}
                       onChange={(event) => setMergeTargetId(event.target.value)}
                     >
-                      {candidates
-                        .filter((item) => item.id !== selected.id)
-                        .map((item) => (
+                      <optgroup label="Approved knowledge">
+                        {knowledge
+                          .filter((item) => item.status !== "rejected" && item.status !== "archived")
+                          .map((item) => (
+                            <option value={item.id} key={item.id}>
+                              {item.title}
+                            </option>
+                          ))}
+                      </optgroup>
+                      <optgroup label="Other candidates">
+                        {candidates
+                          .filter((item) => item.id !== selected.id)
+                          .map((item) => (
                           <option value={item.id} key={item.id}>
                             {item.title}
                           </option>
-                        ))}
+                          ))}
+                      </optgroup>
                     </select>
                   </FormField>
                 </div>

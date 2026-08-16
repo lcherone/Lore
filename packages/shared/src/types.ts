@@ -20,6 +20,20 @@ export type Severity = "info" | "suggestion" | "warning" | "error" | "blocker";
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type ContextPriority = "mandatory" | "high" | "medium" | "low";
 export type PullRequestImportLimit = 50 | 100 | 250 | 500 | 1000 | "all";
+export type CommunicationSourceType =
+  | "slack"
+  | "standup"
+  | "meeting"
+  | "call"
+  | "in_person"
+  | "email"
+  | "note"
+  | "other";
+export type EvidenceComparisonDisposition =
+  | "new"
+  | "already_added"
+  | "supports_existing"
+  | "conflicts";
 
 export interface KnowledgeScope {
   organisation?: string;
@@ -83,7 +97,8 @@ export interface EvidenceRecord {
     | "test_result"
     | "ci_result"
     | "manual_confirmation"
-    | "incident";
+    | "incident"
+    | "communication";
   provider: string;
   externalId: string;
   url?: string;
@@ -92,6 +107,13 @@ export interface EvidenceRecord {
   author?: string;
   occurredAt: string;
   metadata: Record<string, unknown>;
+  contentHash?: string;
+}
+
+export interface CandidateComparison {
+  disposition: EvidenceComparisonDisposition;
+  matchedKnowledgeIds: string[];
+  explanation: string;
 }
 
 export interface KnowledgeItem {
@@ -135,6 +157,33 @@ export interface CandidateRecord extends KnowledgeItem {
   contradictionSummaries: string[];
   confidenceFactors: ConfidenceFactors;
   proposedExclusion?: string;
+  comparison?: CandidateComparison;
+}
+
+export interface CommunicationEvidenceInput {
+  repositoryId?: string;
+  sourceType: CommunicationSourceType;
+  title: string;
+  content: string;
+  participants?: string[];
+  occurredAt?: string;
+  sourceUrl?: string;
+  sourceReference?: string;
+  authorityConfirmed: true;
+}
+
+export interface CommunicationEvidenceAnalysisItem {
+  candidate: CandidateRecord;
+  disposition: EvidenceComparisonDisposition;
+  matches: Array<Pick<KnowledgeItem, "id" | "title" | "statement" | "status" | "kind">>;
+  explanation: string;
+}
+
+export interface CommunicationEvidenceAnalysis {
+  evidence: EvidenceRecord;
+  evidenceAdded: boolean;
+  candidates: CommunicationEvidenceAnalysisItem[];
+  counts: Record<EvidenceComparisonDisposition, number>;
 }
 
 export interface KnowledgeProposalRecord {
@@ -291,10 +340,33 @@ export interface ChangedFile {
   patch?: string;
 }
 
+export interface ChangeObservation {
+  id: string;
+  organisationId: string;
+  repositoryId: string;
+  sessionId: string;
+  contextId: string;
+  contextRevision: number;
+  baseCommit?: string;
+  currentCommit?: string;
+  files: Array<{
+    path: string;
+    previousPath?: string;
+    status: ChangedFile["status"];
+    additions: number;
+    deletions: number;
+    patchHash?: string;
+  }>;
+  contentHash: string;
+  capturedAt: string;
+}
+
 export interface SafetyReport {
   id: string;
   sessionId?: string;
   contextId?: string;
+  contextRevision?: number;
+  observationId?: string;
   baseCommit?: string;
   currentCommit?: string;
   task: string;

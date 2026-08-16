@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const read = (path: string): string => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+const read = (path: string): string =>
+  readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
 
 const sourceRoutes = (): string[] => {
   const source = read("apps/api/src/app.ts");
@@ -24,8 +25,9 @@ const sourceJobs = (): string[] => {
 
 const documentedJobs = (): string[] => {
   const documentation = read("docs/capabilities.md");
-  const section = documentation.split("## Worker jobs")[1]?.split("## Human control surface")[0] ?? "";
-  return [...section.matchAll(/\| `([^`]+)` \|/g)].map((match) => match[1]!).sort();
+  const section =
+    documentation.split("## Worker jobs")[1]?.split("## Human control surface")[0] ?? "";
+  return [...section.matchAll(/\| `([^`]+)`\s*\|/g)].map((match) => match[1]!).sort();
 };
 
 describe("documentation capability inventory", () => {
@@ -37,4 +39,3 @@ describe("documentation capability inventory", () => {
     expect(documentedJobs()).toEqual(sourceJobs());
   });
 });
-
