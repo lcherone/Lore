@@ -388,6 +388,7 @@ The full local path was exercised while it was being built. These were the concr
 | The demo could inherit real provider credentials from the shell or `.env` | The demo now explicitly disables GitHub access and forces the deterministic mock AI provider. |
 | Some macOS Docker installations referenced an unavailable credential helper | Local scripts create a temporary isolated Docker client config while preserving the active daemon/context. |
 | Slim container builds could miss the OpenSSL runtime Prisma expects | Production images install the required runtime package before generation and startup. |
+| A real, mature checkout produced an 18 MB sanitised graph, but the API inherited the 2.5 MB limit intended for ordinary requests and the CLI only reported “The request was rejected” | The analysis route now has its own bounded 50 MB allowance while every other endpoint keeps the smaller global limit; oversized graphs receive an actionable error. |
 | Docker's Node process could exhaust its default heap while checking generated Prisma types | The builder gives the compile step an explicit 2 GB heap; runtime containers keep Node's normal limits. |
 | The evidence-revision backfill used an ambiguous joined column and an interrupted PostgreSQL migration retained earlier DDL | The migration qualifies the current hash and is safely replayable with guarded DDL/backfill, then exercised against the composed PostgreSQL service. |
 

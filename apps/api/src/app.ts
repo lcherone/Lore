@@ -198,6 +198,11 @@ const analysisUploadSchema = z.object({
   relationships: z.array(codeRelationshipSchema).max(200_000)
 }).strict();
 
+// Local index files are already bounded to 50 MB by LocalProject. Keep the
+// larger allowance scoped to the sanitised graph endpoint instead of raising
+// the API-wide request limit for browser and account mutations.
+const ANALYSIS_UPLOAD_BODY_LIMIT_BYTES = 50_000_000;
+
 const policyInputSchema = z.object({
   repositoryId: z.string().optional(),
   name: z.string().min(3).max(200),
@@ -668,9 +673,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       : undefined;
     if (typeof httpError?.statusCode === "number" && httpError.statusCode >= 400 && httpError.statusCode < 500) {
       const csrfRejected = typeof httpError.code === "string" && httpError.code.startsWith("FST_CSRF_");
+      const payloadTooLarge = httpError.code === "FST_ERR_CTP_BODY_TOO_LARGE";
       void reply.status(httpError.statusCode).send({
-        error: csrfRejected ? "CSRF_REJECTED" : "REQUEST_REJECTED",
-        message: csrfRejected ? "The browser request did not include a valid CSRF token" : "The request was rejected",
+        error: csrfRejected ? "CSRF_REJECTED" : payloadTooLarge ? "PAYLOAD_TOO_LARGE" : "REQUEST_REJECTED",
+        message: csrfRejected
+          ? "The browser request did not include a valid CSRF token"
+          : payloadTooLarge && request.url.split("?")[0]?.endsWith("/analysis")
+            ? "The sanitised code graph exceeds Lore's 50 MB upload limit; exclude generated or vendor files and index again"
+            : payloadTooLarge
+              ? "The request body exceeds this endpoint's upload limit"
+              : "The request was rejected",
         requestId: request.id
       });
       return;
@@ -1037,7 +1049,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return reply.status(202).send({ jobId: job.id, status: job.deferred ? "dispatch_pending" : "queued" });
   });
 
-  app.put("/api/repositories/:id/analysis", async (request) => {
+  app.put("/api/repositories/:id/analysis", {
+    bodyLimit: ANALYSIS_UPLOAD_BODY_LIMIT_BYTES
+  }, async (request) => {
     const tenant = tenantContext(request, demoMode);
     const { id } = z.object({ id: z.string() }).parse(request.params);
     const input = analysisUploadSchema.parse(request.body);

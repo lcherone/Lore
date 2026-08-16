@@ -149,6 +149,17 @@ Lore never substitutes fixtures after an API failure. Start `npm run dev`, then 
 
 AST indexing still succeeds outside a Git checkout, but commit, diff, and co-change features need a real Git worktree with readable history.
 
+### The CLI says the indexing request was rejected
+
+Rebuild and restart Lore so the CLI and API use the current graph-upload contract:
+
+```bash
+cd /Users/dev/Lore
+npm run local:up
+```
+
+The sanitised analysis endpoint accepts bounded graphs up to 50 MB while ordinary API requests retain the smaller global limit. If Lore reports that the graph itself exceeds 50 MB, exclude generated, dependency, cache, or vendor directories from the checkout and index again; do not raise the global API limit.
+
 ### The worker has no database or Redis
 
 The worker intentionally refuses an in-memory production path. Set `DATABASE_URL`, `REDIS_URL`, and `DEMO_MODE=false`, or use Docker Compose.
