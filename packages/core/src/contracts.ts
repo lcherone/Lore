@@ -13,18 +13,22 @@ import type {
   KnowledgeProposalRecord,
   GitHubUserIdentity,
   AuthSessionSummary,
+  ApiTokenSummary,
   OrganisationAccess,
   OrganisationInvitation,
   OrganisationMember,
   OrganisationRole,
+  OrganisationSettings,
   PolicyRecord,
   PullRequestImportLimit,
   RepositoryRetentionConfig,
   RegressionRecord,
   RepositorySummary,
   SafetyReport,
-  SessionEvent
+  SessionEvent,
+  UserSettings
 } from "@lore/shared/types.js";
+import type { ZodType } from "zod";
 
 export interface AuthSessionRecord {
   id: string;
@@ -35,6 +39,12 @@ export interface AuthSessionRecord {
   lastSeenAt: string;
   revokedAt?: string;
   createdAt: string;
+}
+
+export interface ApiTokenRecord extends ApiTokenSummary {
+  userId: string;
+  tokenHash: string;
+  revokedAt?: string;
 }
 
 export interface UserProfileUpdate {
@@ -100,6 +110,7 @@ export interface StructuredAIRequest<T> {
   systemInstructions: string;
   applicationInstructions: string;
   untrustedSourceContent: string;
+  schema: ZodType<T>;
   parse: (value: unknown) => T;
   promptVersion: string;
 }
@@ -135,6 +146,8 @@ export interface LoreStore {
   signInWithGitHub(identity: GitHubUserIdentity): Promise<import("@lore/shared/types.js").UserProfile>;
   getUserProfile(userId: string): Promise<import("@lore/shared/types.js").UserProfile>;
   updateUserProfile(userId: string, input: UserProfileUpdate): Promise<import("@lore/shared/types.js").UserProfile>;
+  getUserSettings(userId: string): Promise<UserSettings>;
+  updateUserSettings(userId: string, input: UserSettings): Promise<UserSettings>;
   createAuthSession(input: {
     userId: string;
     tokenHash: string;
@@ -149,6 +162,20 @@ export interface LoreStore {
   revokeOtherAuthSessions(userId: string, currentSessionId: string): Promise<number>;
   listAuthSessions(userId: string, currentSessionId: string): Promise<AuthSessionSummary[]>;
   listOrganisationAccess(userId: string): Promise<OrganisationAccess[]>;
+  getOrganisationSettings(organisationId: string): Promise<OrganisationSettings>;
+  updateOrganisationSettings(organisationId: string, input: OrganisationSettings, actorUserId: string): Promise<OrganisationSettings>;
+  createApiToken(input: {
+    organisationId: string;
+    userId: string;
+    name: string;
+    prefix: string;
+    tokenHash: string;
+    scopes: Array<"read" | "write">;
+    expiresAt?: string;
+  }): Promise<ApiTokenSummary>;
+  getApiToken(tokenHash: string): Promise<ApiTokenRecord | undefined>;
+  listApiTokens(userId: string, organisationId: string): Promise<ApiTokenSummary[]>;
+  revokeApiToken(tokenId: string, userId: string, organisationId: string): Promise<void>;
   createOrganisation(userId: string, input: { name: string; slug: string }): Promise<OrganisationAccess>;
   updateOrganisation(
     organisationId: string,
@@ -266,6 +293,13 @@ export interface JobDispatcher {
     payload: Record<string, unknown>,
     idempotencyKey: string
   ): Promise<{ id: string }>;
+  schedule?(
+    name: "github.import" | "knowledge.health",
+    payload: Record<string, unknown>,
+    schedulerId: string,
+    everyMs: number
+  ): Promise<{ id: string }>;
+  unschedule?(schedulerId: string): Promise<boolean>;
   close?(): Promise<void>;
 }
 

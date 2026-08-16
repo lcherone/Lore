@@ -14,6 +14,7 @@ const configSchema = z.object({
   mode: z.enum(["local", "service", "demo"]).default("local"),
   defaultAgent: z.enum(["codex", "claude", "cursor"]).default("codex"),
   apiUrl: z.string().url().default("http://127.0.0.1:3001"),
+  apiTokenFile: z.string().min(1).optional(),
   tests: z.record(z.string(), z.string()).default({})
 });
 

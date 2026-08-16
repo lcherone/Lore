@@ -44,6 +44,7 @@ export class KnowledgeExtractionService {
       applicationInstructions:
         "Propose narrowly scoped candidates. Distinguish facts, decisions, rules, preferences, inferences, regressions, and warnings. Cite only supplied evidence IDs.",
       untrustedSourceContent,
+      schema: knowledgeExtractionResultSchema,
       promptVersion: "knowledge-extractor/v1",
       parse: (value) => knowledgeExtractionResultSchema.parse(value)
     });

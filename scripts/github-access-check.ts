@@ -57,36 +57,45 @@ async function expectReadable(path: string, token: string, label: string): Promi
   return response.json();
 }
 
-const target = process.argv[2] ?? process.env.LORE_TEST_REPOSITORY;
-if (!target) throw new Error("Pass OWNER/REPOSITORY, for example: npm run github:check -- D3R/soho-home");
-if ((process.env.GITHUB_AUTH_MODE ?? "token") !== "token") {
-  throw new Error("This preflight checks fine-grained PAT access; set GITHUB_AUTH_MODE=token");
+async function main(): Promise<void> {
+  const target = process.argv[2] ?? process.env.LORE_TEST_REPOSITORY;
+  if (!target) throw new Error("Pass OWNER/REPOSITORY, for example: npm run github:check -- D3R/soho-home");
+  if ((process.env.GITHUB_AUTH_MODE?.trim() || "token") !== "token") {
+    throw new Error("This preflight checks fine-grained PAT access; set GITHUB_AUTH_MODE=token");
+  }
+
+  const repository = parseRepository(target);
+  const token = await tokenFromEnvironment();
+  const encodedOwner = encodeURIComponent(repository.owner);
+  const encodedName = encodeURIComponent(repository.name);
+  const base = `/repos/${encodedOwner}/${encodedName}`;
+  const metadata = await expectReadable(base, token, "Repository metadata") as {
+    full_name?: string;
+    private?: boolean;
+    archived?: boolean;
+    default_branch?: string;
+  };
+  const pulls = await expectReadable(`${base}/pulls?state=closed&per_page=1`, token, "Pull request history") as Array<{ number?: number }>;
+  const pullNumber = pulls[0]?.number;
+  if (pullNumber) {
+    await Promise.all([
+      expectReadable(`${base}/pulls/${pullNumber}/reviews?per_page=1`, token, "Submitted reviews"),
+      expectReadable(`${base}/pulls/${pullNumber}/comments?per_page=1`, token, "Inline review comments"),
+      expectReadable(`${base}/issues/${pullNumber}/comments?per_page=1`, token, "PR conversation comments"),
+      expectReadable(`${base}/pulls/${pullNumber}/commits?per_page=1`, token, "PR commits"),
+      expectReadable(`${base}/pulls/${pullNumber}/files?per_page=1`, token, "Changed files")
+    ]);
+  }
+
+  process.stdout.write(`✓ GitHub repository: ${metadata.full_name ?? `${repository.owner}/${repository.name}`}\n`);
+  process.stdout.write(`✓ Visibility: ${metadata.private ? "private" : "public"}; default branch: ${metadata.default_branch ?? "unknown"}\n`);
+  process.stdout.write(`✓ Pull requests, reviews, conversation comments, commits, and changed files are readable${pullNumber ? ` (checked PR #${pullNumber})` : " (no closed PR was available for child-resource checks)"}.\n`);
+  if (metadata.archived) process.stdout.write("! Repository is archived; Lore can import it but should treat the resulting knowledge as historical.\n");
 }
 
-const repository = parseRepository(target);
-const token = await tokenFromEnvironment();
-const encodedOwner = encodeURIComponent(repository.owner);
-const encodedName = encodeURIComponent(repository.name);
-const base = `/repos/${encodedOwner}/${encodedName}`;
-const metadata = await expectReadable(base, token, "Repository metadata") as {
-  full_name?: string;
-  private?: boolean;
-  archived?: boolean;
-  default_branch?: string;
-};
-const pulls = await expectReadable(`${base}/pulls?state=closed&per_page=1`, token, "Pull request history") as Array<{ number?: number }>;
-const pullNumber = pulls[0]?.number;
-if (pullNumber) {
-  await Promise.all([
-    expectReadable(`${base}/pulls/${pullNumber}/reviews?per_page=1`, token, "Submitted reviews"),
-    expectReadable(`${base}/pulls/${pullNumber}/comments?per_page=1`, token, "Inline review comments"),
-    expectReadable(`${base}/issues/${pullNumber}/comments?per_page=1`, token, "PR conversation comments"),
-    expectReadable(`${base}/pulls/${pullNumber}/commits?per_page=1`, token, "PR commits"),
-    expectReadable(`${base}/pulls/${pullNumber}/files?per_page=1`, token, "Changed files")
-  ]);
+try {
+  await main();
+} catch (error) {
+  process.stderr.write(`GitHub access check failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
 }
-
-process.stdout.write(`✓ GitHub repository: ${metadata.full_name ?? `${repository.owner}/${repository.name}`}\n`);
-process.stdout.write(`✓ Visibility: ${metadata.private ? "private" : "public"}; default branch: ${metadata.default_branch ?? "unknown"}\n`);
-process.stdout.write(`✓ Pull requests, reviews, conversation comments, commits, and changed files are readable${pullNumber ? ` (checked PR #${pullNumber})` : " (no closed PR was available for child-resource checks)"}.\n`);
-if (metadata.archived) process.stdout.write("! Repository is archived; Lore can import it but should treat the resulting knowledge as historical.\n");

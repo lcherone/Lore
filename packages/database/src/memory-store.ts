@@ -14,24 +14,29 @@ import type {
   KnowledgeItem,
   KnowledgeProposalRecord,
   AuthSessionSummary,
+  ApiTokenSummary,
   GitHubUserIdentity,
   OrganisationAccess,
   OrganisationInvitation,
   OrganisationMember,
   OrganisationRole,
+  OrganisationSettings,
   PolicyRecord,
   RepositoryRetentionConfig,
   RepositorySummary,
   RegressionRecord,
   SafetyReport,
   SessionEvent,
-  UserProfile
+  UserProfile,
+  UserSettings
 } from "@lore/shared/types.js";
+import { DEFAULT_ORGANISATION_SETTINGS, DEFAULT_USER_SETTINGS } from "@lore/shared/schemas.js";
 import {
   ConflictError,
   ForbiddenError,
   NotFoundError,
   type AuthSessionRecord,
+  type ApiTokenRecord,
   type LoreStore,
   type ManualKnowledgeInput,
   type RepositoryAnalysisOutput,
@@ -53,6 +58,9 @@ export class InMemoryLoreStore implements LoreStore {
   readonly #memberships = new Map<string, { organisationId: string; userId: string; role: OrganisationRole; createdAt: string }>();
   readonly #authSessions = new Map<string, AuthSessionRecord>();
   readonly #invitations = new Map<string, OrganisationInvitation & { invitedByUserId: string; acceptedAt?: string; revokedAt?: string }>();
+  readonly #userSettings = new Map<string, UserSettings>();
+  readonly #organisationSettings = new Map<string, OrganisationSettings>();
+  readonly #apiTokens = new Map<string, ApiTokenRecord>();
 
   public constructor(snapshot = createDemoSnapshot(), evidence = getDemoEvidence()) {
     this.#snapshots.set(snapshot.organisation.id, structuredClone(snapshot));
@@ -146,6 +154,17 @@ export class InMemoryLoreStore implements LoreStore {
     return structuredClone(updated);
   }
 
+  async getUserSettings(userId: string): Promise<UserSettings> {
+    await this.getUserProfile(userId);
+    return structuredClone(this.#userSettings.get(userId) ?? DEFAULT_USER_SETTINGS);
+  }
+
+  async updateUserSettings(userId: string, input: UserSettings): Promise<UserSettings> {
+    await this.getUserProfile(userId);
+    this.#userSettings.set(userId, structuredClone(input));
+    return structuredClone(input);
+  }
+
   async createAuthSession(input: {
     userId: string;
     tokenHash: string;
@@ -221,6 +240,69 @@ export class InMemoryLoreStore implements LoreStore {
           createdAt: membership.createdAt
         };
       });
+  }
+
+  async getOrganisationSettings(organisationId: string): Promise<OrganisationSettings> {
+    this.#assertOrganisation(organisationId);
+    return structuredClone(this.#organisationSettings.get(organisationId) ?? DEFAULT_ORGANISATION_SETTINGS);
+  }
+
+  async updateOrganisationSettings(
+    organisationId: string,
+    input: OrganisationSettings,
+    actorUserId: string
+  ): Promise<OrganisationSettings> {
+    const role = await this.getMembershipRole(organisationId, actorUserId);
+    if (role !== "owner" && role !== "admin") throw new ForbiddenError("Owner or admin access is required");
+    this.#organisationSettings.set(organisationId, structuredClone(input));
+    return structuredClone(input);
+  }
+
+  async createApiToken(input: {
+    organisationId: string;
+    userId: string;
+    name: string;
+    prefix: string;
+    tokenHash: string;
+    scopes: Array<"read" | "write">;
+    expiresAt?: string;
+  }): Promise<ApiTokenSummary> {
+    await this.validateMembership(input.organisationId, input.userId);
+    const record: ApiTokenRecord = {
+      id: newUuid(),
+      organisationId: input.organisationId,
+      userId: input.userId,
+      name: input.name,
+      prefix: input.prefix,
+      tokenHash: input.tokenHash,
+      scopes: [...input.scopes],
+      ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+      createdAt: new Date().toISOString()
+    };
+    this.#apiTokens.set(input.tokenHash, record);
+    return this.#apiTokenSummary(record);
+  }
+
+  async getApiToken(tokenHash: string): Promise<ApiTokenRecord | undefined> {
+    const token = this.#apiTokens.get(tokenHash);
+    if (!token || token.revokedAt || (token.expiresAt && Date.parse(token.expiresAt) <= Date.now())) return undefined;
+    token.lastUsedAt = new Date().toISOString();
+    return structuredClone(token);
+  }
+
+  async listApiTokens(userId: string, organisationId: string): Promise<ApiTokenSummary[]> {
+    await this.validateMembership(organisationId, userId);
+    return [...this.#apiTokens.values()]
+      .filter((token) => token.userId === userId && token.organisationId === organisationId && !token.revokedAt)
+      .map((token) => this.#apiTokenSummary(token));
+  }
+
+  async revokeApiToken(tokenId: string, userId: string, organisationId: string): Promise<void> {
+    const token = [...this.#apiTokens.values()].find(
+      (candidate) => candidate.id === tokenId && candidate.userId === userId && candidate.organisationId === organisationId
+    );
+    if (!token) throw new NotFoundError("API token", tokenId);
+    token.revokedAt = new Date().toISOString();
   }
 
   async createOrganisation(userId: string, input: { name: string; slug: string }): Promise<OrganisationAccess> {
@@ -840,6 +922,19 @@ export class InMemoryLoreStore implements LoreStore {
   public createId(prefix: string): string {
     void prefix;
     return newUuid();
+  }
+
+  #apiTokenSummary(token: ApiTokenRecord): ApiTokenSummary {
+    return {
+      id: token.id,
+      organisationId: token.organisationId,
+      name: token.name,
+      prefix: token.prefix,
+      scopes: [...token.scopes],
+      ...(token.expiresAt ? { expiresAt: token.expiresAt } : {}),
+      ...(token.lastUsedAt ? { lastUsedAt: token.lastUsedAt } : {}),
+      createdAt: token.createdAt
+    };
   }
 
   #appendSessionEvent(sessionId: string, type: SessionEvent["type"], data: Record<string, unknown>): void {

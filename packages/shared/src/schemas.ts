@@ -1,5 +1,53 @@
 import { z } from "zod";
 
+export const pullRequestImportLimitSchema = z.union([
+  z.literal(50),
+  z.literal(100),
+  z.literal(250),
+  z.literal(500),
+  z.literal(1000),
+  z.literal("all")
+]);
+
+export const repositoryRetentionConfigSchema = z.object({
+  retainRawPullRequestDiff: z.boolean().default(false),
+  retainSummariesOnly: z.boolean().default(false),
+  retainReviewComments: z.boolean().default(true),
+  retainCodeSnippets: z.boolean().default(false)
+}).strict().superRefine((value, context) => {
+  if (value.retainSummariesOnly && (value.retainRawPullRequestDiff || value.retainCodeSnippets)) {
+    context.addIssue({ code: "custom", message: "Summary-only retention cannot also retain raw diffs or code snippets" });
+  }
+});
+
+export const userSettingsSchema = z.object({
+  theme: z.enum(["system", "light", "dark"]).default("system"),
+  startPage: z.enum(["dashboard", "repositories", "knowledge", "evidence", "candidates", "sessions"]).default("dashboard"),
+  defaultImportLimit: pullRequestImportLimitSchema.default(50),
+  showGettingStarted: z.boolean().default(true),
+  notifyImportCompleted: z.boolean().default(true),
+  notifyCandidateReview: z.boolean().default(true)
+}).strict();
+
+export const organisationSettingsSchema = z.object({
+  autoImportGitHub: z.boolean().default(true),
+  githubImportLimit: pullRequestImportLimitSchema.default("all"),
+  githubSyncIntervalMinutes: z.number().int().min(15).max(1440).default(60),
+  autoExtractKnowledge: z.boolean().default(true),
+  communicationEvidenceEnabled: z.boolean().default(true),
+  memberCanConnectRepositories: z.boolean().default(true),
+  mcpAccessEnabled: z.boolean().default(true),
+  repositoryRetention: repositoryRetentionConfigSchema.default({
+    retainRawPullRequestDiff: false,
+    retainSummariesOnly: false,
+    retainReviewComments: true,
+    retainCodeSnippets: false
+  })
+}).strict();
+
+export const DEFAULT_USER_SETTINGS = userSettingsSchema.parse({});
+export const DEFAULT_ORGANISATION_SETTINGS = organisationSettingsSchema.parse({});
+
 export const knowledgeScopeSchema = z
   .object({
     organisation: z.string().min(1).optional(),

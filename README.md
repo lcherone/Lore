@@ -232,16 +232,17 @@ For the first real import, use a fine-grained PAT restricted to selected reposit
 ```dotenv
 DEMO_MODE=false
 GITHUB_AUTH_MODE=token
-GITHUB_TOKEN_PATH=/absolute/path/to/github-token
+GITHUB_TOKEN_FILE=/absolute/host/path/to/github-token
+LORE_TEST_REPOSITORY=D3R/soho-home
 ```
 
-The worker—and only the worker—reads the credential. The browser, database, `.lore` state, and BullMQ payload never receive it. Start with 100 merged PRs, validate retention and access, then choose **All merged PRs** deliberately.
+Prove the exact permissions before starting:
 
 ```bash
-curl -X POST http://127.0.0.1:3001/api/repositories/REPOSITORY_UUID/github-import \
-  -H 'content-type: application/json' \
-  -d '{"limit":100}'
+npm run github:check -- D3R/soho-home
 ```
+
+The worker—and only the worker—reads the credential. The browser, database, `.lore` state, and BullMQ payload never receive it. Sign in, connect the repository in the UI, start with 50 or 100 merged PRs, validate retention and access, then choose **All merged PRs** deliberately.
 
 The importer paginates merged PRs, submitted review bodies, inline comments, conversation comments, commits, changed files, and available bounded patches. Use a GitHub App for installation-scoped credentials and signed live webhooks.
 
@@ -292,30 +293,30 @@ See the [MCP guide](docs/mcp.md) for workflow and configuration details.
 
 ### Full local Docker stack
 
-Prerequisite: Docker Engine with Compose v2.24+.
+Prerequisite: Docker Engine with Compose v2.24+. This is the recommended end-to-end product evaluation: real GitHub login, PostgreSQL, Redis, migrations, worker jobs, and production-built web assets.
 
 ```bash
-cp .env.example .env
-# Replace SESSION_SECRET with output from: openssl rand -base64 48
-npm run setup:check -- --docker
-docker compose up --build
+npm run local:setup
+# Add the GitHub OAuth App and selected-repository PAT values shown by the command.
+npm run local:up
 ```
 
-Compose starts PostgreSQL, Redis, migrations, seed data, API, worker, and the production-built web app. Open [http://localhost:5173](http://localhost:5173).
+Normal starts do not seed demo data and never enable `LOCAL_DEV_AUTH`. All published services bind to loopback. Open [http://localhost:5173](http://localhost:5173).
 
 ```bash
-docker compose ps
-curl http://127.0.0.1:3001/healthz
-curl http://127.0.0.1:3001/readyz
+npm run local:check
+npm run local:logs
+npm run local:down
 ```
+
+For an exact `D3R/soho-home` walkthrough, including OAuth App fields, fine-grained PAT permissions, access proof, `master` branch selection, retention, and the first bounded PR import, follow [Run Lore locally like production](docs/local-production.md).
 
 ### Native persistent stack
 
-Run PostgreSQL and Redis, then set `DEMO_MODE=false`, the two connection URLs, `LOCAL_DEV_AUTH=true`, and the seeded IDs described in [onboarding](docs/onboarding.md).
+Run PostgreSQL and Redis, then set `DEMO_MODE=false`, the two connection URLs, and GitHub OAuth credentials. `LOCAL_DEV_AUTH=true` is an explicit loopback-only API-development bypass, not the normal product login.
 
 ```bash
 npm run db:migrate
-npm run seed
 npm run setup:check
 npm run dev
 ```
@@ -328,7 +329,7 @@ Copy [`.env.example`](.env.example) and change only the mode you need. `npm run 
 
 | Group | Variables | Notes |
 | --- | --- | --- |
-| Runtime | `NODE_ENV`, `DEMO_MODE`, `API_PORT`, `API_HOST`, `APP_URL`, `WEB_ORIGIN`, `LOG_LEVEL` | Keep `APP_URL` loopback while using bundled local auth. |
+| Runtime | `NODE_ENV`, `DEMO_MODE`, `API_PORT`, `API_HOST`, `APP_URL`, `WEB_ORIGIN`, `TRUST_PROXY`, `LOG_LEVEL` | The local-production wrapper fixes the public origin to `http://localhost:5173` and enables proxy trust only inside the loopback stack. |
 | Storage/jobs | `DATABASE_URL`, `REDIS_URL`, `WORKER_CONCURRENCY` | Required only for persistent mode; lower concurrency for an initial very large import. |
 | GitHub login | `SESSION_SECRET`, `AUTH_SESSION_TTL_HOURS`, `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_OAUTH_CALLBACK_URL` | Personal identity and profiles; see [account setup](docs/authentication-and-organisations.md). |
 | Local identity bypass | `LOCAL_DEV_AUTH`, `LOCAL_ORGANISATION_ID`, `LOCAL_USER_ID`, `LOCAL_USER_NAME` | Loopback development only; never enable in shared environments. |

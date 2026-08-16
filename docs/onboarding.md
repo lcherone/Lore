@@ -23,15 +23,17 @@ npm run demo
 
 The demo wrapper installs dependencies when they are missing, forces the safe in-memory mode, and prints the URL. Use `npm run demo:check` for a temporary automated API/web readiness proof.
 
-Use Docker mode to exercise PostgreSQL, migrations, seed data, Redis, queued jobs, API, worker, and the production-built web assets.
+Use local-production Docker mode to exercise real GitHub login, PostgreSQL, migrations, Redis, queued jobs, API, worker, and the production-built web assets. It does not seed demo data or enable the local identity bypass.
 
 ```bash
-cp .env.example .env
-npm run setup:check -- --docker
-docker compose up --build
+npm run local:setup
+# Add the OAuth App and repository PAT values printed by the command.
+npm run local:up
 ```
 
-Use a native persistent mode when you already run PostgreSQL and Redis locally. Set `DEMO_MODE=false`, configure the two URLs, run migrations and seed, then start `npm run dev` and `npm run worker` in separate terminals.
+Follow [Run Lore locally like production](local-production.md) for the complete `D3R/soho-home` evaluation.
+
+Use native persistent mode when you already run PostgreSQL and Redis locally. Set `DEMO_MODE=false`, configure the two URLs and GitHub OAuth login, run migrations, then start `npm run dev` and `npm run worker` in separate terminals. Seed only when you explicitly want demo fixtures.
 
 The CLI has its own explicit authority mode:
 
@@ -113,13 +115,7 @@ Choose one authentication mode before connecting a provider repository:
 
 The secret stays in the worker environment. Token mode does not ask for an installation ID. App mode records the installation ID on the repository, so jobs and webhook routing cannot switch installations per request. Follow the complete [GitHub integration guide](github.md), including organisation approval and SSO notes.
 
-Start with 100 merged PRs. Expand to 250–1,000 after checking retention and evidence quality, or use `"all"` deliberately for the entire available merged history.
-
-```bash
-curl -X POST http://127.0.0.1:3001/api/repositories/REPOSITORY_ID/github-import \
-  -H 'content-type: application/json' \
-  -d '{"limit":100}'
-```
+Start with 50 or 100 merged PRs in **Repositories → Import history**. Expand to 250–1,000 after checking retention and evidence quality, or use **All merged PRs** deliberately for the entire available merged history. Production-mode writes require the signed-in browser session and CSRF token; the UI handles both.
 
 For a mature repository, `{"limit":"all"}` paginates every merged PR plus its submitted reviews, inline and conversation comments, commits, and files. It can take a long time and consume substantial GitHub API quota, so bounded batches are the safer first run.
 

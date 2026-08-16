@@ -19,8 +19,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
       - "127.0.0.1:6379:6379"
+    volumes:
+      - lore-redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -68,11 +71,11 @@ services:
       DATABASE_URL: postgresql://lore:lore@postgres:5432/lore?schema=public
       REDIS_URL: redis://redis:6379
       DEMO_MODE: "false"
+      LORE_DEPLOYMENT_MODE: local
       API_HOST: 0.0.0.0
       APP_URL: http://localhost:5173
       WEB_ORIGIN: http://localhost:5173
       TRUST_PROXY: "true"
-      LOCAL_DEV_AUTH: "false"
     ports:
       - "127.0.0.1:3001:3001"
     restart: unless-stopped
@@ -103,6 +106,7 @@ services:
       DATABASE_URL: postgresql://lore:lore@postgres:5432/lore?schema=public
       REDIS_URL: redis://redis:6379
       DEMO_MODE: "false"
+      LORE_DEPLOYMENT_MODE: local
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
@@ -127,3 +131,4 @@ services:
 
 volumes:
   lore-postgres:
+  lore-redis:

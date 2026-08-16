@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
-import type { AuthSessionRecord, LoreStore, ManualKnowledgeInput, RepositoryAnalysisOutput, UserProfileUpdate } from "@lore/core/index.js";
+import type { ApiTokenRecord, AuthSessionRecord, LoreStore, ManualKnowledgeInput, RepositoryAnalysisOutput, UserProfileUpdate } from "@lore/core/index.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "@lore/core/index.js";
 import { createChangeObservation } from "./change-observation.js";
 import type {
   AgentSession,
+  ApiTokenSummary,
   CandidateRecord,
   ChangeObservation,
   CodeEntity,
@@ -21,6 +22,7 @@ import type {
   OrganisationInvitation,
   OrganisationMember,
   OrganisationRole,
+  OrganisationSettings,
   KnowledgeScope,
   PolicyDetector,
   PolicyRecord,
@@ -30,8 +32,15 @@ import type {
   ReviewerProfile,
   SafetyReport,
   SessionEvent,
-  UserProfile
+  UserProfile,
+  UserSettings
 } from "@lore/shared/types.js";
+import {
+  DEFAULT_ORGANISATION_SETTINGS,
+  DEFAULT_USER_SETTINGS,
+  organisationSettingsSchema,
+  userSettingsSchema
+} from "@lore/shared/schemas.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -68,6 +77,7 @@ interface UserRow {
   lastLoginAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  preferences?: unknown;
 }
 
 interface AuthSessionRow {
@@ -200,6 +210,21 @@ export class PrismaLoreStore implements LoreStore {
     return this.#mapUser(user);
   }
 
+  async getUserSettings(userId: string): Promise<UserSettings> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { preferences: true } });
+    if (!user) throw new NotFoundError("User", userId);
+    return userSettingsSchema.parse({ ...DEFAULT_USER_SETTINGS, ...asRecord(user.preferences) });
+  }
+
+  async updateUserSettings(userId: string, input: UserSettings): Promise<UserSettings> {
+    const settings = userSettingsSchema.parse(input);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { preferences: settings as unknown as Prisma.InputJsonValue }
+    });
+    return settings;
+  }
+
   async createAuthSession(input: {
     userId: string;
     tokenHash: string;
@@ -272,6 +297,99 @@ export class PrismaLoreStore implements LoreStore {
       memberCount: membership.organisation._count.memberships,
       createdAt: membership.organisation.createdAt.toISOString()
     }));
+  }
+
+  async getOrganisationSettings(organisationId: string): Promise<OrganisationSettings> {
+    const organisation = await this.prisma.organisation.findUnique({ where: { id: organisationId }, select: { settings: true } });
+    if (!organisation) throw new ForbiddenError();
+    const configured = asRecord(organisation.settings);
+    return organisationSettingsSchema.parse({
+      ...DEFAULT_ORGANISATION_SETTINGS,
+      ...configured,
+      repositoryRetention: {
+        ...DEFAULT_ORGANISATION_SETTINGS.repositoryRetention,
+        ...asRecord(configured.repositoryRetention)
+      }
+    });
+  }
+
+  async updateOrganisationSettings(
+    organisationId: string,
+    input: OrganisationSettings,
+    actorUserId: string
+  ): Promise<OrganisationSettings> {
+    const role = await this.getMembershipRole(organisationId, actorUserId);
+    if (role !== "owner" && role !== "admin") throw new ForbiddenError("Owner or admin access is required");
+    const settings = organisationSettingsSchema.parse(input);
+    await this.prisma.$transaction([
+      this.prisma.organisation.update({
+        where: { id: organisationId },
+        data: { settings: settings as unknown as Prisma.InputJsonValue }
+      }),
+      this.prisma.auditEvent.create({
+        data: {
+          organisationId,
+          userId: actorUserId,
+          action: "organisation.settings.updated",
+          targetType: "Organisation",
+          targetId: organisationId,
+          after: settings as unknown as Prisma.InputJsonValue
+        }
+      })
+    ]);
+    return settings;
+  }
+
+  async createApiToken(input: {
+    organisationId: string;
+    userId: string;
+    name: string;
+    prefix: string;
+    tokenHash: string;
+    scopes: Array<"read" | "write">;
+    expiresAt?: string;
+  }): Promise<ApiTokenSummary> {
+    await this.validateMembership(input.organisationId, input.userId);
+    const token = await this.prisma.apiToken.create({
+      data: {
+        organisationId: input.organisationId,
+        userId: input.userId,
+        name: input.name,
+        prefix: input.prefix,
+        tokenHash: input.tokenHash,
+        scopes: input.scopes,
+        ...(input.expiresAt ? { expiresAt: new Date(input.expiresAt) } : {})
+      }
+    });
+    return this.#mapApiToken(token);
+  }
+
+  async getApiToken(tokenHash: string): Promise<ApiTokenRecord | undefined> {
+    const token = await this.prisma.apiToken.findUnique({ where: { tokenHash } });
+    if (!token || token.revokedAt || (token.expiresAt && token.expiresAt <= new Date())) return undefined;
+    await this.prisma.apiToken.update({ where: { id: token.id }, data: { lastUsedAt: new Date() } });
+    return {
+      ...this.#mapApiToken({ ...token, lastUsedAt: new Date() }),
+      userId: token.userId,
+      tokenHash: token.tokenHash
+    };
+  }
+
+  async listApiTokens(userId: string, organisationId: string): Promise<ApiTokenSummary[]> {
+    await this.validateMembership(organisationId, userId);
+    const tokens = await this.prisma.apiToken.findMany({
+      where: { userId, organisationId, revokedAt: null },
+      orderBy: { createdAt: "desc" }
+    });
+    return tokens.map((token) => this.#mapApiToken(token));
+  }
+
+  async revokeApiToken(tokenId: string, userId: string, organisationId: string): Promise<void> {
+    const result = await this.prisma.apiToken.updateMany({
+      where: { id: tokenId, userId, organisationId, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+    if (result.count === 0) throw new NotFoundError("API token", tokenId);
   }
 
   async createOrganisation(userId: string, input: { name: string; slug: string }): Promise<OrganisationAccess> {
@@ -1532,6 +1650,28 @@ export class PrismaLoreStore implements LoreStore {
   async #assertOrganisation(organisationId: string): Promise<void> {
     const count = await this.prisma.organisation.count({ where: { id: organisationId } });
     if (count === 0) throw new ForbiddenError();
+  }
+
+  #mapApiToken(row: {
+    id: string;
+    organisationId: string;
+    name: string;
+    prefix: string;
+    scopes: string[];
+    expiresAt: Date | null;
+    lastUsedAt: Date | null;
+    createdAt: Date;
+  }): ApiTokenSummary {
+    return {
+      id: row.id,
+      organisationId: row.organisationId,
+      name: row.name,
+      prefix: row.prefix,
+      scopes: row.scopes.filter((scope): scope is "read" | "write" => scope === "read" || scope === "write"),
+      ...(row.expiresAt ? { expiresAt: row.expiresAt.toISOString() } : {}),
+      ...(row.lastUsedAt ? { lastUsedAt: row.lastUsedAt.toISOString() } : {}),
+      createdAt: row.createdAt.toISOString()
+    };
   }
 
   #mapUser(row: UserRow): UserProfile {

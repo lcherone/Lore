@@ -23,6 +23,9 @@ export class GitHubImportService {
     repository: RepositorySummary,
     limit: PullRequestImportLimit
   ): Promise<{ pullRequests: number; evidenceAdded: number; evidenceIds: string[] }> {
+    const existingEvidenceIds = new Set(
+      (await this.store.getEvidence(organisationId)).map((record) => record.id)
+    );
     const pullRequests = await this.provider.listMergedPullRequests(repository, limit);
     const retention = repository.retentionConfig ?? {
       retainRawPullRequestDiff: false,
@@ -79,10 +82,13 @@ export class GitHubImportService {
         });
       }
     }
+    const newEvidenceIds = evidence
+      .filter((record) => !existingEvidenceIds.has(record.id))
+      .map((record) => record.id);
     return {
       pullRequests: pullRequests.length,
       evidenceAdded: await this.store.ingestEvidence(evidence),
-      evidenceIds: evidence.map((record) => record.id)
+      evidenceIds: newEvidenceIds
     };
   }
 }

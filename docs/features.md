@@ -147,13 +147,7 @@ lore index
 
 **How it works.** The worker authenticates with either a fine-grained PAT or GitHub App installation. It paginates merged PRs plus submitted review bodies, inline review comments, PR conversation comments, commits, changed paths, and available bounded patches. Stable provider IDs make ingestion idempotent.
 
-**Use it.** Follow the [GitHub guide](github.md) for the PAT/App permissions and secret-file setup. Start with a bounded import:
-
-```bash
-curl -X POST http://127.0.0.1:3001/api/repositories/REPOSITORY_UUID/github-import \
-  -H 'content-type: application/json' \
-  -d '{"limit":100}'
-```
+**Use it.** Follow the [GitHub guide](github.md) for the PAT/App permissions and secret-file setup. In **Repositories**, connect the GitHub URL, configure retention, choose **Import history**, and start with 50 or 100. The signed-in web application supplies the production session and CSRF protection.
 
 After validating access and retention, import the entire available merged history with `{"limit":"all"}`. “All” is intentionally not the first-run default because mature repositories can require thousands of API calls and significant memory.
 

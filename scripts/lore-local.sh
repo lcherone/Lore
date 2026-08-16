@@ -6,6 +6,8 @@ repo_root=$(cd "$script_dir/.." && pwd)
 command_name=${1:-up}
 app_url=${LORE_LOCAL_URL:-http://localhost:5173}
 api_url=${LORE_LOCAL_API_URL:-http://127.0.0.1:3001}
+lore_docker_config_ready=false
+lore_temporary_docker_config=""
 
 die() {
   printf 'Lore local production: %s\n' "$*" >&2
@@ -26,7 +28,7 @@ Usage:
 
 The stack is bound only to localhost. It runs production-built web assets,
 PostgreSQL, Redis, migrations, the API, and the background worker. GitHub user
-login and repository access use separate credentials in .env.
+identity, repository discovery, and PR evidence all use one GITHUB_TOKEN.
 EOF
 }
 
@@ -50,17 +52,41 @@ env_value() {
   ' "$key")
 }
 
+prepare_docker_cli() {
+  [[ "$lore_docker_config_ready" == true ]] && return
+  lore_docker_config_ready=true
+  local source_config credential_store helper docker_host
+  source_config="${DOCKER_CONFIG:-${HOME}/.docker}/config.json"
+  credential_store=$(node --input-type=module -e '
+    import { readFileSync } from "node:fs";
+    try { process.stdout.write(JSON.parse(readFileSync(process.argv[1], "utf8")).credsStore ?? ""); } catch {}
+  ' "$source_config")
+  [[ -z "$credential_store" ]] && return
+  helper="docker-credential-${credential_store}"
+  command -v "$helper" >/dev/null 2>&1 && return
+
+  docker_host=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)
+  [[ -n "$docker_host" ]] || die "Docker credential helper '$helper' is missing and the active context could not be resolved."
+  lore_temporary_docker_config=$(mktemp -d "${TMPDIR:-/tmp}/lore-docker-config.XXXXXX")
+  chmod 700 "$lore_temporary_docker_config"
+  node --input-type=module -e '
+    import { existsSync, writeFileSync } from "node:fs";
+    const target = process.argv[1];
+    const candidates = process.argv.slice(2).filter(existsSync);
+    writeFileSync(target, JSON.stringify({ auths: {}, cliPluginsExtraDirs: candidates }, null, 2), { mode: 0o600 });
+  ' "$lore_temporary_docker_config/config.json" \
+    "${HOME}/.docker/cli-plugins" \
+    /opt/homebrew/lib/docker/cli-plugins \
+    /usr/local/lib/docker/cli-plugins
+  export DOCKER_CONFIG="$lore_temporary_docker_config"
+  export DOCKER_HOST="$docker_host"
+  trap '[[ -n "$lore_temporary_docker_config" ]] && rm -rf "$lore_temporary_docker_config"' EXIT
+  printf "Using an isolated Docker client config because credential helper '%s' is unavailable.\n" "$helper"
+}
+
 compose() {
-  local mode
-  local -a files
-  mode=$(env_value GITHUB_AUTH_MODE)
-  files=(-f docker-compose.yml)
-  if [[ "$mode" == "token" && -n "$(env_value GITHUB_TOKEN_FILE)" ]]; then
-    files+=(-f docker-compose.github-token.yml)
-  elif [[ "$mode" == "app" && -n "$(env_value GITHUB_PRIVATE_KEY_FILE)" ]]; then
-    files+=(-f docker-compose.github.yml)
-  fi
-  (cd "$repo_root" && docker compose "${files[@]}" "$@")
+  prepare_docker_cli
+  (cd "$repo_root" && docker compose -f docker-compose.yml "$@")
 }
 
 setup_environment() {
@@ -85,29 +111,26 @@ setup_environment() {
       };
       set("NODE_ENV", "production");
       set("DEMO_MODE", "false");
-      set("LOCAL_DEV_AUTH", "false");
+      set("LORE_DEPLOYMENT_MODE", "local");
       const sessionSecret = read("SESSION_SECRET");
       const generated = sessionSecret.length < 32 || sessionSecret.startsWith("replace-with");
       if (generated) set("SESSION_SECRET", randomBytes(48).toString("base64url"));
-      if (!read("GITHUB_OAUTH_CALLBACK_URL")) {
-        set("GITHUB_OAUTH_CALLBACK_URL", "http://localhost:5173/api/auth/github/callback");
+      if (read("OPENAI_API_KEY") && (!read("AI_PROVIDER") || read("AI_PROVIDER") === "mock")) {
+        set("AI_PROVIDER", "openai");
       }
+      if (read("AI_PROVIDER") === "openai" && (!read("OPENAI_MODEL") || read("OPENAI_MODEL") === "gpt-4")) set("OPENAI_MODEL", "gpt-4.1-mini");
       writeFileSync(path, value, { mode: 0o600 });
       process.stdout.write(generated ? "Generated a secure SESSION_SECRET.\n" : "Preserved the configured SESSION_SECRET.\n");
     ')
   chmod 600 "$repo_root/.env"
   cat <<'EOF'
 
-Before starting, add both credential groups to .env:
+Before starting, add one GitHub credential to .env:
 
-1. GitHub OAuth App for human login
-   GITHUB_OAUTH_CLIENT_ID=...
-   GITHUB_OAUTH_CLIENT_SECRET=...
-   GITHUB_OAUTH_CALLBACK_URL=http://localhost:5173/api/auth/github/callback
+   GITHUB_TOKEN=github_pat_...
 
-2. Fine-grained PAT for repository history
-   GITHUB_AUTH_MODE=token
-   GITHUB_TOKEN_FILE=/absolute/host/path/to/github-token
+Optional live setup target:
+
    LORE_TEST_REPOSITORY=D3R/soho-home
 
 Then run: npm run local:up
@@ -119,14 +142,17 @@ preflight() {
   require_command curl
   ensure_dependencies
   [[ -f "$repo_root/.env" ]] || die "run npm run local:setup first."
-  (cd "$repo_root" && env NODE_ENV=production DEMO_MODE=false LOCAL_DEV_AUTH=false npm run setup:check -- --docker --github-login --github-repository)
+  (cd "$repo_root" && env NODE_ENV=production DEMO_MODE=false LORE_DEPLOYMENT_MODE=local npm run setup:check -- --docker --github-repository --ai)
+  prepare_docker_cli
   docker info >/dev/null 2>&1 || die "the Docker daemon is not running. Start Docker Desktop or Colima, then retry."
 
-  local mode target
-  mode=$(env_value GITHUB_AUTH_MODE)
+  local target
   target=$(env_value LORE_TEST_REPOSITORY)
-  if [[ "$mode" == "token" && -n "$target" && "$(env_value LORE_GITHUB_PREFLIGHT)" != "false" ]]; then
+  if [[ -n "$target" && "$(env_value LORE_GITHUB_PREFLIGHT)" != "false" ]]; then
     (cd "$repo_root" && npm run github:check -- "$target")
+  fi
+  if [[ "$(env_value LORE_AI_PREFLIGHT)" != "false" ]]; then
+    (cd "$repo_root" && npm run ai:check)
   fi
   compose config --quiet
 }
@@ -172,10 +198,10 @@ start_stack() {
 Lore is live locally: $app_url
 
 Next:
-  1. Continue with GitHub.
-  2. Create or select your organisation.
-  3. Open Repositories and paste https://github.com/D3R/soho-home.
-  4. Set retention, import 50 PRs first, review results, then expand deliberately.
+  1. Open Lore; your GitHub profile and private local workspace are created automatically.
+  2. Open Repositories and select D3R/soho-home from the token-backed picker.
+  3. Lore imports all merged PR evidence immediately and keeps it synchronised.
+  4. Review AI-generated candidates before promoting them to active knowledge.
 
 Logs: npm run local:logs
 Stop: npm run local:down

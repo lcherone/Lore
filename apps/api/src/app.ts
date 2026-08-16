@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import cookie from "@fastify/cookie";
@@ -11,7 +11,7 @@ import rawBody from "fastify-raw-body";
 import { z, ZodError } from "zod";
 import type { AIProvider, JobDispatcher, LoreStore } from "@lore/core/index.js";
 import { LoreError, NotFoundError } from "@lore/core/index.js";
-import { createBundledMockAIProvider } from "@lore/ai/index.js";
+import { createBundledMockAIProvider, createConfiguredAIProvider } from "@lore/ai/index.js";
 import { BullMqJobDispatcher, createLoreStore, InMemoryJobDispatcher } from "@lore/database/index.js";
 import { TaskPreparationService } from "@lore/context/index.js";
 import { KnowledgeCandidateExtractionService, KnowledgeService } from "@lore/knowledge/index.js";
@@ -21,7 +21,10 @@ import {
   approveCandidateSchema,
   communicationEvidenceSchema,
   createSessionSchema,
+  organisationSettingsSchema,
   prepareTaskSchema,
+  repositoryRetentionConfigSchema,
+  userSettingsSchema,
   verifyChangeSchema
 } from "@lore/shared/schemas.js";
 import type {
@@ -30,13 +33,18 @@ import type {
   CommunicationEvidenceAnalysis,
   EvidenceComparisonDisposition,
   EvidenceRecord,
+  DeploymentConfiguration,
+  OrganisationSettings,
   PolicyDetector,
-  PolicyRecord
+  PolicyRecord,
+  PullRequestImportLimit,
+  RepositorySummary
 } from "@lore/shared/types.js";
 import { deterministicUuid, newUuid } from "@lore/shared/ids.js";
 import { policyPatternError } from "@lore/shared/policy-patterns.js";
 import {
   githubIntegrationStatus,
+  GitHubTokenAccountClient,
   resolveGitHubAuthMode,
   verifyGitHubWebhook,
   webhookEvidence
@@ -57,6 +65,7 @@ import {
   tenantContext,
   verifyOAuthState,
   verifyOAuthTransaction,
+  type AuthContext,
   type GitHubIdentityProvider
 } from "./auth.js";
 import { ApiMetrics } from "./metrics.js";
@@ -74,19 +83,39 @@ export interface CreateAppOptions {
   logger?: boolean;
 }
 
-const repositoryRetentionSchema = z.object({
-  retainRawPullRequestDiff: z.boolean().default(false),
-  retainSummariesOnly: z.boolean().default(false),
-  retainReviewComments: z.boolean().default(true),
-  retainCodeSnippets: z.boolean().default(false)
-}).strict().superRefine((value, context) => {
-  if (value.retainSummariesOnly && (value.retainRawPullRequestDiff || value.retainCodeSnippets)) {
-    context.addIssue({
-      code: "custom",
-      message: "Summary-only retention cannot also retain raw diffs or code snippets"
-    });
-  }
-});
+function deploymentConfiguration(demoMode: boolean): DeploymentConfiguration {
+  const appUrl = process.env.APP_URL ?? "http://localhost:5173";
+  const hostname = new URL(appUrl).hostname;
+  const github = githubIntegrationStatus(process.env, demoMode);
+  const configuredAI = (process.env.AI_PROVIDER?.trim().toLowerCase() || (process.env.OPENAI_API_KEY?.trim() ? "openai" : "mock")) === "openai";
+  return {
+    deploymentMode: process.env.LORE_DEPLOYMENT_MODE === "saas" ? "saas" : "local",
+    productMode: demoMode ? "demo" : "full",
+    appUrl,
+    loopbackOnly: new Set(["localhost", "127.0.0.1", "::1"]).has(hostname),
+    persistence: demoMode ? "memory" : "postgresql",
+    jobs: demoMode ? "memory" : "redis",
+    login: {
+      provider: "github",
+      configured: process.env.LORE_DEPLOYMENT_MODE === "saas"
+        ? Boolean(process.env.GITHUB_OAUTH_CLIENT_ID?.trim() && process.env.GITHUB_OAUTH_CLIENT_SECRET?.trim())
+        : Boolean(process.env.GITHUB_TOKEN?.trim())
+    },
+    github: {
+      mode: github.mode,
+      historicalImportReady: github.historicalImportReady,
+      webhooksReady: github.webhooksReady
+    },
+    ai: {
+      provider: configuredAI ? "openai" : "mock",
+      configured: configuredAI ? Boolean(process.env.OPENAI_API_KEY?.trim()) : demoMode,
+      ...(configuredAI ? { model: process.env.OPENAI_MODEL?.trim() || "gpt-4.1-mini" } : {})
+    },
+    mcp: { transport: "stdio", serviceBacked: !demoMode }
+  };
+}
+
+const repositoryRetentionSchema = repositoryRetentionConfigSchema;
 
 const repositoryInputSchema = z.object({
   provider: z.enum(["github", "gitlab", "bitbucket", "local"]).default("github"),
@@ -234,21 +263,65 @@ function markdownKnowledgeItems(
 
 export async function createApp(options: CreateAppOptions = {}): Promise<FastifyInstance> {
   const demoMode = options.demoMode ?? process.env.DEMO_MODE !== "false";
+  const deploymentMode = process.env.LORE_DEPLOYMENT_MODE === "saas" ? "saas" : "local";
   const sessionSecret = process.env.SESSION_SECRET ?? "demo-only-session-secret-change-before-production";
   const store = options.dependencies?.store ?? createLoreStore({ ...process.env, DEMO_MODE: String(demoMode) });
   const jobs: JobDispatcher = options.dependencies?.jobs ?? (demoMode ? new InMemoryJobDispatcher() : new BullMqJobDispatcher(process.env.REDIS_URL));
-  const aiProvider = options.dependencies?.aiProvider ?? createBundledMockAIProvider();
+  const aiRuntime = options.dependencies?.aiProvider
+    ? { provider: options.dependencies.aiProvider, name: "injected" as const }
+    : createConfiguredAIProvider(process.env, createBundledMockAIProvider());
+  const aiProvider = aiRuntime.provider;
   const githubIdentityProvider = options.dependencies?.githubIdentityProvider ?? new GitHubOAuthProvider();
+  const localGitHubToken = process.env.GITHUB_TOKEN?.trim();
+  const localGitHubAccount = deploymentMode === "local" && localGitHubToken
+    ? new GitHubTokenAccountClient(localGitHubToken)
+    : undefined;
+  let localAuthenticationPromise: Promise<AuthContext> | undefined;
+  const resolveLocalAuthentication = async (): Promise<AuthContext | undefined> => {
+    if (demoMode || !localGitHubAccount) return undefined;
+    const appHostname = new URL(process.env.APP_URL ?? "http://localhost:5173").hostname;
+    if (!new Set(["localhost", "127.0.0.1", "::1"]).has(appHostname)) {
+      throw new LoreError("Single-token local authentication is restricted to a loopback APP_URL", "UNSAFE_LOCAL_AUTH", 500);
+    }
+    localAuthenticationPromise ??= (async (): Promise<AuthContext> => {
+      const identity = await localGitHubAccount.identity();
+      const user = await store.signInWithGitHub(identity);
+      let organisations = await store.listOrganisationAccess(user.id);
+      if (!organisations.length) {
+        const baseSlug = `${identity.login}-local`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70);
+        await store.createOrganisation(user.id, {
+          name: `${identity.name}'s Workspace`,
+          slug: `${baseSlug}-${identity.providerUserId}`.slice(0, 80)
+        });
+        organisations = await store.listOrganisationAccess(user.id);
+      }
+      const active = organisations[0];
+      if (!active) throw new LoreError("Lore could not create the local workspace", "LOCAL_SETUP_FAILED", 500);
+      return {
+        sessionId: "local-github-token-session",
+        userId: user.id,
+        name: user.name,
+        authType: "synthetic",
+        activeOrganisationId: active.id,
+        role: active.role,
+        synthetic: true
+      };
+    })().catch((error: unknown) => {
+      localAuthenticationPromise = undefined;
+      throw error;
+    });
+    return localAuthenticationPromise;
+  };
   if (!demoMode && process.env.NODE_ENV === "production") {
     if (sessionSecret.length < 32 || sessionSecret.startsWith("replace-with")) {
       throw new Error("SESSION_SECRET must be a non-placeholder random value of at least 32 characters");
     }
-    if (process.env.LOCAL_DEV_AUTH === "true") {
-      throw new Error("LOCAL_DEV_AUTH cannot be enabled in production mode");
+    if (deploymentMode === "local" && !localGitHubAccount) {
+      throw new Error("GITHUB_TOKEN is required for a full local installation");
     }
-    if (!githubIdentityProvider.configured) {
+    if (deploymentMode === "saas" && !githubIdentityProvider.configured) {
       throw new Error(
-        "GitHub login is required in production mode; configure GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET"
+        "GitHub OAuth login is required in SaaS mode; configure GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET"
       );
     }
   }
@@ -256,7 +329,72 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   const contextService = new TaskPreparationService();
   const verificationService = new ChangeVerificationService();
   const knowledgeService = new KnowledgeService(store);
-  const candidateExtractionService = new KnowledgeCandidateExtractionService(store, aiProvider);
+  const candidateExtractionService = new KnowledgeCandidateExtractionService(
+    store,
+    aiProvider,
+    `${aiRuntime.name}-ai:knowledge-extractor/v1${"model" in aiRuntime && aiRuntime.model ? `:${aiRuntime.model}` : ""}`
+  );
+
+  const githubImportPayload = (
+    organisationId: string,
+    repository: RepositorySummary,
+    limit: PullRequestImportLimit
+  ): Record<string, unknown> => {
+    const status = githubIntegrationStatus(process.env, demoMode);
+    if (!status.historicalImportReady) {
+      throw new LoreError(
+        "Configure a GitHub personal access token or GitHub App credentials before importing",
+        "NOT_CONFIGURED",
+        503
+      );
+    }
+    const authMode = demoMode
+      ? repository.providerInstallationId ? "app" : "token"
+      : resolveGitHubAuthMode();
+    const installationId = Number(repository.providerInstallationId);
+    if (authMode === "app" && (!Number.isSafeInteger(installationId) || installationId <= 0)) {
+      throw new LoreError("Connect this repository to a verified GitHub App installation before importing", "INSTALLATION_REQUIRED", 409);
+    }
+    if (authMode !== "app" && authMode !== "token") {
+      throw new LoreError("GitHub historical import is disabled", "NOT_CONFIGURED", 503);
+    }
+    return {
+      organisationId,
+      repositoryId: repository.id,
+      authMode,
+      ...(authMode === "app" ? { installationId } : {}),
+      limit
+    };
+  };
+
+  const syncSchedulerId = (repositoryId: string): string => `github-sync-${repositoryId}`;
+  const updateRepositorySync = async (
+    organisationId: string,
+    repository: RepositorySummary,
+    settings: OrganisationSettings
+  ): Promise<void> => {
+    if (repository.provider !== "github" || !settings.autoImportGitHub || demoMode) {
+      await jobs.unschedule?.(syncSchedulerId(repository.id));
+      return;
+    }
+    if (!githubIntegrationStatus(process.env, demoMode).historicalImportReady || !jobs.schedule) return;
+    await jobs.schedule(
+      "github.import",
+      githubImportPayload(organisationId, repository, 100),
+      syncSchedulerId(repository.id),
+      settings.githubSyncIntervalMinutes * 60_000
+    );
+  };
+
+  const queueGitHubImport = async (
+    organisationId: string,
+    repository: RepositorySummary,
+    limit: PullRequestImportLimit
+  ): Promise<{ id: string }> => jobs.dispatch(
+    "github.import",
+    githubImportPayload(organisationId, repository, limit),
+    `github-import-${repository.id}-${randomUUID()}`
+  );
   const app = Fastify({
     trustProxy: process.env.TRUST_PROXY === "true",
     logger: options.logger === false ? false : {
@@ -316,9 +454,26 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     if (!request.url.startsWith("/api/")) return;
     const path = request.url.split("?")[0]!;
     if (path === "/api/github/webhook" || path === "/api/auth/github/callback") return;
-    request.loreAuth = await resolveAuthentication(request, store, demoMode);
+    request.loreAuth = await resolveAuthentication(request, store, demoMode)
+      ?? await resolveLocalAuthentication();
     if (publicApiPaths.has(path)) return;
     const auth = requireAuth(request);
+    if (auth.authType === "api_token") {
+      const requiredScope = ["GET", "HEAD", "OPTIONS"].includes(request.method) ? "read" : "write";
+      if (!auth.scopes?.includes(requiredScope)) {
+        throw new LoreError(`This API token does not have ${requiredScope} access`, "FORBIDDEN", 403);
+      }
+      if (accountApiPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
+        throw new LoreError("API tokens cannot manage the account that created them", "FORBIDDEN", 403);
+      }
+      if (!auth.activeOrganisationId) {
+        throw new LoreError("This API token is not scoped to an organisation", "FORBIDDEN", 403);
+      }
+      const tokenSettings = await store.getOrganisationSettings(auth.activeOrganisationId);
+      if (!tokenSettings.mcpAccessEnabled) {
+        throw new LoreError("API token access is disabled for this organisation", "FORBIDDEN", 403);
+      }
+    }
     if (accountApiPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return;
     const tenant = tenantContext(request, demoMode);
     await store.validateMembership(tenant.organisationId, tenant.userId);
@@ -404,7 +559,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return reply.redirect(`${appUrl}${transaction.returnTo}`);
   });
 
-  app.get("/api/auth/session", async (request) => accountSession(request, store, demoMode, githubIdentityProvider.configured));
+  app.get("/api/auth/session", async (request) => accountSession(
+    request,
+    store,
+    demoMode,
+    deploymentMode === "local" ? Boolean(localGitHubAccount) : githubIdentityProvider.configured
+  ));
   app.get("/api/auth/csrf", async (_request, reply) => ({ enabled: csrfEnabled, token: csrfEnabled ? reply.generateCsrf() : undefined }));
 
   app.post("/api/auth/logout", async (request, reply) => {
@@ -428,6 +588,78 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   app.patch("/api/account/profile", async (request) => {
     const auth = requireAuth(request);
     return store.updateUserProfile(auth.userId, profileUpdateSchema.parse(request.body));
+  });
+
+  app.get("/api/settings", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    const [user, organisation, apiTokens] = await Promise.all([
+      store.getUserSettings(tenant.userId),
+      store.getOrganisationSettings(tenant.organisationId),
+      store.listApiTokens(tenant.userId, tenant.organisationId)
+    ]);
+    return { user, organisation, deployment: deploymentConfiguration(demoMode), apiTokens };
+  });
+
+  app.patch("/api/settings/user", async (request) => {
+    const auth = requireAuth(request);
+    if (auth.authType === "api_token") throw new LoreError("Use an interactive session to change personal settings", "FORBIDDEN", 403);
+    const current = await store.getUserSettings(auth.userId);
+    return store.updateUserSettings(auth.userId, userSettingsSchema.parse({ ...current, ...(request.body as object) }));
+  });
+
+  app.patch("/api/settings/organisation", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    assertRole(tenant.role, ["owner", "admin"]);
+    const current = await store.getOrganisationSettings(tenant.organisationId);
+    const update = request.body && typeof request.body === "object" ? request.body as Record<string, unknown> : {};
+    const saved = await store.updateOrganisationSettings(
+      tenant.organisationId,
+      organisationSettingsSchema.parse({
+        ...current,
+        ...update,
+        repositoryRetention: {
+          ...current.repositoryRetention,
+          ...(update.repositoryRetention && typeof update.repositoryRetention === "object" ? update.repositoryRetention : {})
+        }
+      }),
+      tenant.userId
+    );
+    const snapshot = await store.getSnapshot(tenant.organisationId);
+    await Promise.all(snapshot.repositories.map((repository) =>
+      updateRepositorySync(tenant.organisationId, repository, saved)
+    ));
+    return saved;
+  });
+
+  app.post("/api/account/tokens", async (request, reply) => {
+    const auth = requireAuth(request);
+    if (auth.authType !== "session" && !auth.synthetic) {
+      throw new LoreError("Use an interactive session to create an API token", "FORBIDDEN", 403);
+    }
+    const tenant = tenantContext(request, demoMode);
+    const input = z.object({
+      name: z.string().trim().min(3).max(100),
+      expiresInDays: z.union([z.literal(30), z.literal(90), z.literal(365)]).default(90)
+    }).strict().parse(request.body);
+    const prefix = `lore_pat_${randomBytes(5).toString("hex")}`;
+    const token = `${prefix}_${randomBytes(32).toString("base64url")}`;
+    const item = await store.createApiToken({
+      organisationId: tenant.organisationId,
+      userId: tenant.userId,
+      name: input.name,
+      prefix,
+      tokenHash: createHash("sha256").update(token).digest("hex"),
+      scopes: ["read", "write"],
+      expiresAt: new Date(Date.now() + input.expiresInDays * 24 * 60 * 60 * 1000).toISOString()
+    });
+    return reply.status(201).send({ item, token });
+  });
+
+  app.delete("/api/account/tokens/:id", async (request, reply) => {
+    const tenant = tenantContext(request, demoMode);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    await store.revokeApiToken(id, tenant.userId, tenant.organisationId);
+    return reply.status(204).send();
   });
 
   app.get("/api/organisations", async (request) => ({ items: await store.listOrganisationAccess(requireAuth(request).userId) }));
@@ -539,12 +771,28 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   app.post("/api/repositories", async (request, reply) => {
     const tenant = tenantContext(request, demoMode);
     const input = repositoryInputSchema.parse(request.body);
+    const settings = await store.getOrganisationSettings(tenant.organisationId);
+    if (tenant.role === "member" && !settings.memberCanConnectRepositories) {
+      throw new LoreError("Only organisation owners and admins can connect repositories", "FORBIDDEN", 403);
+    }
     const repository = await store.addRepository(tenant.organisationId, {
       ...input,
+      retentionConfig: input.retentionConfig ?? settings.repositoryRetention,
       languageSummary: {},
       indexedAt: new Date().toISOString()
     }, tenant.userId);
-    return reply.status(201).send(repository);
+    let initialImportQueued = false;
+    if (
+      repository.provider === "github" &&
+      settings.autoImportGitHub &&
+      githubIntegrationStatus(process.env, demoMode).historicalImportReady &&
+      !demoMode
+    ) {
+      await queueGitHubImport(tenant.organisationId, repository, settings.githubImportLimit);
+      initialImportQueued = true;
+    }
+    await updateRepositorySync(tenant.organisationId, repository, settings);
+    return reply.status(201).send({ ...repository, initialImportQueued });
   });
 
   app.post("/api/repositories/:id/index", async (request, reply) => {
@@ -615,40 +863,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     }).parse(request.body);
     const repository = await store.getRepository(tenant.organisationId, id);
     if (repository.provider !== "github") throw new LoreError("Historical import requires a GitHub repository", "INVALID_PROVIDER", 400);
-    const status = githubIntegrationStatus(process.env, demoMode);
-    if (!status.historicalImportReady) {
-      throw new LoreError(
-        "Configure a GitHub personal access token or GitHub App credentials before importing",
-        "NOT_CONFIGURED",
-        503
-      );
-    }
-    const authMode = demoMode
-      ? repository.providerInstallationId
-        ? "app"
-        : "token"
-      : resolveGitHubAuthMode();
-    const installationId = Number(repository.providerInstallationId);
-    if (
-      authMode === "app" &&
-      (!Number.isSafeInteger(installationId) || installationId <= 0)
-    ) {
-      throw new LoreError("Connect this repository to a verified GitHub App installation before importing", "INSTALLATION_REQUIRED", 409);
-    }
-    if (authMode !== "app" && authMode !== "token") {
-      throw new LoreError("GitHub historical import is disabled", "NOT_CONFIGURED", 503);
-    }
-    const job = await jobs.dispatch(
-      "github.import",
-      {
-        organisationId: tenant.organisationId,
-        repositoryId: id,
-        authMode,
-        ...(authMode === "app" ? { installationId } : {}),
-        limit: input.limit
-      },
-      `github-import-${id}-${authMode}-${authMode === "app" ? installationId : "local"}-${input.limit}`
-    );
+    const job = await queueGitHubImport(tenant.organisationId, repository, input.limit);
     return reply.status(202).send({
       jobId: job.id,
       status: demoMode ? "simulated" : "queued",
@@ -869,6 +1084,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   app.post("/api/evidence/communications", async (request, reply) => {
     const tenant = tenantContext(request, demoMode);
     const input = communicationEvidenceSchema.parse(request.body);
+    const organisationSettings = await store.getOrganisationSettings(tenant.organisationId);
+    if (!organisationSettings.communicationEvidenceEnabled) {
+      throw new LoreError("Ad-hoc communication evidence is disabled for this organisation", "FORBIDDEN", 403);
+    }
     if (input.repositoryId) await store.getRepository(tenant.organisationId, input.repositoryId);
 
     const canonicalContent = input.content.replace(/\r\n/g, "\n").trim();
@@ -909,11 +1128,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     };
     const evidenceAdded = (await store.ingestEvidence([evidence])) === 1;
     const storedEvidence = (await store.getEvidence(tenant.organisationId)).find((item) => item.id === evidence.id) ?? evidence;
-    const extraction = await candidateExtractionService.extract({
-      organisationId: tenant.organisationId,
-      ...(input.repositoryId ? { repositoryId: input.repositoryId } : {}),
-      evidenceIds: [storedEvidence.id]
-    });
+    const extraction = organisationSettings.autoExtractKnowledge
+      ? await candidateExtractionService.extract({
+          organisationId: tenant.organisationId,
+          ...(input.repositoryId ? { repositoryId: input.repositoryId } : {}),
+          evidenceIds: [storedEvidence.id]
+        })
+      : { items: [], evidenceAnalysed: 0, proposals: 0, candidatesCreated: 0 };
     const counts: Record<EvidenceComparisonDisposition, number> = {
       new: 0,
       already_added: 0,
@@ -1067,6 +1288,19 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     const tenant = tenantContext(request, demoMode);
     const { id } = z.object({ id: z.string() }).parse(request.params);
     return store.getChangeObservation(tenant.organisationId, id);
+  });
+
+  app.get("/api/github/repositories", async (request) => {
+    tenantContext(request, demoMode);
+    if (!localGitHubAccount) {
+      throw new LoreError(
+        "Repository discovery with a personal access token is available when GITHUB_TOKEN is configured",
+        "NOT_CONFIGURED",
+        503
+      );
+    }
+    const repositories = await localGitHubAccount.repositories();
+    return { items: repositories, count: repositories.length };
   });
 
   app.get("/api/github/install", async (request, reply) => {

@@ -509,6 +509,69 @@ export interface AccountSession {
   pendingInvitations: OrganisationInvitation[];
 }
 
+export type LoreStartPage =
+  | "dashboard"
+  | "repositories"
+  | "knowledge"
+  | "evidence"
+  | "candidates"
+  | "sessions";
+
+export interface UserSettings {
+  theme: "system" | "light" | "dark";
+  startPage: LoreStartPage;
+  defaultImportLimit: PullRequestImportLimit;
+  showGettingStarted: boolean;
+  notifyImportCompleted: boolean;
+  notifyCandidateReview: boolean;
+}
+
+export interface OrganisationSettings {
+  autoImportGitHub: boolean;
+  githubImportLimit: PullRequestImportLimit;
+  githubSyncIntervalMinutes: number;
+  autoExtractKnowledge: boolean;
+  communicationEvidenceEnabled: boolean;
+  memberCanConnectRepositories: boolean;
+  mcpAccessEnabled: boolean;
+  repositoryRetention: RepositoryRetentionConfig;
+}
+
+export interface DeploymentConfiguration {
+  deploymentMode: "local" | "saas";
+  productMode: "demo" | "full";
+  appUrl: string;
+  loopbackOnly: boolean;
+  persistence: "memory" | "postgresql";
+  jobs: "memory" | "redis";
+  login: { provider: "github"; configured: boolean };
+  github: {
+    mode: "disabled" | "token" | "app" | "demo";
+    historicalImportReady: boolean;
+    webhooksReady: boolean;
+  };
+  ai: { provider: "mock" | "openai"; configured: boolean; model?: string };
+  mcp: { transport: "stdio"; serviceBacked: boolean };
+}
+
+export interface ApiTokenSummary {
+  id: string;
+  organisationId: string;
+  name: string;
+  prefix: string;
+  scopes: Array<"read" | "write">;
+  expiresAt?: string;
+  lastUsedAt?: string;
+  createdAt: string;
+}
+
+export interface SettingsBundle {
+  user: UserSettings;
+  organisation: OrganisationSettings;
+  deployment: DeploymentConfiguration;
+  apiTokens: ApiTokenSummary[];
+}
+
 export interface GitHubUserIdentity {
   providerUserId: string;
   login: string;

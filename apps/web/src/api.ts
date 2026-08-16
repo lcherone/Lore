@@ -10,11 +10,14 @@ import type {
   OrganisationAccess,
   OrganisationInvitation,
   OrganisationMember,
+  OrganisationSettings,
   OrganisationRole,
   PolicyRecord,
   PullRequestImportLimit,
   RepositoryRetentionConfig,
   RepositorySummary,
+  SettingsBundle,
+  UserSettings,
   UserProfile
 } from "@lore/shared/types.js";
 
@@ -23,6 +26,19 @@ export interface GitHubIntegrationStatus {
   historicalImportReady: boolean;
   installFlowReady: boolean;
   webhooksReady: boolean;
+}
+
+export interface GitHubRepositoryOption {
+  id: string;
+  owner: string;
+  name: string;
+  fullName: string;
+  defaultBranch: string;
+  private: boolean;
+  archived: boolean;
+  description?: string;
+  cloneUrl: string;
+  htmlUrl: string;
 }
 
 export interface OrganisationDetails {
@@ -86,6 +102,15 @@ export const loreApi = {
     request(`/api/organisations/${organisationId}/members/${userId}`, { method: "DELETE" }),
   bootstrap: (): Promise<DashboardSnapshot> => request("/api/bootstrap"),
   githubStatus: (): Promise<GitHubIntegrationStatus> => request("/api/github/status"),
+  githubRepositories: (): Promise<{ items: GitHubRepositoryOption[]; count: number }> => request("/api/github/repositories"),
+  settings: (): Promise<SettingsBundle> => request("/api/settings"),
+  updateUserSettings: (input: UserSettings): Promise<UserSettings> =>
+    request("/api/settings/user", { method: "PATCH", body: JSON.stringify(input) }),
+  updateOrganisationSettings: (input: OrganisationSettings): Promise<OrganisationSettings> =>
+    request("/api/settings/organisation", { method: "PATCH", body: JSON.stringify(input) }),
+  createApiToken: (input: { name: string; expiresInDays: 30 | 90 | 365 }): Promise<{ item: SettingsBundle["apiTokens"][number]; token: string }> =>
+    request("/api/account/tokens", { method: "POST", body: JSON.stringify(input) }),
+  revokeApiToken: (id: string): Promise<void> => request(`/api/account/tokens/${id}`, { method: "DELETE" }),
   githubInstall: (): Promise<{ url: string }> => request("/api/github/install"),
   prepareTask: (repositoryId: string, task: string): Promise<ContextPackage> =>
     request("/api/tasks/prepare", { method: "POST", body: JSON.stringify({ repositoryId, task }) }),

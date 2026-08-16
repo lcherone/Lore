@@ -29,15 +29,14 @@ Open `http://localhost:5173`; the API listens on `http://127.0.0.1:3001`. The wr
 ## Persistent stack
 
 ```bash
-cp .env.example .env
-docker compose up --build
+npm run local:setup
+npm run local:up
 ```
 
-Compose runs PostgreSQL, Redis, migrations, the idempotent seed, API, worker, and production web assets. For native processes, set `DEMO_MODE=false`, configure `DATABASE_URL` and `REDIS_URL`, then run:
+Compose runs PostgreSQL, Redis, migrations, API, worker, and production web assets. Demo seeding is opt-in through the `demo-data` Compose profile. For native processes, set `DEMO_MODE=false`, configure `DATABASE_URL`, `REDIS_URL`, and GitHub OAuth, then run:
 
 ```bash
 npm run db:migrate
-npm run seed
 npm run dev
 npm run worker
 ```

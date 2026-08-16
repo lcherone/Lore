@@ -87,6 +87,17 @@ Use `localhost` consistently. Do not open the UI as `127.0.0.1` while the callba
 
 GitHub accounts, profiles, organisations, memberships, invitations, and sessions are durable PostgreSQL records.
 
+For the complete production-shaped Docker stack, prefer:
+
+```bash
+npm run local:setup
+npm run local:up
+```
+
+This validates OAuth and repository credentials, builds production assets, applies migrations, and starts PostgreSQL, Redis, API, worker, and web services. See [Run Lore locally like production](local-production.md).
+
+For native development with PostgreSQL and Redis already running:
+
 ```bash
 npm install
 npm run setup:check

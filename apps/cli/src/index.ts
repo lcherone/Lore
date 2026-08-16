@@ -44,12 +44,14 @@ program
   .requiredOption("--repository-id <id>")
   .requiredOption("--organisation-id <id>")
   .option("--api-url <url>", "Lore API URL", "http://127.0.0.1:3001")
-  .action(async (options: { repositoryId: string; organisationId: string; apiUrl: string }) => {
+  .option("--token-file <path>", "owner-only file containing a Lore API token")
+  .action(async (options: { repositoryId: string; organisationId: string; apiUrl: string; tokenFile?: string }) => {
     const project = runtime().project;
     const config = await project.initialize({
       repositoryId: options.repositoryId,
       organisationId: options.organisationId,
       apiUrl: options.apiUrl,
+      ...(options.tokenFile ? { apiTokenFile: resolve(options.tokenFile) } : {}),
       mode: "service"
     });
     print(config, `Connected to ${options.apiUrl}`);

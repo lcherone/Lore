@@ -151,6 +151,7 @@ model Organisation {
   slug             String            @unique
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+  settings         Json              @default("{}")
   repositories     Repository[]
   evidence         Evidence[]
   knowledgeItems   KnowledgeItem[]
@@ -165,6 +166,7 @@ model Organisation {
   authSessions     AuthSession[]
   invitations      OrganisationInvitation[]
   ingestionReceipts IngestionReceipt[]
+  apiTokens        ApiToken[]
 }
 
 model User {
@@ -185,10 +187,12 @@ model User {
   lastLoginAt        DateTime?
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
+  preferences        Json         @default("{}")
   memberships        Membership[]
   identities         AuthIdentity[]
   authSessions       AuthSession[]
   invitationsSent    OrganisationInvitation[] @relation("invitationSender")
+  apiTokens           ApiToken[]
 }
 
 model Membership {
@@ -235,6 +239,25 @@ model AuthSession {
 
   @@index([userId, revokedAt, expiresAt])
   @@index([activeOrganisationId])
+}
+
+model ApiToken {
+  id             String        @id @default(uuid()) @db.Uuid
+  organisationId String        @db.Uuid
+  userId         String        @db.Uuid
+  name           String
+  prefix         String
+  tokenHash      String        @unique
+  scopes         String[]
+  expiresAt      DateTime?
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime      @default(now())
+  organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, expiresAt])
+  @@index([organisationId, revokedAt])
 }
 
 model OrganisationInvitation {

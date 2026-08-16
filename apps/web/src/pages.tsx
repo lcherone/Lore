@@ -44,7 +44,8 @@ import type {
   PullRequestImportLimit,
   RepositoryRetentionConfig,
   RepositorySummary,
-  SafetyReport
+  SafetyReport,
+  SettingsBundle
 } from "@lore/shared/types.js";
 import {
   Button,
@@ -58,6 +59,7 @@ import {
   SeverityLabel
 } from "./components.js";
 import { parseGitHubRepositoryReference } from "./github-repository.js";
+import { loreApi, type GitHubRepositoryOption } from "./api.js";
 
 const formatDate = (value: string): string =>
   new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(
@@ -1440,7 +1442,9 @@ export function RepositoriesPage({
   onIndex,
   onImport,
   onDelete,
-  onRetention
+  onRetention,
+  defaultImportLimit = 100,
+  showGettingStarted = true
 }: {
   repositories: RepositorySummary[];
   githubStatus: {
@@ -1459,12 +1463,17 @@ export function RepositoriesPage({
     repository: RepositorySummary,
     retentionConfig: RepositoryRetentionConfig
   ) => Promise<void>;
+  defaultImportLimit?: PullRequestImportLimit;
+  showGettingStarted?: boolean;
 }) {
   const [connectOpen, setConnectOpen] = useState(false);
   const [importRepository, setImportRepository] = useState<RepositorySummary>();
   const [installationId, setInstallationId] = useState(initialInstallationId ?? "");
-  const [importLimit, setImportLimit] = useState<PullRequestImportLimit>(100);
+  const [importLimit, setImportLimit] = useState<PullRequestImportLimit>(defaultImportLimit);
   const [repositoryReference, setRepositoryReference] = useState("");
+  const [selectedGitHubRepositoryId, setSelectedGitHubRepositoryId] = useState("");
+  const [availableRepositories, setAvailableRepositories] = useState<GitHubRepositoryOption[]>([]);
+  const [repositoriesLoading, setRepositoriesLoading] = useState(false);
   const [defaultBranch, setDefaultBranch] = useState("main");
   const [connectError, setConnectError] = useState<string>();
   const [deleteRepository, setDeleteRepository] = useState<RepositorySummary>();
@@ -1482,6 +1491,19 @@ export function RepositoriesPage({
     setInstallationId(initialInstallationId);
     setConnectOpen(true);
   }, [initialInstallationId]);
+  useEffect(() => {
+    if (!connectOpen || githubStatus.mode !== "token") return;
+    let cancelled = false;
+    setRepositoriesLoading(true);
+    void loreApi.githubRepositories().then(({ items }) => {
+      if (!cancelled) setAvailableRepositories(items);
+    }).catch((error: unknown) => {
+      if (!cancelled) setConnectError(error instanceof Error ? error.message : "GitHub repositories could not be loaded");
+    }).finally(() => {
+      if (!cancelled) setRepositoriesLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [connectOpen, githubStatus.mode]);
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     setSaving(true);
@@ -1490,6 +1512,7 @@ export function RepositoriesPage({
       const { owner, name } = parseGitHubRepositoryReference(repositoryReference);
       await onConnect({
         provider: "github",
+        ...(selectedGitHubRepositoryId ? { providerRepositoryId: selectedGitHubRepositoryId } : {}),
         owner,
         name,
         defaultBranch,
@@ -1497,6 +1520,7 @@ export function RepositoriesPage({
       });
       setConnectOpen(false);
       setRepositoryReference("");
+      setSelectedGitHubRepositoryId("");
       setDefaultBranch("main");
     } catch (error) {
       setConnectError(error instanceof Error ? error.message : "Repository could not be connected");
@@ -1547,7 +1571,7 @@ export function RepositoriesPage({
           </Button>
         }
       />
-      <div className="onboarding-strip">
+      {showGettingStarted && <div className="onboarding-strip">
         <div>
           <strong>Get a repository ready in three steps</strong>
           <p>Connect GitHub, import merged pull requests, then index the local checkout.</p>
@@ -1558,7 +1582,7 @@ export function RepositoriesPage({
             {step}
           </span>
         ))}
-      </div>
+      </div>}
       <div className="repository-list">
         {repositories.map((repository) => (
           <article key={repository.id}>
@@ -1673,7 +1697,7 @@ export function RepositoriesPage({
                 {githubStatus.mode === "token" ? (
                   <>
                     <strong>Local token mode is ready</strong> The token stays in the worker
-                    environment; the browser stores only this repository identity.
+                    and API environments; the browser receives repository metadata, never the token.
                   </>
                 ) : githubStatus.mode === "demo" ? (
                   <>
@@ -1697,6 +1721,32 @@ export function RepositoriesPage({
               <Button type="button" variant="secondary" onClick={() => void onInstallGitHub()}>
                 Install GitHub App
               </Button>
+            )}
+            {githubStatus.mode === "token" && (
+              <FormField
+                label="Repositories available to your token"
+                hint={repositoriesLoading ? "Loading every repository the token can read…" : `${availableRepositories.length} accessible repositories found. Private and organisation repositories are included when the token permits them.`}
+              >
+                <select
+                  value={selectedGitHubRepositoryId}
+                  disabled={repositoriesLoading}
+                  onChange={(event) => {
+                    const selected = availableRepositories.find((item) => item.id === event.target.value);
+                    setSelectedGitHubRepositoryId(event.target.value);
+                    if (selected) {
+                      setRepositoryReference(selected.fullName);
+                      setDefaultBranch(selected.defaultBranch);
+                    }
+                  }}
+                >
+                  <option value="">Choose a repository or enter one below</option>
+                  {availableRepositories.map((repository) => (
+                    <option key={repository.id} value={repository.id} disabled={repository.archived}>
+                      {repository.fullName}{repository.private ? " · private" : ""}{repository.archived ? " · archived" : ""}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
             )}
             <div className="form-grid">
               <FormField
@@ -2309,128 +2359,211 @@ export function ReviewersPage({ data }: { data: DashboardSnapshot }) {
   );
 }
 
-export function SettingsPage({ mode }: { mode: "demo" | "persistent" }) {
+export function SettingsPage({
+  canManageOrganisation,
+  onUserSettingsChanged
+}: {
+  canManageOrganisation: boolean;
+  onUserSettingsChanged?: (settings: SettingsBundle["user"]) => void;
+}) {
+  const [settings, setSettings] = useState<SettingsBundle>();
+  const [userDraft, setUserDraft] = useState<SettingsBundle["user"]>();
+  const [organisationDraft, setOrganisationDraft] = useState<SettingsBundle["organisation"]>();
   const [copied, setCopied] = useState<string>();
+  const [saving, setSaving] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [message, setMessage] = useState<string>();
+  const [tokenName, setTokenName] = useState("Local MCP");
+  const [tokenExpiry, setTokenExpiry] = useState<30 | 90 | 365>(90);
+  const [revealedToken, setRevealedToken] = useState<string>();
+
+  useEffect(() => {
+    let cancelled = false;
+    void loreApi.settings().then((loaded) => {
+      if (cancelled) return;
+      setSettings(loaded);
+      setUserDraft(structuredClone(loaded.user));
+      setOrganisationDraft(structuredClone(loaded.organisation));
+    }).catch((cause: unknown) => {
+      if (!cancelled) setError(cause instanceof Error ? cause.message : "Settings could not be loaded");
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   const copy = (id: string, value: string) => {
     void navigator.clipboard.writeText(value);
     setCopied(id);
     window.setTimeout(() => setCopied(undefined), 1500);
   };
   const snippets = [
-    ["CLI", "npm install && npm run cli -- init"],
-    ["Prepare a task", 'npm run cli -- prepare "SS-6160 Update Avalara mapping"'],
-    ["MCP server", "npm run mcp"],
-    ["Verify a change", "npm run cli -- verify"]
+    ["Start Lore", "npm run local:up"],
+    ["Connect checkout", "npm run cli -- connect --api-url http://127.0.0.1:3000 --organisation-id <org-id> --repository-id <repo-id> --token-file ~/.config/lore/token"],
+    ["Check MCP", "npm run mcp:check -- /absolute/path/to/checkout"],
+    ["Run MCP server", "npm run mcp"]
   ];
+
+  const saveUser = async (): Promise<void> => {
+    if (!userDraft) return;
+    setSaving("user"); setError(undefined); setMessage(undefined);
+    try {
+      const saved = await loreApi.updateUserSettings(userDraft);
+      setUserDraft(saved);
+      setSettings((current) => current ? { ...current, user: saved } : current);
+      onUserSettingsChanged?.(saved);
+      setMessage("Your preferences were saved.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Personal settings could not be saved");
+    } finally { setSaving(undefined); }
+  };
+
+  const saveOrganisation = async (): Promise<void> => {
+    if (!organisationDraft) return;
+    setSaving("organisation"); setError(undefined); setMessage(undefined);
+    try {
+      const saved = await loreApi.updateOrganisationSettings(organisationDraft);
+      setOrganisationDraft(saved);
+      setSettings((current) => current ? { ...current, organisation: saved } : current);
+      setMessage("Organisation defaults were saved and apply only to this organisation.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Organisation settings could not be saved");
+    } finally { setSaving(undefined); }
+  };
+
+  const createToken = async (): Promise<void> => {
+    setSaving("token"); setError(undefined); setMessage(undefined);
+    try {
+      const created = await loreApi.createApiToken({ name: tokenName, expiresInDays: tokenExpiry });
+      setRevealedToken(created.token);
+      setSettings((current) => current ? { ...current, apiTokens: [created.item, ...current.apiTokens] } : current);
+      setMessage("Token created. Copy it now; Lore will not show the full value again.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Token could not be created");
+    } finally { setSaving(undefined); }
+  };
+
+  const revokeToken = async (id: string): Promise<void> => {
+    setSaving(`token-${id}`); setError(undefined); setMessage(undefined);
+    try {
+      await loreApi.revokeApiToken(id);
+      setSettings((current) => current ? { ...current, apiTokens: current.apiTokens.filter((item) => item.id !== id) } : current);
+      setMessage("Token revoked.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Token could not be revoked");
+    } finally { setSaving(undefined); }
+  };
+
+  if (!settings || !userDraft || !organisationDraft) {
+    return (
+      <div className="page-pad settings-page">
+        <PageHeader title="Settings & setup" description="Loading your installation and organisation settings…" />
+        {error ? <p className="form-error">{error}</p> : <div className="loading-line" />}
+      </div>
+    );
+  }
+
+  const deployment = settings.deployment;
   return (
     <div className="page-pad settings-page">
       <PageHeader
         title="Settings & setup"
-        description="Everything needed to run Lore locally and connect an agent."
+        description="Configure your account, this organisation, GitHub automation, AI, and MCP access."
       />
+      {error && <p className="form-error">{error}</p>}
+      {message && <p className="settings-success"><CheckCircle2 size={15} /> {message}</p>}
       <section>
-        <h2>Quick start</h2>
+        <h2>This installation</h2>
         <p>
-          Demo mode needs no credentials. Start the API and web app, explore seeded evidence, then
-          point the CLI at a real checkout.
+          Local and SaaS are deployment choices, not feature tiers. A local full installation still
+          has real accounts, private organisations, GitHub ingestion, AI extraction, and MCP.
         </p>
-        <ol>
-          <li>
-            <span>1</span>
-            <div>
-              <strong>Install and start</strong>
-              <code>npm install &amp;&amp; npm run dev</code>
-            </div>
-          </li>
-          <li>
-            <span>2</span>
-            <div>
-              <strong>Open the control plane</strong>
-              <code>http://localhost:5173</code>
-            </div>
-          </li>
-          <li>
-            <span>3</span>
-            <div>
-              <strong>Initialise a local checkout</strong>
-              <code>lore init &amp;&amp; lore index</code>
-            </div>
-          </li>
-          <li>
-            <span>4</span>
-            <div>
-              <strong>Wrap Codex</strong>
-              <code>lore agent codex "your task"</code>
-            </div>
-          </li>
-        </ol>
-      </section>
-      <section>
-        <h2>Agent integration</h2>
-        <div className="snippet-list">
-          {snippets.map(([name, command]) => (
-            <div key={name}>
-              <span>{name}</span>
-              <code>{command}</code>
-              <button onClick={() => copy(name!, command!)}>
-                {copied === name ? <Check size={15} /> : <Copy size={15} />}
-              </button>
-            </div>
-          ))}
+        <div className="runtime-grid">
+          <div><span>Deployment</span><strong>{deployment.deploymentMode === "local" ? "Local, loopback-first" : "Shared SaaS"}</strong></div>
+          <div><span>Product mode</span><strong>{deployment.productMode === "full" ? "Full product" : "Seeded demo"}</strong></div>
+          <div><span>Persistence</span><strong>{deployment.persistence === "postgresql" ? "PostgreSQL" : "In-memory"}</strong></div>
+          <div><span>Jobs</span><strong>{deployment.jobs === "redis" ? "Redis worker" : "In-process"}</strong></div>
+          <div><span>GitHub history</span><strong>{deployment.github.historicalImportReady ? `${deployment.github.mode} ready` : "Needs credentials"}</strong></div>
+          <div><span>AI extraction</span><strong>{deployment.ai.configured ? `${deployment.ai.provider} · ${deployment.ai.model ?? "configured"}` : "Needs configuration"}</strong></div>
+          <div><span>GitHub login</span><strong>{deployment.login.configured ? "Ready" : "Needs OAuth app"}</strong></div>
+          <div><span>MCP</span><strong>{deployment.mcp.serviceBacked ? "Service-backed stdio" : "Local/demo stdio"}</strong></div>
         </div>
       </section>
       <section>
-        <h2>Runtime mode</h2>
-        <div className="settings-row">
-          <div>
-            <strong>{mode === "demo" ? "Demo" : "Persistent service"}</strong>
-            <p>
-              {mode === "demo"
-                ? "Seeded organisation; no GitHub or AI credentials required."
-                : "PostgreSQL and Redis are authoritative; fixture fallback is disabled."}
-            </p>
-          </div>
-          <span className="status-label">Active</span>
+        <div className="settings-section-title">
+          <div><h2>Your preferences</h2><p>These follow your GitHub account across every organisation.</p></div>
+          <Button variant="primary" disabled={saving === "user"} onClick={() => void saveUser()}>{saving === "user" ? "Saving…" : "Save preferences"}</Button>
         </div>
-        <div className="settings-row">
-          <div>
-            <strong>Raw source retention</strong>
-            <p>
-              Source remains on the local node. Lore stores symbols, relationships, and evidence.
-            </p>
-          </div>
-          <span>Per repository</span>
+        <div className="settings-form-grid">
+          <label className="form-field"><span>Start page</span><select value={userDraft.startPage} onChange={(event) => setUserDraft({ ...userDraft, startPage: event.target.value as typeof userDraft.startPage })}><option value="dashboard">Dashboard</option><option value="repositories">Repositories</option><option value="knowledge">Knowledge</option><option value="evidence">Add evidence</option><option value="candidates">Candidates</option><option value="sessions">Sessions</option></select></label>
+          <label className="form-field"><span>Default history import</span><select value={String(userDraft.defaultImportLimit)} onChange={(event) => setUserDraft({ ...userDraft, defaultImportLimit: event.target.value === "all" ? "all" : Number(event.target.value) as PullRequestImportLimit })}>{[50,100,250,500,1000].map((limit) => <option key={limit} value={limit}>{limit} merged PRs</option>)}<option value="all">All merged PRs</option></select></label>
+          <label className="form-field"><span>Theme</span><select value={userDraft.theme} onChange={(event) => setUserDraft({ ...userDraft, theme: event.target.value as typeof userDraft.theme })}><option value="system">Use system</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
         </div>
-        <div className="settings-row">
-          <div>
-            <strong>AI provider</strong>
-            <p>
-              Provider boundary uses validated schemas. Deterministic systems remain authoritative.
-            </p>
-          </div>
-          <span>Mock (local)</span>
+        <div className="settings-checks">
+          <label><input type="checkbox" checked={userDraft.showGettingStarted} onChange={(event) => setUserDraft({ ...userDraft, showGettingStarted: event.target.checked })} /><span><strong>Show onboarding guidance</strong><small>Keep the repository setup checklist visible.</small></span></label>
+          <label><input type="checkbox" checked={userDraft.notifyImportCompleted} onChange={(event) => setUserDraft({ ...userDraft, notifyImportCompleted: event.target.checked })} /><span><strong>Import completion notices</strong><small>Show an in-app notice when a history import is queued.</small></span></label>
+          <label><input type="checkbox" checked={userDraft.notifyCandidateReview} onChange={(event) => setUserDraft({ ...userDraft, notifyCandidateReview: event.target.checked })} /><span><strong>Candidate review notices</strong><small>Highlight knowledge suggestions awaiting human review.</small></span></label>
         </div>
       </section>
       <section>
-        <h2>Documentation</h2>
-        <p>These guides ship with this checkout and stay versioned with the implementation.</p>
-        <div className="docs-links">
-          <button onClick={() => copy("readme", "README.md")}>
-            <BookOpen size={17} />
-            <span>
-              README &amp; quick start<small>README.md</small>
-            </span>
-            {copied === "readme" ? <Check size={14} /> : <Copy size={14} />}
-          </button>
-          <button onClick={() => copy("architecture", "docs/architecture.md")}>
-            <Braces size={17} />
-            <span>
-              Architecture &amp; security<small>docs/architecture.md</small>
-            </span>
-            {copied === "architecture" ? <Check size={14} /> : <Copy size={14} />}
-          </button>
+        <div className="settings-section-title">
+          <div><h2>Organisation defaults</h2><p>These apply only to the active organisation. Owner or admin access is required.</p></div>
+          <Button variant="primary" disabled={!canManageOrganisation || saving === "organisation"} onClick={() => void saveOrganisation()}>{saving === "organisation" ? "Saving…" : "Save organisation"}</Button>
+        </div>
+        {!canManageOrganisation && <p className="warning-callout"><AlertTriangle size={15} /> Your role can view these defaults but cannot change them.</p>}
+        <fieldset className="settings-fieldset" disabled={!canManageOrganisation}>
+          <div className="settings-form-grid">
+            <label className="form-field"><span>Initial history import</span><select value={String(organisationDraft.githubImportLimit)} onChange={(event) => setOrganisationDraft({ ...organisationDraft, githubImportLimit: event.target.value === "all" ? "all" : Number(event.target.value) as PullRequestImportLimit })}>{[50,100,250,500,1000].map((limit) => <option key={limit} value={limit}>{limit} merged PRs</option>)}<option value="all">All merged PRs</option></select><small>“All” paginates every merged PR the token can access.</small></label>
+            <label className="form-field"><span>Sync interval</span><select value={organisationDraft.githubSyncIntervalMinutes} onChange={(event) => setOrganisationDraft({ ...organisationDraft, githubSyncIntervalMinutes: Number(event.target.value) })}><option value={15}>Every 15 minutes</option><option value={30}>Every 30 minutes</option><option value={60}>Hourly</option><option value={360}>Every 6 hours</option><option value={1440}>Daily</option></select><small>Recurring sync fetches the latest 100 merged PRs and only extracts new evidence.</small></label>
+          </div>
+          <div className="settings-checks">
+            {([
+              ["autoImportGitHub", "Automatically import GitHub history", "Import immediately on connect and schedule recurring sync."],
+              ["autoExtractKnowledge", "Automatically extract candidates", "Use the configured AI provider on newly gathered evidence."],
+              ["communicationEvidenceEnabled", "Allow ad-hoc communications", "Parse standups, Slack messages, meetings, calls, and notes."],
+              ["memberCanConnectRepositories", "Members can connect repositories", "Allow members as well as admins to add repository metadata."],
+              ["mcpAccessEnabled", "Allow MCP and CLI access", "Permit organisation-scoped API tokens to use service-backed agent tools."]
+            ] as const).map(([key, title, description]) => <label key={key}><input type="checkbox" checked={organisationDraft[key]} onChange={(event) => setOrganisationDraft({ ...organisationDraft, [key]: event.target.checked })} /><span><strong>{title}</strong><small>{description}</small></span></label>)}
+          </div>
+          <h3>Evidence retention for newly connected repositories</h3>
+          <div className="settings-checks settings-checks--retention">
+            {([
+              ["retainReviewComments", "Review comments", "Keep review, conversation, and inline comments."],
+              ["retainRawPullRequestDiff", "Raw pull request diffs", "Higher sensitivity: retain complete PR diffs."],
+              ["retainCodeSnippets", "Code snippets", "Retain extracted source snippets where supported."],
+              ["retainSummariesOnly", "Summary-only mode", "Keep titles and metadata; incompatible with raw diffs/snippets."]
+            ] as const).map(([key, title, description]) => <label key={key}><input type="checkbox" checked={organisationDraft.repositoryRetention[key]} onChange={(event) => setOrganisationDraft({ ...organisationDraft, repositoryRetention: { ...organisationDraft.repositoryRetention, [key]: event.target.checked } })} /><span><strong>{title}</strong><small>{description}</small></span></label>)}
+          </div>
+        </fieldset>
+      </section>
+      <section>
+        <h2>Agent & MCP access</h2>
+        <p>Create a token for this user and active organisation. Store it in a mode-600 file outside any repository.</p>
+        <div className="token-create">
+          <label className="form-field"><span>Token name</span><input value={tokenName} minLength={3} maxLength={100} onChange={(event) => setTokenName(event.target.value)} /></label>
+          <label className="form-field"><span>Expires</span><select value={tokenExpiry} onChange={(event) => setTokenExpiry(Number(event.target.value) as 30 | 90 | 365)}><option value={30}>30 days</option><option value={90}>90 days</option><option value={365}>1 year</option></select></label>
+          <Button variant="primary" disabled={tokenName.trim().length < 3 || saving === "token"} onClick={() => void createToken()}>{saving === "token" ? "Creating…" : "Create token"}</Button>
+        </div>
+        {revealedToken && <div className="token-reveal"><strong>Copy this token now</strong><code>{revealedToken}</code><button aria-label="Copy token" onClick={() => copy("token", revealedToken)}>{copied === "token" ? <Check size={15} /> : <Copy size={15} />}</button><small>Suggested file: <code>~/.config/lore/token</code>, then run <code>chmod 600 ~/.config/lore/token</code>.</small></div>}
+        <div className="token-list">
+          {settings.apiTokens.map((token) => <div key={token.id}><span><strong>{token.name}</strong><small>{token.prefix}… · expires {token.expiresAt ? formatDate(token.expiresAt) : "never"}</small></span><Button variant="quiet" disabled={saving === `token-${token.id}`} onClick={() => void revokeToken(token.id)}>Revoke</Button></div>)}
+          {!settings.apiTokens.length && <p>No active agent tokens for this organisation.</p>}
         </div>
       </section>
+      <section>
+        <h2>{deployment.deploymentMode === "local" ? "Local GitHub setup" : "SaaS GitHub setup"}</h2>
+        {deployment.deploymentMode === "local" ? (
+          <>
+            <p>Local Lore uses one personal access token for your profile, accessible-repository picker, and pull-request evidence. No callback or GitHub App is required.</p>
+            <div className="credential-grid credential-grid--single"><div><strong>Only required GitHub setting</strong><code>GITHUB_TOKEN=github_pat_…</code><small>A classic PAT with <code>repo</code> can see every repository your account can access; a fine-grained token shows only its selected owner and repositories. Organisation policy or SAML SSO can further limit either token.</small></div></div>
+          </>
+        ) : (
+          <>
+            <p>Shared SaaS deployments use OAuth for user identity and a GitHub App for least-privilege repository installations, webhooks, and multi-user operation.</p>
+            <div className="credential-grid"><div><strong>User identity</strong><code>GITHUB_OAUTH_CLIENT_ID</code><code>GITHUB_OAUTH_CLIENT_SECRET</code></div><div><strong>Repository installation</strong><code>GITHUB_APP_ID</code><code>GITHUB_PRIVATE_KEY</code><code>GITHUB_WEBHOOK_SECRET</code></div></div>
+          </>
+        )}
+      </section>
+      <section><h2>Quick commands</h2><p>Copy-ready commands for a full local installation and service-backed MCP.</p><div className="snippet-list">{snippets.map(([name, command]) => <div key={name}><span>{name}</span><code>{command}</code><button onClick={() => copy(name!, command!)}>{copied === name ? <Check size={15} /> : <Copy size={15} />}</button></div>)}</div></section>
+      <section><h2>Documentation</h2><p>Detailed, versioned guides live with the implementation.</p><div className="docs-links"><button onClick={() => copy("readme", "README.md")}><BookOpen size={17} /><span>README &amp; setup<small>README.md</small></span>{copied === "readme" ? <Check size={14} /> : <Copy size={14} />}</button><button onClick={() => copy("mcp-doc", "docs/mcp.md")}><Braces size={17} /><span>MCP setup &amp; prompt<small>docs/mcp.md</small></span>{copied === "mcp-doc" ? <Check size={14} /> : <Copy size={14} />}</button></div></section>
     </div>
   );
 }

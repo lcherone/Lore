@@ -30,7 +30,8 @@ import type {
   PolicyRecord,
   PullRequestImportLimit,
   RepositoryRetentionConfig,
-  RepositorySummary
+  RepositorySummary,
+  UserSettings
 } from "@lore/shared/types.js";
 import { Brand, Toast } from "./components.js";
 import { loreApi, type GitHubIntegrationStatus } from "./api.js";
@@ -105,6 +106,7 @@ export function App() {
     installFlowReady: false,
     webhooksReady: false
   });
+  const [userSettings, setUserSettings] = useState<UserSettings>();
   const [loadError, setLoadError] = useState<string>();
   const [mobileNav, setMobileNav] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -136,11 +138,21 @@ export function App() {
       setApiConnected(true);
       setLoadError(undefined);
       if (session.authenticated && session.activeOrganisation) {
-        const [snapshot, integration] = await Promise.all([loreApi.bootstrap(), loreApi.githubStatus()]);
+        const [snapshot, integration, configuredSettings] = await Promise.all([
+          loreApi.bootstrap(),
+          loreApi.githubStatus(),
+          loreApi.settings()
+        ]);
         setData(snapshot);
         setGitHubStatus(integration);
+        setUserSettings(configuredSettings.user);
+        if (!window.location.hash && !new URLSearchParams(window.location.search).has("invite")) {
+          window.location.hash = configuredSettings.user.startPage;
+          setPage(configuredSettings.user.startPage);
+        }
       } else {
         setData(emptySnapshot);
+        setUserSettings(undefined);
       }
       if (session.authenticated && new URLSearchParams(window.location.search).has("invite")) {
         window.location.hash = "organisations";
@@ -154,6 +166,17 @@ export function App() {
   }, []);
 
   useEffect(() => { void loadApplication(); }, [loadApplication]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const selected = userSettings?.theme ?? "system";
+      document.documentElement.dataset.theme = selected === "system" ? (query.matches ? "dark" : "light") : selected;
+    };
+    applyTheme();
+    query.addEventListener("change", applyTheme);
+    return () => query.removeEventListener("change", applyTheme);
+  }, [userSettings?.theme]);
 
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
@@ -488,6 +511,8 @@ export function App() {
             onImport={importHistory}
             onDelete={deleteRepository}
             onRetention={updateRepositoryRetention}
+            defaultImportLimit={userSettings?.defaultImportLimit ?? 100}
+            showGettingStarted={userSettings?.showGettingStarted ?? true}
           />
         );
       case "knowledge":
@@ -537,7 +562,12 @@ export function App() {
           />
         ) : null;
       case "settings":
-        return <SettingsPage mode={demoMode ? "demo" : "persistent"} />;
+        return (
+          <SettingsPage
+            canManageOrganisation={["owner", "admin"].includes(account?.activeOrganisation?.role ?? "member")}
+            onUserSettingsChanged={setUserSettings}
+          />
+        );
     }
   })();
 

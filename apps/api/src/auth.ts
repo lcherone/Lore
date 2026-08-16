@@ -12,8 +12,10 @@ export interface AuthContext {
   sessionId: string;
   userId: string;
   name: string;
+  authType: "session" | "api_token" | "synthetic";
   activeOrganisationId?: string;
   role?: OrganisationRole;
+  scopes?: Array<"read" | "write">;
   synthetic?: boolean;
 }
 
@@ -49,6 +51,31 @@ export async function resolveAuthentication(
   store: LoreStore,
   demoMode: boolean
 ): Promise<AuthContext | undefined> {
+  const authorization = Array.isArray(request.headers.authorization)
+    ? request.headers.authorization[0]
+    : request.headers.authorization;
+  if (authorization?.startsWith("Bearer ")) {
+    const rawToken = authorization.slice("Bearer ".length).trim();
+    if (rawToken.startsWith("lore_pat_") && rawToken.length >= 40) {
+      const token = await store.getApiToken(hashToken(rawToken));
+      if (token) {
+        const [user, role] = await Promise.all([
+          store.getUserProfile(token.userId),
+          store.getMembershipRole(token.organisationId, token.userId)
+        ]);
+        return {
+          sessionId: token.id,
+          userId: token.userId,
+          name: user.name,
+          authType: "api_token",
+          activeOrganisationId: token.organisationId,
+          role,
+          scopes: token.scopes
+        };
+      }
+    }
+  }
+
   const signed = request.cookies[SESSION_COOKIE];
   if (signed) {
     const result = request.unsignCookie(signed);
@@ -65,6 +92,7 @@ export async function resolveAuthentication(
           sessionId: session.id,
           userId: user.id,
           name: user.name,
+          authType: "session",
           ...(active ? { activeOrganisationId: active.id, role: active.role } : {})
         };
       }
@@ -76,30 +104,13 @@ export async function resolveAuthentication(
       sessionId: "demo-auto-session",
       userId: "user_casey",
       name: "Casey Hall",
+      authType: "synthetic",
       activeOrganisationId: DEMO_ORGANISATION_ID,
       role: "owner",
       synthetic: true
     };
   }
 
-  if (process.env.LOCAL_DEV_AUTH === "true") {
-    const appUrl = new URL(process.env.APP_URL ?? "http://localhost:5173");
-    if (!new Set(["localhost", "127.0.0.1", "::1"]).has(appUrl.hostname)) {
-      throw new LoreError("LOCAL_DEV_AUTH is restricted to loopback APP_URL values", "UNSAFE_LOCAL_AUTH", 500);
-    }
-    const organisationId = process.env.LOCAL_ORGANISATION_ID;
-    const userId = process.env.LOCAL_USER_ID;
-    if (!organisationId || !userId) throw new LoreError("Local auth IDs are not configured", "NOT_CONFIGURED", 503);
-    const role = await store.getMembershipRole(organisationId, userId);
-    return {
-      sessionId: "local-development-session",
-      userId,
-      name: process.env.LOCAL_USER_NAME ?? "Local Lore User",
-      activeOrganisationId: organisationId,
-      role,
-      synthetic: true
-    };
-  }
   return undefined;
 }
 

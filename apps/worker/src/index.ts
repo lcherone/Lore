@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { Queue, Worker } from "bullmq";
 import { z } from "zod";
 import { TypeScriptAnalyzer, PhpLanguageAnalyzer, LocalRepositoryIndexer, addGitHistoryRelationships } from "@lore/analysis/index.js";
-import { createBundledMockAIProvider, selectAIProvider } from "@lore/ai/index.js";
+import { createBundledMockAIProvider, createConfiguredAIProvider } from "@lore/ai/index.js";
 import { createLoreStore, createRedisConnection, LORE_QUEUE_NAME } from "@lore/database/index.js";
 import { assertTrustedRepositoryPath, LocalGit } from "@lore/git/index.js";
 import {
@@ -57,7 +58,8 @@ const extractionJobSchema = z.object({
 });
 
 const mockProvider = createBundledMockAIProvider();
-const aiProvider = selectAIProvider(process.env.AI_PROVIDER ?? "mock", { mock: mockProvider });
+const aiRuntime = createConfiguredAIProvider(process.env, mockProvider);
+const aiProvider = aiRuntime.provider;
 
 const worker = new Worker(
   LORE_QUEUE_NAME,
@@ -109,12 +111,14 @@ const worker = new Worker(
             });
       const importer = new GitHubImportService(provider, store);
       const imported = await importer.importMergedPullRequests(input.organisationId, repository, input.limit);
-      if (imported.evidenceIds.length > 0) {
+      const organisationSettings = await store.getOrganisationSettings(input.organisationId);
+      if (organisationSettings.autoExtractKnowledge && imported.evidenceIds.length > 0) {
+        const evidenceBatch = createHash("sha256").update(imported.evidenceIds.sort().join("\n")).digest("hex").slice(0, 16);
         await queue.add(
           "knowledge.extract",
           { organisationId: input.organisationId, repositoryId: input.repositoryId, evidenceIds: imported.evidenceIds },
           {
-            jobId: `extract-import-${input.repositoryId}-${input.authMode}-${input.limit}`,
+            jobId: `extract-import-${input.repositoryId}-${evidenceBatch}`,
             attempts: 3,
             removeOnComplete: 1_000,
             removeOnFail: 5_000
@@ -126,7 +130,11 @@ const worker = new Worker(
 
     if (job.name === "knowledge.extract") {
       const input = extractionJobSchema.parse(job.data);
-      const result = await new KnowledgeCandidateExtractionService(store, aiProvider).extract(input);
+      const result = await new KnowledgeCandidateExtractionService(
+        store,
+        aiProvider,
+        `${aiRuntime.name}-ai:knowledge-extractor/v1${aiRuntime.model ? `:${aiRuntime.model}` : ""}`
+      ).extract(input);
       return {
         evidenceAnalysed: result.evidenceAnalysed,
         proposals: result.proposals,

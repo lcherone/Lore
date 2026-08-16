@@ -8,6 +8,8 @@ import type {
   EvidenceRecord,
   SafetyReport
 } from "@lore/shared/types.js";
+import { lstat, readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { LocalConfig } from "./local-project.js";
 
 export interface LoreClient {
@@ -31,6 +33,26 @@ export interface LoreClient {
 export class HttpLoreClient implements LoreClient {
   public constructor(private readonly config: LocalConfig, private readonly token = process.env.LORE_API_TOKEN) {}
 
+  async #resolveToken(): Promise<string> {
+    if (this.token?.trim()) return this.token.trim();
+    const configuredPath = process.env.LORE_API_TOKEN_FILE?.trim() || this.config.apiTokenFile;
+    if (!configuredPath) {
+      throw new Error("Service mode requires LORE_API_TOKEN, LORE_API_TOKEN_FILE, or `lore connect --token-file ...`");
+    }
+    const path = resolve(configuredPath);
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error(`Lore API token path must be a regular non-symlink file: ${path}`);
+    if (metadata.size > 16_000) throw new Error("Lore API token file is unexpectedly large");
+    if (process.platform !== "win32" && (metadata.mode & 0o077) !== 0) {
+      throw new Error(`Lore API token permissions are too broad; run: chmod 600 ${path}`);
+    }
+    const value = (await readFile(path, "utf8")).trim();
+    if (!value.startsWith("lore_pat_") || value.length < 40 || /\s/.test(value)) {
+      throw new Error("Lore API token file does not contain one valid token");
+    }
+    return value;
+  }
+
   async snapshot(): Promise<DashboardSnapshot> {
     return this.#request("/api/bootstrap");
   }
@@ -49,7 +71,13 @@ export class HttpLoreClient implements LoreClient {
   async search(query: string, repositoryId?: string): Promise<Record<string, unknown>> {
     const parameters = new URLSearchParams({ q: query });
     if (repositoryId) parameters.set("repositoryId", repositoryId);
-    return this.#request(`/api/search?${parameters.toString()}`);
+    const result = await this.#request<Record<string, unknown>>(`/api/search?${parameters.toString()}`);
+    return {
+      mode: "service",
+      organisationId: this.config.organisationId,
+      repositoryId: repositoryId ?? this.config.repositoryId,
+      ...result
+    };
   }
 
   async uploadAnalysis(input: {
@@ -100,11 +128,12 @@ export class HttpLoreClient implements LoreClient {
   }
 
   async #request<T>(path: string, init?: RequestInit): Promise<T> {
+    const token = await this.#resolveToken();
     const response = await fetch(new URL(path, this.config.apiUrl), {
       ...init,
       headers: {
         "content-type": "application/json",
-        ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
+        authorization: `Bearer ${token}`,
         ...(init?.headers ?? {})
       }
     });

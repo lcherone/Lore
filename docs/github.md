@@ -82,19 +82,24 @@ LOCAL_ORGANISATION_ID=6f4f5ce6-9038-4ad2-b45e-f6de814555dd
 LOCAL_USER_ID=df9f1efc-1dfe-4df7-b02d-ce228da36e07
 ```
 
-Then run:
+For native services, run migrations, API/web, and worker in separate terminals:
 
 ```bash
 npm run setup:check
 npm run db:migrate
-npm run seed
 npm run dev
 ```
 
-In a second terminal:
-
 ```bash
 npm run worker
+```
+
+For the recommended production-shaped Docker workflow, use:
+
+```bash
+npm run local:setup
+npm run github:check -- D3R/soho-home
+npm run local:up
 ```
 
 For the full Docker stack, put the host token path in `.env` as `GITHUB_TOKEN_FILE`, then apply the token overlay:
@@ -104,26 +109,15 @@ GITHUB_AUTH_MODE=token
 GITHUB_TOKEN_FILE=/absolute/host/path/to/github-token
 ```
 
-```bash
-npm run setup:check -- --docker
-docker compose -f docker-compose.yml -f docker-compose.github-token.yml up --build
-```
+`npm run local:up` selects `docker-compose.github-token.yml` automatically when `GITHUB_AUTH_MODE=token` and `GITHUB_TOKEN_FILE` is configured. The overlay mounts the file read-only into the worker.
 
-The overlay mounts the file read-only into the worker. The API sees only readiness metadata, not the token contents.
+The API sees only readiness metadata, not the token contents.
 
 ### 4. Connect and import
 
-Open [http://localhost:5173/#repositories](http://localhost:5173/#repositories), select **Connect repository**, and enter the GitHub owner and repository name. Token mode deliberately has no installation-ID field.
+Open [http://localhost:5173/#repositories](http://localhost:5173/#repositories), select **Connect repository**, and paste its GitHub URL or enter `OWNER/REPOSITORY`. Token mode deliberately has no installation-ID field.
 
-Choose **Import history**. Start with 100 to validate access and retention. Choose **All merged PRs** only after the first import succeeds. “All” can make thousands of GitHub API requests on a mature repository and may take a long time; the job is idempotent, so rerunning it will not duplicate existing evidence.
-
-The equivalent API request is:
-
-```bash
-curl -X POST http://127.0.0.1:3001/api/repositories/REPOSITORY_ID/github-import \
-  -H 'content-type: application/json' \
-  -d '{"limit":"all"}'
-```
+Choose **Import history**. Start with 50 or 100 to validate access and retention. Choose **All merged PRs** only after the first import succeeds. “All” can make thousands of GitHub API requests on a mature repository and may take a long time; the job is idempotent, so rerunning it will not duplicate existing evidence. Production-mode writes require an authenticated session and CSRF token, which the web application supplies.
 
 Accepted limits are `50`, `100`, `250`, `500`, `1000`, and `"all"`.
 
@@ -181,12 +175,9 @@ GITHUB_WEBHOOK_SECRET=replace-with-the-generated-random-value
 
 `GITHUB_PRIVATE_KEY=` accepts an inline PEM with literal `\n` separators for a real secret manager or CI system. Do not flatten a PEM manually if a file can be mounted instead.
 
-For Docker, set `GITHUB_PRIVATE_KEY_FILE` to the absolute host PEM path and use:
+For Docker, set `GITHUB_PRIVATE_KEY_FILE` to the absolute host PEM path.
 
-```bash
-npm run setup:check -- --docker
-docker compose -f docker-compose.yml -f docker-compose.github.yml up --build
-```
+`npm run local:up` selects `docker-compose.github.yml` automatically when `GITHUB_AUTH_MODE=app` and `GITHUB_PRIVATE_KEY_FILE` is configured.
 
 ### 3. Receive local webhooks
 
