@@ -37,12 +37,14 @@ The browser cannot choose a server filesystem path. A local CLI indexes its own 
 ## Executable surfaces
 
 - `apps/api` authenticates, revalidates membership, applies CSRF to cookie writes, validates HTTP input, and calls application services.
+- API job requests first persist a PostgreSQL `JobRun`, initial `JobEvent`, and outbox intent, then dispatch to BullMQ. A bounded reconciler retries due intents after Redis recovery.
 - `apps/worker` performs trusted-path indexing, local PAT or installation-scoped App imports, proposal extraction, and knowledge-health jobs. Credentials are resolved in the worker and never travel in queue payloads.
+- The worker records attempts, retry/dead-letter outcomes, bounded errors, and terminal result summaries in the durable job ledger; scheduled jobs acquire a run when execution begins.
 - `apps/cli` provides explicit local, demo, and service authority plus machine-readable output.
 - `apps/mcp` exposes narrow read/query/verify tools to coding agents using the checkout's explicit authority.
 - `apps/web` is the human control plane for onboarding, candidates, knowledge, policies, repositories, and reports.
 
-Domain behaviour lives in `packages/*`. PostgreSQL is the durable source of truth in persistent mode. Redis coordinates jobs but is not durable product state. The in-memory store is an explicit demo adapter, never a service failure fallback.
+Domain behaviour lives in `packages/*`. PostgreSQL is the durable source of truth in persistent mode, including queue intent and job outcomes. Redis coordinates delivery, retries, and schedules but is not the sole product record. The in-memory store is an explicit demo adapter, never a service failure fallback.
 
 ## Closed-loop lifecycle
 

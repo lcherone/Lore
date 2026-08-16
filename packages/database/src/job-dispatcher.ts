@@ -1,8 +1,11 @@
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import type { JobDispatcher } from "@lore/core/index.js";
+import type { LoreJobName } from "@lore/shared/types.js";
+import type { JobLedger } from "./job-ledger.js";
 
 export const LORE_QUEUE_NAME = "lore-jobs";
+export const normalizeJobId = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, "_");
 
 export function createRedisConnection(redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379"): Redis {
   return new Redis(redisUrl, { maxRetriesPerRequest: null, enableReadyCheck: true });
@@ -23,12 +26,12 @@ export class BullMqJobDispatcher implements JobDispatcher {
   }
 
   async dispatch(
-    name: "repository.index" | "github.import" | "knowledge.extract" | "knowledge.health",
+    name: LoreJobName,
     payload: Record<string, unknown>,
     idempotencyKey: string
   ): Promise<{ id: string }> {
     const job = await this.#queue.add(name, payload, {
-      jobId: idempotencyKey.replace(/[^a-zA-Z0-9_-]/g, "_"),
+      jobId: normalizeJobId(idempotencyKey),
       attempts: 3,
       backoff: { type: "exponential", delay: 2_000 },
       removeOnComplete: 1_000,
@@ -77,7 +80,7 @@ export class InMemoryJobDispatcher implements JobDispatcher {
 
   async health(): Promise<void> {}
 
-  async dispatch(name: "repository.index" | "github.import" | "knowledge.extract" | "knowledge.health", payload: Record<string, unknown>, idempotencyKey: string): Promise<{ id: string }> {
+  async dispatch(name: LoreJobName, payload: Record<string, unknown>, idempotencyKey: string): Promise<{ id: string }> {
     const existing = this.jobs.find((job) => job.id === idempotencyKey);
     if (!existing) this.jobs.push({ id: idempotencyKey, name, payload: structuredClone(payload) });
     return { id: idempotencyKey };
@@ -101,4 +104,48 @@ export class InMemoryJobDispatcher implements JobDispatcher {
     this.schedulers.splice(index, 1);
     return true;
   }
+}
+
+export class PersistentJobDispatcher implements JobDispatcher {
+  public constructor(private readonly delegate: JobDispatcher, private readonly ledger: JobLedger) {}
+
+  async health(): Promise<void> { await this.delegate.health(); }
+
+  async dispatch(name: LoreJobName, payload: Record<string, unknown>, idempotencyKey: string): Promise<{ id: string; deferred?: boolean }> {
+    const organisationId = typeof payload.organisationId === "string" ? payload.organisationId : undefined;
+    if (!organisationId) return this.delegate.dispatch(name, payload, idempotencyKey);
+    const repositoryId = typeof payload.repositoryId === "string" ? payload.repositoryId : undefined;
+    const run = await this.ledger.enqueue({ organisationId, ...(repositoryId ? { repositoryId } : {}), name, payload, idempotencyKey });
+    try {
+      const dispatched = await this.delegate.dispatch(name, { ...payload, loreJobRunId: run.id }, idempotencyKey);
+      await this.ledger.markDispatched(run.id, dispatched.id);
+      return { id: run.id };
+    } catch (error) {
+      await this.ledger.markDispatchFailure(run.id, error);
+      return { id: run.id, deferred: true };
+    }
+  }
+
+  async schedule(name: "github.import" | "knowledge.health", payload: Record<string, unknown>, schedulerId: string, everyMs: number): Promise<{ id: string }> {
+    if (!this.delegate.schedule) throw new Error("The configured job transport does not support schedules");
+    return this.delegate.schedule(name, payload, schedulerId, everyMs);
+  }
+
+  async unschedule(schedulerId: string): Promise<boolean> { return this.delegate.unschedule ? this.delegate.unschedule(schedulerId) : false; }
+
+  async reconcile(): Promise<number> {
+    let dispatched = 0;
+    for (const pending of await this.ledger.pending()) {
+      try {
+        const job = await this.delegate.dispatch(pending.name, { ...pending.payload, loreJobRunId: pending.runId }, pending.idempotencyKey);
+        await this.ledger.markDispatched(pending.runId, job.id);
+        dispatched += 1;
+      } catch (error) {
+        await this.ledger.markDispatchFailure(pending.runId, error);
+      }
+    }
+    return dispatched;
+  }
+
+  async close(): Promise<void> { await this.delegate.close?.(); }
 }

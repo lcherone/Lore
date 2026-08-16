@@ -22,6 +22,7 @@ Usage:
 
 No database, Redis, GitHub credential, or AI key is required. The demo uses
 realistic in-memory data and never imports a local repository automatically.
+It is an explicit development-only preview; normal local starts never use it.
 EOF
 }
 
@@ -43,9 +44,13 @@ ensure_dependencies() {
 }
 
 demo_environment=(
+  NODE_ENV=development
   DEMO_MODE=true
   DEMO_REQUIRE_LOGIN=true
   GITHUB_AUTH_MODE=disabled
+  GITHUB_TOKEN=
+  AI_PROVIDER=mock
+  OPENAI_API_KEY=
   API_HOST=127.0.0.1
   APP_URL=http://localhost:5173
   WEB_ORIGIN=http://localhost:5173

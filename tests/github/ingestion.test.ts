@@ -19,13 +19,42 @@ describe("GitHub evidence ingestion", () => {
   it("is idempotent across repeated historical imports", async () => {
     const pullRequests = JSON.parse(await readFile(fixture, "utf8")) as PullRequestImport[];
     const provider: SourceControlProvider = { listMergedPullRequests: async () => pullRequests };
-    const store = new InMemoryLoreStore();
     const snapshot = createDemoSnapshot();
+    const store = new InMemoryLoreStore(snapshot, []);
     const importer = new GitHubImportService(provider, store);
     const first = await importer.importMergedPullRequests(snapshot.organisation.id, snapshot.repositories[0]!, 100);
     const second = await importer.importMergedPullRequests(snapshot.organisation.id, snapshot.repositories[0]!, 100);
     expect(first.evidenceAdded).toBeGreaterThan(0);
+    expect(first.evidenceUpdated).toBe(0);
+    expect(first.evidenceIds.length).toBe(first.evidenceAdded);
     expect(second.evidenceAdded).toBe(0);
+    expect(second.evidenceUpdated).toBe(0);
+    expect(second.evidenceIds).toEqual([]);
+  });
+
+  it("retains immutable revisions and re-queues changed upstream evidence", async () => {
+    const original = JSON.parse(await readFile(fixture, "utf8")) as PullRequestImport[];
+    let body = original[0]!.body;
+    const provider: SourceControlProvider = {
+      listMergedPullRequests: async () => [{ ...original[0]!, body }]
+    };
+    const snapshot = createDemoSnapshot();
+    const store = new InMemoryLoreStore(snapshot, []);
+    const importer = new GitHubImportService(provider, store);
+    await importer.importMergedPullRequests(snapshot.organisation.id, snapshot.repositories[0]!, 100);
+    const evidenceId = (await store.getEvidence(snapshot.organisation.id)).find(
+      (record) => record.externalId.endsWith(`:pr:${original[0]!.number}`)
+    )!.id;
+
+    body = `${body}\n\nClarification added after merge.`;
+    const second = await importer.importMergedPullRequests(snapshot.organisation.id, snapshot.repositories[0]!, 100);
+    expect(second).toMatchObject({ evidenceAdded: 0, evidenceUpdated: 1 });
+    expect(second.evidenceIds).toContain(evidenceId);
+    const revisions = await store.getEvidenceRevisions(snapshot.organisation.id, evidenceId);
+    expect(revisions).toHaveLength(2);
+    expect(revisions[0]?.content).not.toContain("Clarification added after merge.");
+    expect(revisions[1]?.content).toContain("Clarification added after merge.");
+    expect(revisions[0]?.contentHash).not.toBe(revisions[1]?.contentHash);
   });
 
   it("applies repository retention before evidence is persisted", async () => {

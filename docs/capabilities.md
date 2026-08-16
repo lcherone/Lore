@@ -19,11 +19,13 @@ Last reviewed: 2026-08-16.
 
 | Authority          | Selected by                              | Data source                                         | Behaviour when unavailable                                    |
 | ------------------ | ---------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------- |
-| Web/API demo       | `DEMO_MODE=true`                         | Seeded in-process store and simulated job responses | Does not contact PostgreSQL, Redis, GitHub, or an AI provider |
-| Persistent service | `DEMO_MODE=false`                        | PostgreSQL plus Redis/BullMQ                        | Readiness fails; it does not fall back to fixtures            |
+| Web/API demo       | `npm run demo` (`NODE_ENV=development`, `DEMO_MODE=true`) | Seeded in-process store and simulated job responses | Does not contact PostgreSQL, Redis, GitHub, or an AI provider |
+| Persistent service | Normal API/local commands (`DEMO_MODE` absent or `false`) | PostgreSQL plus Redis/BullMQ                        | Readiness fails; it does not fall back to fixtures            |
 | CLI/MCP local      | `.lore/config.json` with `mode: local`   | Local AST/Git index and no organisational knowledge | Returns empty organisational knowledge until connected        |
 | CLI/MCP demo       | `.lore/config.json` with `mode: demo`    | Bundled fixture graph and knowledge                 | Explicitly labelled demo authority                            |
-| CLI/MCP service    | `.lore/config.json` with `mode: service` | Lore HTTP API plus local source analysis            | Requests fail visibly if the service or token is unavailable  |
+| CLI/MCP service    | `.lore/config.json` with `mode: service` | Lore HTTP API plus local source analysis            | Local loopback uses PAT identity; remote requests require a Lore token and fail visibly when unavailable |
+
+Every native API mode defaults to `127.0.0.1`. In full production, the API enforces exact configured Host and Origin boundaries; cookie-authenticated writes additionally require CSRF. Compose explicitly listens on all interfaces inside its private container network but publishes the API only on host loopback.
 
 ## API routes
 
@@ -44,6 +46,11 @@ Last reviewed: 2026-08-16.
 | `GET /api/auth/csrf`    | CSRF bootstrap when production cookie auth enables it |
 | `GET /api/account/profile` | Read the GitHub-seeded personal profile |
 | `PATCH /api/account/profile` | Update editable personal profile fields |
+| `GET /api/settings` | Read user, organisation, deployment, and agent-token settings |
+| `PATCH /api/settings/user` | Update the current user's preferences |
+| `PATCH /api/settings/organisation` | Update owner/admin organisation automation and retention defaults |
+| `POST /api/account/tokens` | Create an organisation-scoped personal agent token and reveal it once |
+| `DELETE /api/account/tokens/:id` | Revoke one of the current user's organisation tokens |
 | `GET /api/organisations` | List the account's organisation memberships |
 | `POST /api/organisations` | Create a private organisation and rotate into it |
 | `GET /api/organisations/:id` | Read organisation members and pending invitations |
@@ -62,6 +69,7 @@ Last reviewed: 2026-08-16.
 | Route                                      | Current capability                                                  |
 | ------------------------------------------ | ------------------------------------------------------------------- |
 | `POST /api/repositories`                   | Connect repository metadata; browser input cannot set `localPath`   |
+| `POST /api/repositories/batch`             | Idempotently connect up to 500 repositories and report skipped entries |
 | `POST /api/repositories/:id/index`         | Queue trusted-root server indexing or return a truthful demo result |
 | `PUT /api/repositories/:id/analysis`       | Accept a bounded, tenant-checked local graph upload                 |
 | `POST /api/repositories/:id/github-import` | Queue bounded or complete merged-PR history import                  |
@@ -89,6 +97,8 @@ Last reviewed: 2026-08-16.
 | -------------------------------------------- | ---------------------------------------------------------------- |
 | `GET /api/knowledge`                         | List active and lifecycle knowledge                              |
 | `GET /api/evidence`                          | List retained evidence                                           |
+| `GET /api/evidence/:id/revisions`            | Read immutable source revisions in version order                 |
+| `GET /api/jobs`                              | Read durable dispatch, retry, worker, and terminal job history   |
 | `POST /api/evidence/communications`          | Retain and analyse an authorised note or transcript              |
 | `GET /api/search`                            | Search knowledge, evidence, and indexed entities                 |
 | `GET /api/knowledge-export`                  | Export organisation knowledge as JSON or Markdown                |
@@ -111,6 +121,7 @@ Last reviewed: 2026-08-16.
 | Route                      | Current capability                                                                     |
 | -------------------------- | -------------------------------------------------------------------------------------- |
 | `GET /api/github/install`  | Start configured GitHub App installation flow                                          |
+| `GET /api/github/repositories` | List every repository visible to the configured local PAT without exposing it |
 | `GET /api/github/status`   | Report token/App/demo readiness without returning credentials                          |
 | `GET /api/github/callback` | Validate signed setup state and return installation metadata                           |
 | `POST /api/github/webhook` | Verify HMAC, route by installation/repository, ingest evidence, and request extraction |
@@ -120,17 +131,17 @@ Last reviewed: 2026-08-16.
 | Job                 | Current executor                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------ |
 | `repository.index`  | Validates a configured trusted root, indexes AST/Git history, and persists the graph |
-| `github.import`     | Resolves worker-only PAT/App credentials, imports evidence, then queues extraction   |
-| `knowledge.extract` | Runs the deterministic validated extractor and creates review candidates             |
+| `github.import`     | Resolves PAT/App credentials, imports paginated evidence, versions edits, and queues new/changed evidence for extraction |
+| `knowledge.extract` | Runs the configured mock or real OpenAI structured-output provider and creates review candidates |
 | `knowledge.health`  | Recalculates current knowledge health signals                                        |
 
-BullMQ supplies transport retries and deterministic job IDs. Durable `JobRun`, progress, cancellation, dead-letter review, and transactional outbox state are planned work, not current capabilities.
+BullMQ supplies transport retries and recurring job schedulers. Repository connect queues a fresh initial job and upserts the organisation-configured sync schedule. PostgreSQL stores each API dispatch intent, its outbox state, append-only lifecycle events, attempts, errors, and terminal result summary. A 30-second API reconciler replays due outbox entries after transport recovery; scheduled jobs are registered when a worker starts them. Cancellation, operator replay controls, progress percentages, and atomic business-event-plus-outbox writes remain planned.
 
 ## Human control surface
 
-The React application currently exposes GitHub login, a demo login, GitHub-seeded editable profiles, active-session revocation, organisation creation/switching, role and member management, copyable verified-email invitations, dashboard context preparation, repository connection/import/retention/deletion, ad-hoc communication evidence capture, transcript analysis with comparison outcomes, candidate review and merge, knowledge creation/challenge/archive, policy creation, reviewer views, sessions, safety reports, onboarding help, keyboard navigation, and explicit disconnected/loading states.
+The React application currently exposes PAT-backed automatic local identity, SaaS GitHub login, a demo login, GitHub-seeded editable profiles, active-session revocation, organisation creation/switching, role/member management, copyable verified-email invitations, personal and organisation settings, deployment/configuration status, SaaS agent-token management, searchable token-backed repository discovery and bulk connection, automatic/manual import, retention/deletion, durable background activity, ad-hoc communication evidence, transcript analysis, candidate review/merge, knowledge lifecycle, policy creation, reviewer views, sessions, safety reports, onboarding help, keyboard navigation, and explicit disconnected/loading states.
 
-The following are not shipped: enterprise SSO/SAML, MFA policy enforcement, SCIM, ownership transfer/deletion recovery, email delivery, a durable GitHub installation ownership model, Jira/Linear/Slack/Stoker connectors, a real AI provider, billing, hosted multi-tenant SaaS, job administration, GitHub Check publication, or automatic policy/knowledge approval.
+The following are not shipped: enterprise SSO/SAML, MFA policy enforcement, SCIM, ownership transfer/deletion recovery, email delivery, a durable GitHub installation ownership model, Jira/Linear/Slack/Stoker connectors, billing, hosted multi-tenant SaaS, job administration, GitHub Check publication, or automatic policy/knowledge approval.
 
 ## Maintenance rule
 

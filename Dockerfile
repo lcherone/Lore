@@ -6,7 +6,9 @@ RUN apt-get update \
 COPY package.json package-lock.json* ./
 RUN npm ci
 COPY . .
-RUN npm run build
+# Prisma's generated types plus the strict monorepo check can exceed Node's
+# architecture-dependent default heap in otherwise adequately sized builders.
+RUN NODE_OPTIONS=--max-old-space-size=2048 npm run build
 
 FROM builder AS tools
 

@@ -1,9 +1,18 @@
+import "dotenv/config";
 import { createHash } from "node:crypto";
-import { Queue, Worker } from "bullmq";
+import { Queue, Worker, type Job } from "bullmq";
 import { z } from "zod";
 import { TypeScriptAnalyzer, PhpLanguageAnalyzer, LocalRepositoryIndexer, addGitHistoryRelationships } from "@lore/analysis/index.js";
 import { createBundledMockAIProvider, createConfiguredAIProvider } from "@lore/ai/index.js";
-import { createLoreStore, createRedisConnection, LORE_QUEUE_NAME } from "@lore/database/index.js";
+import {
+  BullMqJobDispatcher,
+  createPrismaClient,
+  createRedisConnection,
+  LORE_QUEUE_NAME,
+  PersistentJobDispatcher,
+  PrismaJobLedger,
+  PrismaLoreStore
+} from "@lore/database/index.js";
 import { assertTrustedRepositoryPath, LocalGit } from "@lore/git/index.js";
 import {
   GitHubImportService,
@@ -12,8 +21,12 @@ import {
 } from "@lore/github/index.js";
 import { KnowledgeCandidateExtractionService, KnowledgeHealthService } from "@lore/knowledge/index.js";
 import { loadGitHubPrivateKey, loadGitHubToken } from "./github-credentials.js";
+import type { LoreJobName } from "@lore/shared/types.js";
 
-const store = createLoreStore({ ...process.env, DEMO_MODE: "false" });
+const prisma = createPrismaClient();
+const store = new PrismaLoreStore(prisma);
+const jobLedger = new PrismaJobLedger(prisma);
+const nestedJobs = new PersistentJobDispatcher(new BullMqJobDispatcher(process.env.REDIS_URL), jobLedger);
 const connection = createRedisConnection();
 const queue = new Queue(LORE_QUEUE_NAME, { connection });
 const git = new LocalGit();
@@ -61,9 +74,7 @@ const mockProvider = createBundledMockAIProvider();
 const aiRuntime = createConfiguredAIProvider(process.env, mockProvider);
 const aiProvider = aiRuntime.provider;
 
-const worker = new Worker(
-  LORE_QUEUE_NAME,
-  async (job) => {
+const executeJob = async (job: Job): Promise<unknown> => {
     const startedAt = Date.now();
     if (job.name === "repository.index") {
       const input = indexJobSchema.parse(job.data);
@@ -114,15 +125,10 @@ const worker = new Worker(
       const organisationSettings = await store.getOrganisationSettings(input.organisationId);
       if (organisationSettings.autoExtractKnowledge && imported.evidenceIds.length > 0) {
         const evidenceBatch = createHash("sha256").update(imported.evidenceIds.sort().join("\n")).digest("hex").slice(0, 16);
-        await queue.add(
+        await nestedJobs.dispatch(
           "knowledge.extract",
           { organisationId: input.organisationId, repositoryId: input.repositoryId, evidenceIds: imported.evidenceIds },
-          {
-            jobId: `extract-import-${input.repositoryId}-${evidenceBatch}`,
-            attempts: 3,
-            removeOnComplete: 1_000,
-            removeOnFail: 5_000
-          }
+          `extract-import-${input.repositoryId}-${evidenceBatch}`
         );
       }
       return imported;
@@ -157,6 +163,39 @@ const worker = new Worker(
     }
 
     throw new Error(`Unsupported Lore job: ${job.name}`);
+};
+
+const worker = new Worker(
+  LORE_QUEUE_NAME,
+  async (job) => {
+    const data = job.data && typeof job.data === "object"
+      ? job.data as Record<string, unknown>
+      : {};
+    const organisationId = typeof data.organisationId === "string" ? data.organisationId : undefined;
+    const repositoryId = typeof data.repositoryId === "string" ? data.repositoryId : undefined;
+    const suppliedRunId = typeof data.loreJobRunId === "string" ? data.loreJobRunId : undefined;
+    const attempt = job.attemptsMade + 1;
+    const maximumAttempts = Number(job.opts.attempts ?? 1);
+    let runId: string | undefined;
+    if (organisationId) {
+      runId = await jobLedger.markRunning({
+        ...(suppliedRunId ? { runId: suppliedRunId } : {}),
+        organisationId,
+        ...(repositoryId ? { repositoryId } : {}),
+        name: job.name as LoreJobName,
+        externalJobId: String(job.id),
+        attempt,
+        maximumAttempts
+      });
+    }
+    try {
+      const result = await executeJob(job);
+      if (runId) await jobLedger.markSucceeded(runId, result);
+      return result;
+    } catch (error) {
+      if (runId) await jobLedger.markFailed(runId, error, attempt >= maximumAttempts);
+      throw error;
+    }
   },
   { connection, concurrency: Number(process.env.WORKER_CONCURRENCY ?? 4) }
 );
@@ -171,8 +210,10 @@ worker.on("failed", (job, error) => {
 
 const shutdown = async (): Promise<void> => {
   await worker.close();
+  await nestedJobs.close();
   await queue.close();
   await connection.quit();
+  await prisma.$disconnect();
 };
 process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());

@@ -99,6 +99,16 @@ describe("working API vertical slice", () => {
     });
     expect(queued.statusCode).toBe(202);
     expect(jobs.jobs.some((job) => job.name === "github.import")).toBe(true);
+    const activity = await app.inject({ method: "GET", url: "/api/jobs?limit=10" });
+    expect(activity.statusCode).toBe(200);
+    expect(activity.json<{ items: Array<Record<string, unknown>> }>().items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ organisationId: "org_acme", name: "github.import", state: "dispatched" }),
+        expect.objectContaining({ organisationId: "org_acme", name: "knowledge.extract", state: "running" })
+      ])
+    );
+    expect(JSON.stringify(activity.json())).not.toContain("evidenceIds");
+    expect(JSON.stringify(activity.json())).not.toContain("payload");
 
     const retention = await app.inject({
       method: "PATCH",

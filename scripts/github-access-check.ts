@@ -22,7 +22,7 @@ async function tokenFromEnvironment(): Promise<string> {
   if (inline) return inline;
   const configuredPath = process.env.GITHUB_TOKEN_PATH?.trim() || process.env.GITHUB_TOKEN_FILE?.trim();
   if (!configuredPath) {
-    throw new Error("Set GITHUB_TOKEN_FILE (Docker) or GITHUB_TOKEN_PATH (native) to an owner-only token file");
+    throw new Error("Set GITHUB_TOKEN in .env");
   }
   const path = resolve(configuredPath);
   const metadata = await lstat(path);
@@ -58,12 +58,8 @@ async function expectReadable(path: string, token: string, label: string): Promi
 }
 
 async function main(): Promise<void> {
-  const target = process.argv[2] ?? process.env.LORE_TEST_REPOSITORY;
-  if (!target) throw new Error("Pass OWNER/REPOSITORY, for example: npm run github:check -- D3R/soho-home");
-  if ((process.env.GITHUB_AUTH_MODE?.trim() || "token") !== "token") {
-    throw new Error("This preflight checks fine-grained PAT access; set GITHUB_AUTH_MODE=token");
-  }
-
+  const target = process.argv[2];
+  if (!target) throw new Error("Pass OWNER/REPOSITORY, for example: npm run github:check -- acme/commerce");
   const repository = parseRepository(target);
   const token = await tokenFromEnvironment();
   const encodedOwner = encodeURIComponent(repository.owner);

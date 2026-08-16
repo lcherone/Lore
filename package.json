@@ -9,6 +9,7 @@
     "lore-mcp": "./dist/mcp.js"
   },
   "scripts": {
+    "local": "bash scripts/lore-local.sh quickstart",
     "dev": "concurrently -n api,web -c blue,red \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch apps/api/src/server.ts",
     "dev:web": "vite --config apps/web/vite.config.ts",
@@ -16,10 +17,14 @@
     "demo:check": "bash scripts/lore-demo.sh check",
     "local:setup": "bash scripts/lore-local.sh setup",
     "local:up": "bash scripts/lore-local.sh up",
+    "local:start": "bash scripts/lore-local.sh start",
     "local:check": "bash scripts/lore-local.sh check",
     "local:status": "bash scripts/lore-local.sh status",
     "local:logs": "bash scripts/lore-local.sh logs",
     "local:down": "bash scripts/lore-local.sh down",
+    "local:backup": "bash scripts/lore-local.sh backup",
+    "local:install": "bash scripts/lore-local.sh install",
+    "local:uninstall": "bash scripts/lore-local.sh uninstall",
     "github:check": "tsx scripts/github-access-check.ts",
     "ai:check": "tsx scripts/ai-check.ts",
     "build": "npm run db:generate && npm run typecheck && tsup && vite build --config apps/web/vite.config.ts",
@@ -40,6 +45,8 @@
     "mcp:check": "tsx scripts/mcp-smoke.ts",
     "cli": "tsx apps/cli/src/index.ts",
     "smoke:persistent": "tsx scripts/persistent-smoke.ts",
+    "smoke:evidence": "tsx scripts/evidence-revision-smoke.ts",
+    "smoke:jobs": "tsx scripts/job-lifecycle-smoke.ts",
     "smoke:queue": "tsx scripts/queue-smoke.ts",
     "setup:check": "tsx scripts/setup-check.ts"
   },

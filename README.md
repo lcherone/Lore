@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square" alt="Strict TypeScript" />
   <img src="https://img.shields.io/badge/Node.js-22%2B-13a05a?style=flat-square" alt="Node.js 22 or newer" />
   <img src="https://img.shields.io/badge/React-19-087ea4?style=flat-square" alt="React 19" />
-  <img src="https://img.shields.io/badge/GitHub-PAT%20or%20App-f04e3e?style=flat-square" alt="GitHub PAT or App" />
+  <img src="https://img.shields.io/badge/local%20GitHub-one%20PAT-f04e3e?style=flat-square" alt="Local GitHub uses one PAT" />
   <img src="https://img.shields.io/badge/local--first-source%20stays%20local-0b8f72?style=flat-square" alt="Local-first source analysis" />
 </p>
 
@@ -31,7 +31,23 @@
 
 Lore is built around a simple rule: no knowledge gets authority merely because a model said so. Static analysis establishes structure. Git establishes history. Evidence establishes credibility. Humans establish policy. AI may propose narrowly scoped candidates, but it cannot approve itself or mutate policy directly.
 
+## Full local install
+
+With Docker running, use the guided one-command setup:
+
+```bash
+npm run local
+```
+
+The command securely prompts for the one PAT when it is not configured, preserves your existing OpenAI key, generates the session secret, verifies both providers, builds, migrates, and starts Lore. Open [http://localhost:5173](http://localhost:5173). One `GITHUB_TOKEN` supplies your local GitHub profile, the token-backed repository picker, and read-only PR evidence. No OAuth callback, GitHub App, private key, token file, installation ID, or fixed local user/organisation ID is required. PostgreSQL and Redis persist everything, and `npm run local:install` makes Lore start at macOS login. Follow the [complete local guide](docs/local-production.md).
+
 ## See Lore working
+
+Unauthenticated visitors start on Lore's public product page. It explains the evidence-to-knowledge workflow, GitHub and communication ingestion, human approval boundary, task context, safety reports, local-first operation, and the path to governed team deployment. **Explore Lore** opens the focused sign-in screen; an authenticated local user enters the workspace directly.
+
+<p align="center">
+  <img src="docs/assets/screenshots/lore-homepage.png" alt="Lore public homepage explaining evidence-backed engineering memory with a real product dashboard" width="100%" />
+</p>
 
 <p align="center">
   <img src="docs/assets/screenshots/lore-dashboard.png" alt="Lore dashboard showing task preparation, knowledge health, pending candidates, and recent safety reports" width="100%" />
@@ -47,7 +63,7 @@ Prerequisite: Node.js 22+ with npm.
 npm run demo
 ```
 
-Open [http://localhost:5173](http://localhost:5173) and choose **Explore the demo account**. The demo command installs dependencies when missing and starts realistic in-memory data. It requires no database, Redis, GitHub account, PAT, or AI key. Stop it with <kbd>Ctrl+C</kbd>.
+Open [http://localhost:5173](http://localhost:5173), choose **Explore Lore**, then **Explore the demo account**. The demo command installs dependencies when missing and starts realistic in-memory data. It requires no database, Redis, GitHub account, PAT, or AI key. Stop it with <kbd>Ctrl+C</kbd>.
 
 To prove the same API and web path without leaving processes running:
 
@@ -89,16 +105,17 @@ It stays quiet when nothing applies and specific when something does.
 
 | Feature | What it gives you | How it works |
 | --- | --- | --- |
-| **GitHub login and profiles** | One personal account with an editable profile initially populated from GitHub | OAuth code flow with state + PKCE, verified email, stable GitHub ID, discarded login token, and opaque revocable Lore sessions |
+| **GitHub identity and profiles** | One personal account with an editable profile initially populated from GitHub | One PAT in loopback-only local mode; OAuth code flow and revocable Lore sessions in shared/SaaS mode |
 | **Organisations and roles** | Private workspaces, invitations, switching, and owner/admin/member/viewer access | Live membership checks, email-bound invitation acceptance, server-side selected tenant, and session rotation on organisation changes |
 | **Task context** | Relevant files, symbols, impact, policy, decisions, tests, and unknowns before editing | Deterministic retrieval plus bounded graph traversal |
 | **Local repository graph** | Structural and historical relationships without uploading the checkout | TypeScript/JavaScript and PHP ASTs plus bounded Git/co-change analysis |
-| **GitHub memory** | Merged PRs, review bodies, inline/conversation comments, commits, paths, and patches | Fine-grained PAT or App installation, fully paginated and idempotent |
+| **GitHub memory** | Automatic merged PRs, review bodies, inline/conversation comments, commits, paths, and optional patches | Token-backed repository discovery, complete initial pagination, recurring sync, immutable source revisions, and new-or-edited-evidence extraction |
 | **Knowledge registry** | Typed facts, decisions, rules, preferences, regressions, warnings, and policies | Scoped, revisioned, evidence-linked records with health and confidence |
 | **Communication evidence** | Decisions and cautions from Slack, calls, meetings, email, in-person notes, and full standup transcripts | Retains provenance, extracts explicit signals, and labels new, duplicate, supporting, or conflicting suggestions for review |
 | **Candidate review** | Human control over what Lore learned | Edit, narrow, change type, merge, approve, reject, or challenge with audit history |
 | **Deterministic policy** | Explainable blockers and warnings | Human-owned detectors inspect changed paths and added lines—not model opinion |
 | **Agent sessions** | Context and change observation around an agent run | Prepare, observe working-set expansion, refresh, and verify the terminal diff |
+| **Durable background activity** | Visible imports, indexing, AI extraction, retries, failures, and outcomes | PostgreSQL job ledger and outbox, Redis transport, worker lifecycle events, and automatic reconciliation |
 | **Safety reports** | An independent completion check | Git change discovery, bounded impact, policy, regressions, related tests, and unknowns |
 | **Reviewer knowledge** | Relevant expertise and advisory preferences with provenance | Scoped observations with source evidence and challenge/confirmation lifecycle |
 | **CLI and MCP** | Prepare/search/impact/verify inside developer and agent workflows | Local CLI authority or stdio MCP over explicit repository configuration |
@@ -126,7 +143,7 @@ lore context
 
 Evidence can create a candidate, never automatic authority. Candidate review shows the proposed statement, type, exact repository/path/symbol scope, sources, contradictions, and every confidence factor. Approval creates an audited knowledge revision; rejection keeps the evidence without polluting active guidance.
 
-Use **Add evidence** for context that never reached GitHub. Paste one message or an entire standup transcript; Lore retains the original source, ignores ordinary status updates, rewords explicit decisions/rules/preferences into candidates, and compares them with approved knowledge. Exact re-submissions are idempotent. The bundled local extractor makes no external AI request, and every result still requires human review. See [Ad-hoc communication evidence](docs/features.md#ad-hoc-messages-calls-and-standup-transcripts) for the privacy boundary and a complete example.
+Use **Add evidence** for context that never reached GitHub. Paste one message or an entire standup transcript; Lore retains the original source, ignores ordinary status updates, rewords explicit decisions/rules/preferences into candidates, and compares them with approved knowledge. Exact re-submissions are idempotent. Full local mode uses the configured schema-validated OpenAI provider; every result still requires human review. See [Ad-hoc communication evidence](docs/features.md#ad-hoc-messages-calls-and-standup-transcripts) for the privacy boundary and a complete example.
 
 ## Verify the final change
 
@@ -227,26 +244,25 @@ See [onboarding](docs/onboarding.md) for the full local/service authority model 
 
 ## Import GitHub history locally
 
-For the first real import, use a fine-grained PAT restricted to selected repositories with read-only **Pull requests** and **Issues** access. Keep it in an owner-only file outside the repository:
+For a full local install, add one PAT to the owner-only `.env` file:
 
 ```dotenv
-DEMO_MODE=false
-GITHUB_AUTH_MODE=token
-GITHUB_TOKEN_FILE=/absolute/host/path/to/github-token
-LORE_TEST_REPOSITORY=D3R/soho-home
+GITHUB_TOKEN=github_pat_...
 ```
 
-Prove the exact permissions before starting:
+Repository selection is application data, not environment configuration. Open **Repositories → Connect repositories**, search the complete token-visible list, select one or many repositories, and connect them to the active Lore organisation. Repeat for additional organisations or for accounts with more than 500 results in one selection.
+
+To diagnose GitHub permissions for one repository without changing Lore, run the optional check:
 
 ```bash
-npm run github:check -- D3R/soho-home
+npm run github:check -- OWNER/REPOSITORY
 ```
 
-The worker—and only the worker—reads the credential. The browser, database, `.lore` state, and BullMQ payload never receive it. Sign in, connect the repository in the UI, start with 50 or 100 merged PRs, validate retention and access, then choose **All merged PRs** deliberately.
+The API uses the token to refresh your local GitHub profile and list every repository it can read; the worker uses it for history. The browser, database, `.lore` state, and BullMQ payload never receive it. Each newly connected repository immediately queues the organisation’s initial import—**all merged PRs** by default—plus an hourly latest-history sync. Duplicate or already-connected selections are skipped safely.
 
-The importer paginates merged PRs, submitted review bodies, inline comments, conversation comments, commits, changed files, and available bounded patches. Use a GitHub App for installation-scoped credentials and signed live webhooks.
+The importer paginates merged PRs, submitted review bodies, inline comments, conversation comments, commits, changed files, and available bounded patches. A GitHub App is only for a future shared/SaaS deployment that needs installation-scoped credentials and signed live webhooks.
 
-Follow the complete [PAT and GitHub App guide](docs/github.md), including organisation approval, SAML SSO, Docker secret mounts, callback URLs, public webhook proxies, revocation, and troubleshooting.
+Follow the [GitHub guide](docs/github.md) for classic versus fine-grained PAT reach, organisation approval, GitHub SAML SSO, automatic evidence details, SaaS GitHub Apps, revocation, and troubleshooting.
 
 ## Connect an agent over MCP
 
@@ -280,40 +296,53 @@ Available tools:
 - `lore_explain`
 - `lore_propose_knowledge`—validation only; it cannot mutate knowledge
 
-See the [MCP guide](docs/mcp.md) for workflow and configuration details.
+For the easiest local setup, connect a checkout without IDs or another token:
+
+```bash
+cd /absolute/path/to/checkout
+node /Users/dev/Lore/dist/cli.js connect OWNER/REPOSITORY
+node /Users/dev/Lore/dist/cli.js index
+
+cd /Users/dev/Lore
+npm run mcp:check -- /absolute/path/to/checkout
+```
+
+See the [MCP guide](docs/mcp.md) for Codex/Claude/Cursor configuration and the copyable agent setup prompt.
 
 ## Choose a runtime
 
 | Mode | Best for | Infrastructure | Persistence |
 | --- | --- | --- | --- |
 | Demo | Product evaluation and screenshots | Node/npm only | Resets on API restart |
-| Native local | CLI plus durable API/worker development | Local PostgreSQL and Redis | PostgreSQL |
-| Docker local | Full migration, queue, API, worker, and built web stack | Docker Compose | Docker volumes |
+| Native local | API/worker development with one PAT identity | Local PostgreSQL and Redis | PostgreSQL + Redis |
+| Docker local | Complete everyday product, AI, MCP, auto-sync, and built web stack | Docker Compose | PostgreSQL + Redis volumes |
 | External SaaS | Not currently approved | P0/P1 controls not yet implemented | Do not deploy yet |
 
 ### Full local Docker stack
 
-Prerequisite: Docker Engine with Compose v2.24+. This is the recommended end-to-end product evaluation: real GitHub login, PostgreSQL, Redis, migrations, worker jobs, and production-built web assets.
+Prerequisite: Docker Engine with Compose v2.24+. This is the recommended everyday installation: one GitHub PAT, real OpenAI extraction, PostgreSQL, persistent Redis, migrations, worker jobs, and production-built web assets.
 
 ```bash
-npm run local:setup
-# Add the GitHub OAuth App and selected-repository PAT values shown by the command.
-npm run local:up
+npm run local
 ```
 
-Normal starts do not seed demo data and never enable `LOCAL_DEV_AUTH`. All published services bind to loopback. Open [http://localhost:5173](http://localhost:5173).
+That guided command asks for the PAT without echoing it. If `OPENAI_API_KEY` is already in `.env`, it is preserved. Use `npm run local:setup` followed by `npm run local:up` only when you deliberately want separate configuration and startup steps.
+
+Normal starts do not seed demo data. All published services bind to loopback. Open [http://localhost:5173](http://localhost:5173).
 
 ```bash
 npm run local:check
 npm run local:logs
+npm run local:backup
+npm run local:install
 npm run local:down
 ```
 
-For an exact `D3R/soho-home` walkthrough, including OAuth App fields, fine-grained PAT permissions, access proof, `master` branch selection, retention, and the first bounded PR import, follow [Run Lore locally like production](docs/local-production.md).
+For repository discovery, automatic crawl, AI/MCP proof, persistence, backup, and boot setup, follow [Full local installation](docs/local-production.md).
 
 ### Native persistent stack
 
-Run PostgreSQL and Redis, then set `DEMO_MODE=false`, the two connection URLs, and GitHub OAuth credentials. `LOCAL_DEV_AUTH=true` is an explicit loopback-only API-development bypass, not the normal product login.
+Run PostgreSQL and Redis, then set `LORE_DEPLOYMENT_MODE=local`, the two connection URLs, and `GITHUB_TOKEN`. Persistent product mode is the default; the same token-backed local identity is used and there is no fixed-ID or repository-name bypass. `DEMO_MODE=true` is accepted only with `NODE_ENV=development` for explicit fixture work.
 
 ```bash
 npm run db:migrate
@@ -325,21 +354,44 @@ Run `npm run worker` in a second terminal for queued indexing, GitHub import, ex
 
 ### Environment reference
 
-Copy [`.env.example`](.env.example) and change only the mode you need. `npm run setup:check` reports missing or unsafe configuration without printing credential contents.
+Copy [`.env.example`](.env.example) for local use. Shared deployment variables live separately in [`.env.saas.example`](.env.saas.example). `npm run setup:check` reports missing configuration without printing credentials.
 
 | Group | Variables | Notes |
 | --- | --- | --- |
-| Runtime | `NODE_ENV`, `DEMO_MODE`, `API_PORT`, `API_HOST`, `APP_URL`, `WEB_ORIGIN`, `TRUST_PROXY`, `LOG_LEVEL` | The local-production wrapper fixes the public origin to `http://localhost:5173` and enables proxy trust only inside the loopback stack. |
+| Runtime | `LORE_DEPLOYMENT_MODE`, `NODE_ENV`, `API_PORT`, `API_HOST`, `APP_URL`, `WEB_ORIGIN`, `TRUST_PROXY`, `LOG_LEVEL` | Local product mode is persistent by default. `npm run demo` injects the development-only `DEMO_MODE=true`; do not put it in an everyday local installation. The API defaults to host loopback. |
 | Storage/jobs | `DATABASE_URL`, `REDIS_URL`, `WORKER_CONCURRENCY` | Required only for persistent mode; lower concurrency for an initial very large import. |
-| GitHub login | `SESSION_SECRET`, `AUTH_SESSION_TTL_HOURS`, `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_OAUTH_CALLBACK_URL` | Personal identity and profiles; see [account setup](docs/authentication-and-organisations.md). |
-| Local identity bypass | `LOCAL_DEV_AUTH`, `LOCAL_ORGANISATION_ID`, `LOCAL_USER_ID`, `LOCAL_USER_NAME` | Loopback development only; never enable in shared environments. |
+| Local identity and GitHub | `GITHUB_TOKEN` | The only required local GitHub credential; supplies profile, unrestricted token-visible repository discovery, and history. Repository selection is stored per organisation in the app. |
+| Local session | `SESSION_SECRET`, `AUTH_SESSION_TTL_HOURS` | `local:setup` generates the secret. Multiple local organisations and roles remain supported. |
 | Server checkout access | `LORE_ALLOWED_REPOSITORY_ROOTS` | Prefer local `lore index` graph upload and leave this empty. |
-| GitHub PAT | `GITHUB_AUTH_MODE`, `GITHUB_TOKEN`, `GITHUB_TOKEN_PATH`, `GITHUB_TOKEN_FILE` | Prefer an owner-only token file; `_FILE` is the Docker host mount source. |
-| GitHub App | `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_PRIVATE_KEY_PATH`, `GITHUB_PRIVATE_KEY_FILE`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET` | Needed for installation credentials and signed live webhooks. |
-| AI | `AI_PROVIDER`, `OPENAI_API_KEY`, `OPENAI_MODEL` | `mock` is the only bundled adapter; `OPENAI_*` is reserved and not consumed. |
-| Encryption | `ENCRYPTION_KEY` | Reserved for a future production envelope-encryption boundary and not consumed by this prototype. |
+| AI | `AI_PROVIDER`, `OPENAI_API_KEY`, `OPENAI_MODEL`, optional `LORE_AI_PREFLIGHT` | Real OpenAI Responses API adapter with strict structured output; local default model is `gpt-4.1-mini`. |
+| SaaS-only public boundary | OAuth, GitHub App, and optional `LORE_ALLOWED_HOSTS` variables in `.env.saas.example` | Required only for remote multi-user identity, installations, signed webhooks, and additional proxy/API hostnames. |
+| SaaS encryption | `ENCRYPTION_KEY` | External deployment gate for managed envelope encryption; not needed by loopback local mode. |
 
-Native paths such as `GITHUB_TOKEN_PATH` must be absolute; dotenv does not expand `$HOME`. Docker host paths use the corresponding `*_FILE` variable and the documented Compose overlay.
+You can delete blank OAuth, App, PEM, token-file, and local-ID lines from an old local `.env`; Lore does not need them.
+
+### Setup issues found and resolved
+
+The full local path was exercised while it was being built. These were the concrete setup failures found and fixed:
+
+| Problem encountered | Resolution now in the project |
+| --- | --- |
+| Local GitHub setup exposed OAuth callbacks, App keys, token files, and fixed user/organisation IDs | `.env.example` now uses one `GITHUB_TOKEN`; advanced shared settings live in `.env.saas.example`. |
+| Full local setup still required manually editing `.env` before the first start | `npm run local` now prompts for the one PAT without echoing it, preserves existing secrets, performs preflights, and starts the persistent stack. |
+| A configured OpenAI key could still leave the mock provider selected | `local:setup` selects `AI_PROVIDER=openai`, and `ai:check` makes one schema-validated live request. |
+| Repository use was framed around an environment-defined evaluation target | Repository names no longer belong in `.env`; the organisation-scoped app picker searches every token-visible repository and connects up to 500 at a time. |
+| Missing runtime configuration could silently produce an in-memory product | Persistent PostgreSQL/Redis operation is now the default and fails closed; fixtures require the explicit development-only `npm run demo` path and are rejected in production. |
+| Repository connection required manual imports and recurring jobs could reprocess old evidence | Connect now queues the organisation's initial import, installs its sync schedule, and extracts only newly stored evidence. |
+| MCP could look configured without proving the service boundary | `mcp:check` performs a real stdio handshake, checks all advertised tools, and calls service-backed search. |
+| Redis jobs were not durable and there was no workstation startup path | Redis AOF plus a named volume, backups, and the macOS login service are included. |
+| A Redis outage between an API request and queue dispatch could make background work disappear | PostgreSQL now records the job and outbox intent first; reconciliation retries dispatch after Redis or the API restarts, and **Activity** exposes every lifecycle state. |
+| Native API/worker commands did not consume the documented `.env` file | Both native entrypoints now load `.env`; Docker continues to inject the same settings through Compose. |
+| The demo could inherit real provider credentials from the shell or `.env` | The demo now explicitly disables GitHub access and forces the deterministic mock AI provider. |
+| Some macOS Docker installations referenced an unavailable credential helper | Local scripts create a temporary isolated Docker client config while preserving the active daemon/context. |
+| Slim container builds could miss the OpenSSL runtime Prisma expects | Production images install the required runtime package before generation and startup. |
+| Docker's Node process could exhaust its default heap while checking generated Prisma types | The builder gives the compile step an explicit 2 GB heap; runtime containers keep Node's normal limits. |
+| The evidence-revision backfill used an ambiguous joined column and an interrupted PostgreSQL migration retained earlier DDL | The migration qualifies the current hash and is safely replayable with guarded DDL/backfill, then exercised against the composed PostgreSQL service. |
+
+Preflight intentionally refuses to start full local mode until a real `GITHUB_TOKEN` is present. After adding it, choose repositories in the application; use `npm run github:check -- OWNER/REPOSITORY` only when diagnosing access to a specific repository.
 
 ## Architecture
 
@@ -378,7 +430,7 @@ Read [architecture](docs/architecture.md), [knowledge model](docs/knowledge-mode
 
 ## Security and responsible deployment
 
-Implemented boundaries include opaque hashed and revocable server sessions, GitHub OAuth state and PKCE, verified-email identity linking, session rotation, signed HTTP-only cookies, CSRF protection for non-demo production writes, live organisation membership and baseline role checks, email-bound invitations, webhook HMAC validation, immutable provider IDs, structured log redaction, safe Git argument arrays, owner-only local state, and deterministic policy detectors.
+Implemented boundaries include loopback-only single-token local identity, loopback-default server binding, exact production Host/Origin validation, OAuth/state/PKCE and hashed revocable sessions for shared mode, live organisation membership and roles, scoped/revocable SaaS agent tokens, CSRF protection, email-bound invitations, webhook HMAC validation, immutable provider IDs, structured log redaction, safe Git argument arrays, owner-only local state, and deterministic policy detectors.
 
 Repository text, tickets, reviews, documents, and model output are always untrusted. AI cannot create policy, calculate authority, execute tools, or write database rows directly.
 
@@ -415,6 +467,9 @@ The SaaS plan explicitly tracks production identity, tenant isolation, managed s
 ```bash
 npm run demo:check   # Prove the zero-infrastructure demo path
 npm run setup:check  # Secret-safe environment diagnosis
+npm run github:check -- OWNER/REPOSITORY  # Optional targeted permission diagnosis
+npm run ai:check     # One minimal real structured-output request
+npm run mcp:check -- /absolute/path/to/checkout
 npm run typecheck
 npm run lint
 npm test
@@ -452,9 +507,9 @@ docs           product, setup, architecture, security, and governance guides
 
 ## Current status and roadmap
 
-The local vertical slice is runnable today: demo UI, local AST/Git indexing, context preparation, knowledge lifecycle, policies, sessions, verification, PAT/App GitHub history, queue workers, CLI, MCP, and PostgreSQL storage.
+The full local product is runnable today: PAT-backed GitHub profile and repository discovery, automatic complete PR evidence plus recurring sync, real OpenAI candidate extraction, editable profiles, multiple organisations and roles, scoped settings, ad-hoc communications, local AST/Git indexing, context preparation, governed knowledge, policies, sessions, verification, CLI, service-backed MCP, PostgreSQL, persistent Redis, backups, and start-at-login support.
 
-The next implementation slice is a shared memory/PostgreSQL store-conformance suite plus idempotent lifecycle writes. First-class change-observation/report provenance now exists; durable job/outbox state, source/evidence revisions, and production identity follow it. The full, conflict-checked sequence is in the [`.ideas2` compatibility roadmap](docs/roadmap.md). External deployment gates are tracked separately in [SaaS readiness](docs/saas-readiness.md) and must not be marketed as completed.
+External deployment remains a separate security and governance programme. The full, conflict-checked sequence is in the [`.ideas2` compatibility roadmap](docs/roadmap.md); SaaS gates are tracked in [SaaS readiness](docs/saas-readiness.md) and must not be marketed as completed.
 
 ## Brand
 

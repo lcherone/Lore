@@ -109,7 +109,7 @@ They do not close the external-deployment gate. GitHub OAuth is not enterprise O
 
 ### P0 — required before any external pilot
 
-- [ ] Production identity provider with OIDC/SAML SSO, MFA enforcement, invite/domain controls, short-lived sessions, revocation, and no `LOCAL_DEV_AUTH`.
+- [ ] Production identity provider with OIDC/SAML SSO, MFA enforcement, invite/domain controls, short-lived sessions, revocation, and no local single-PAT fallback.
 - [ ] Server-side opaque sessions; rotate and revoke individual sessions. Do not use an indefinitely reusable self-contained browser identity.
 - [ ] Tenant-scoped RBAC for owner, security administrator, knowledge reviewer, developer, auditor, and support roles; deny by default.
 - [ ] GitHub App installation ownership verified through the authenticated GitHub user/organisation before binding to a Lore tenant. Never trust `installation_id` from the setup redirect alone.
@@ -210,7 +210,7 @@ Every checkbox needs an owner, due date, implementation link, test/evidence link
 
 Do not deploy externally if any of these are true:
 
-- production relies on `LOCAL_DEV_AUTH`, demo identities, shared credentials, or an unverified installation ID;
+- production relies on local single-PAT identity, demo identities, shared credentials, or an unverified installation ID;
 - the browser, database, job payload, log, support ticket, analytics product, or source repository contains a GitHub token/private key;
 - customer content can reach an AI provider without tenant opt-in, DPA/subprocessor review, classification, and retention controls;
 - Lore can access or affect a CDE without a documented QSA-supported scope decision;

@@ -19,12 +19,17 @@ usage() {
 Lore local-production stack
 
 Usage:
+  npm run local         Prompt for the one PAT, configure, verify, and start Lore
   npm run local:setup   Create .env when missing and generate a session secret
   npm run local:up      Preflight, build, migrate, and start every service
+  npm run local:start   Start existing images without rebuilding
   npm run local:check   Verify the running web/API/database/queue stack
   npm run local:status  Show container state
   npm run local:logs    Follow API and worker logs
   npm run local:down    Stop containers without deleting persistent data
+  npm run local:backup  Save a timestamped PostgreSQL backup under backups/
+  npm run local:install Install a macOS login service so Lore starts on boot
+  npm run local:uninstall Remove the macOS login service (data is preserved)
 
 The stack is bound only to localhost. It runs production-built web assets,
 PostgreSQL, Redis, migrations, the API, and the background worker. GitHub user
@@ -101,7 +106,14 @@ setup_environment() {
       import { randomBytes } from "node:crypto";
       import { readFileSync, writeFileSync } from "node:fs";
       const path = ".env";
-      let value = readFileSync(path, "utf8");
+      const original = readFileSync(path, "utf8");
+      const current = new Map(
+        original.split(/\r?\n/).flatMap((line) => {
+          const match = line.match(/^([A-Z][A-Z0-9_]*)=(.*)$/);
+          return match ? [[match[1], match[2]]] : [];
+        })
+      );
+      let value = readFileSync(".env.example", "utf8");
       const read = (name) => value.match(new RegExp(`^${name}=(.*)$`, "m"))?.[1]?.trim() ?? "";
       const set = (name, next) => {
         const line = `${name}=${next}`;
@@ -109,8 +121,10 @@ setup_environment() {
           ? value.replace(new RegExp(`^${name}=.*$`, "m"), line)
           : `${value.trimEnd()}\n${line}\n`;
       };
+      for (const [name, configured] of current) {
+        if (configured.trim() && new RegExp(`^${name}=.*$`, "m").test(value)) set(name, configured);
+      }
       set("NODE_ENV", "production");
-      set("DEMO_MODE", "false");
       set("LORE_DEPLOYMENT_MODE", "local");
       const sessionSecret = read("SESSION_SECRET");
       const generated = sessionSecret.length < 32 || sessionSecret.startsWith("replace-with");
@@ -123,18 +137,45 @@ setup_environment() {
       process.stdout.write(generated ? "Generated a secure SESSION_SECRET.\n" : "Preserved the configured SESSION_SECRET.\n");
     ')
   chmod 600 "$repo_root/.env"
-  cat <<'EOF'
+  local configured_token github_token
+  configured_token=$(env_value GITHUB_TOKEN)
+  if [[ -z "$configured_token" && -t 0 ]]; then
+    printf '\nGitHub PAT (hidden; press Enter to configure it later): '
+    IFS= read -r -s github_token
+    printf '\n'
+    if [[ -n "$github_token" ]]; then
+      [[ ${#github_token} -ge 20 && ! "$github_token" =~ [[:space:]] ]] || die "the GitHub PAT must be at least 20 characters with no whitespace."
+      printf '%s' "$github_token" | (cd "$repo_root" && node --input-type=module -e '
+        import { readFileSync, writeFileSync } from "node:fs";
+        const token = readFileSync(0, "utf8").trim();
+        const path = ".env";
+        const value = readFileSync(path, "utf8").replace(/^GITHUB_TOKEN=.*$/m, () => `GITHUB_TOKEN=${token}`);
+        writeFileSync(path, value, { mode: 0o600 });
+      ')
+      unset github_token
+      configured_token=configured
+      printf 'Saved GITHUB_TOKEN to owner-only .env (value hidden).\n'
+    fi
+  fi
 
-Before starting, add one GitHub credential to .env:
+  if [[ -n "$configured_token" ]]; then
+    printf '\n✓ Local GitHub credential is configured (value hidden).\n'
+    printf '  Repository access is discovered and selected inside Lore.\n'
+  else
+    cat <<'EOF'
+
+Before starting, add the only required local GitHub credential to .env:
 
    GITHUB_TOKEN=github_pat_...
 
-Optional live setup target:
-
-   LORE_TEST_REPOSITORY=D3R/soho-home
-
 Then run: npm run local:up
 EOF
+  fi
+}
+
+quickstart() {
+  setup_environment
+  start_stack
 }
 
 preflight() {
@@ -142,15 +183,10 @@ preflight() {
   require_command curl
   ensure_dependencies
   [[ -f "$repo_root/.env" ]] || die "run npm run local:setup first."
-  (cd "$repo_root" && env NODE_ENV=production DEMO_MODE=false LORE_DEPLOYMENT_MODE=local npm run setup:check -- --docker --github-repository --ai)
+  (cd "$repo_root" && env NODE_ENV=production LORE_DEPLOYMENT_MODE=local npm run setup:check -- --docker --github --ai)
   prepare_docker_cli
   docker info >/dev/null 2>&1 || die "the Docker daemon is not running. Start Docker Desktop or Colima, then retry."
 
-  local target
-  target=$(env_value LORE_TEST_REPOSITORY)
-  if [[ -n "$target" && "$(env_value LORE_GITHUB_PREFLIGHT)" != "false" ]]; then
-    (cd "$repo_root" && npm run github:check -- "$target")
-  fi
   if [[ "$(env_value LORE_AI_PREFLIGHT)" != "false" ]]; then
     (cd "$repo_root" && npm run ai:check)
   fi
@@ -199,8 +235,8 @@ Lore is live locally: $app_url
 
 Next:
   1. Open Lore; your GitHub profile and private local workspace are created automatically.
-  2. Open Repositories and select D3R/soho-home from the token-backed picker.
-  3. Lore imports all merged PR evidence immediately and keeps it synchronised.
+  2. Open Repositories and select one, many, or all accessible repositories.
+  3. Lore imports each repository's merged PR evidence and keeps it synchronised.
   4. Review AI-generated candidates before promoting them to active knowledge.
 
 Logs: npm run local:logs
@@ -208,16 +244,74 @@ Stop: npm run local:down
 EOF
 }
 
+start_existing_stack() {
+  require_command docker
+  prepare_docker_cli
+  docker info >/dev/null 2>&1 || die "the Docker daemon is not running."
+  compose up --detach --remove-orphans
+  wait_for_stack
+  check_stack
+}
+
+backup_database() {
+  require_command docker
+  local backup_dir backup_path timestamp
+  backup_dir="$repo_root/backups"
+  timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+  backup_path="$backup_dir/lore-$timestamp.dump"
+  mkdir -p "$backup_dir"
+  compose exec -T postgres pg_dump -U lore -d lore -Fc > "$backup_path"
+  chmod 600 "$backup_path"
+  printf '✓ PostgreSQL backup saved: %s\n' "$backup_path"
+}
+
+install_boot_service() {
+  [[ "$(uname -s)" == "Darwin" ]] || die "automatic boot installation currently supports macOS; use the documented systemd unit on Linux."
+  local agent_dir log_dir plist_path label
+  label="dev.lore.local"
+  agent_dir="$HOME/Library/LaunchAgents"
+  log_dir="$HOME/Library/Logs/Lore"
+  plist_path="$agent_dir/$label.plist"
+  mkdir -p "$agent_dir" "$log_dir"
+  node --input-type=module -e '
+    import { writeFileSync } from "node:fs";
+    const [path, label, bootScript, workdir, stdout, stderr, inheritedPath] = process.argv.slice(1);
+    const esc = (value) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>${esc(label)}</string>\n<key>ProgramArguments</key><array><string>/bin/bash</string><string>${esc(bootScript)}</string></array>\n<key>WorkingDirectory</key><string>${esc(workdir)}</string>\n<key>EnvironmentVariables</key><dict><key>PATH</key><string>${esc(inheritedPath)}</string></dict>\n<key>RunAtLoad</key><true/>\n<key>ProcessType</key><string>Background</string>\n<key>StandardOutPath</key><string>${esc(stdout)}</string>\n<key>StandardErrorPath</key><string>${esc(stderr)}</string>\n</dict></plist>\n`;
+    writeFileSync(path, plist, { mode: 0o600 });
+  ' "$plist_path" "$label" "$script_dir/lore-boot.sh" "$repo_root" "$log_dir/launch.log" "$log_dir/launch-error.log" "$PATH"
+  launchctl bootout "gui/$UID/$label" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$UID" "$plist_path"
+  launchctl enable "gui/$UID/$label"
+  printf '✓ Lore will start at login through %s\n' "$plist_path"
+  printf '  Logs: %s\n' "$log_dir"
+}
+
+uninstall_boot_service() {
+  [[ "$(uname -s)" == "Darwin" ]] || die "automatic boot uninstallation currently supports macOS."
+  local label plist_path
+  label="dev.lore.local"
+  plist_path="$HOME/Library/LaunchAgents/$label.plist"
+  launchctl bootout "gui/$UID/$label" >/dev/null 2>&1 || true
+  [[ ! -f "$plist_path" ]] || rm "$plist_path"
+  printf '✓ Lore login service removed. PostgreSQL, Redis, and backups were not deleted.\n'
+}
+
 require_command node
 require_command npm
 
 case "$command_name" in
+  quickstart) quickstart ;;
   setup) setup_environment ;;
   up) start_stack ;;
+  start) start_existing_stack ;;
   check) check_stack ;;
   status) compose ps ;;
   logs) compose logs --follow api worker web ;;
   down) compose down ;;
+  backup) backup_database ;;
+  install) install_boot_service ;;
+  uninstall) uninstall_boot_service ;;
   help|-h|--help) usage ;;
   *) usage >&2; die "unknown command '$command_name'." ;;
 esac

@@ -7,6 +7,7 @@ import type {
   DashboardSnapshot,
   EvidenceRecord,
   KnowledgeItem,
+  JobRunRecord,
   OrganisationAccess,
   OrganisationInvitation,
   OrganisationMember,
@@ -45,6 +46,13 @@ export interface OrganisationDetails {
   organisation: OrganisationAccess;
   members: OrganisationMember[];
   invitations: OrganisationInvitation[];
+}
+
+export interface RepositoryBatchConnectionResult {
+  items: Array<RepositorySummary & { initialImportQueued: boolean }>;
+  connected: number;
+  skipped: Array<{ fullName: string; reason: "already_connected" | "duplicate_request" }>;
+  initialImportsQueued: number;
 }
 
 let csrfToken: string | undefined;
@@ -101,6 +109,7 @@ export const loreApi = {
   removeMember: (organisationId: string, userId: string): Promise<void> =>
     request(`/api/organisations/${organisationId}/members/${userId}`, { method: "DELETE" }),
   bootstrap: (): Promise<DashboardSnapshot> => request("/api/bootstrap"),
+  jobs: (limit = 100): Promise<{ items: JobRunRecord[]; count: number }> => request(`/api/jobs?limit=${limit}`),
   githubStatus: (): Promise<GitHubIntegrationStatus> => request("/api/github/status"),
   githubRepositories: (): Promise<{ items: GitHubRepositoryOption[]; count: number }> => request("/api/github/repositories"),
   settings: (): Promise<SettingsBundle> => request("/api/settings"),
@@ -128,8 +137,10 @@ export const loreApi = {
     request(`/api/knowledge/${id}/archive`, { method: "POST", body: JSON.stringify({ reason }) }),
   connectRepository: (input: Record<string, unknown>) =>
     request("/api/repositories", { method: "POST", body: JSON.stringify(input) }),
-  indexRepository: (id: string): Promise<{ status: "queued" | "completed"; simulated?: boolean }> => request(`/api/repositories/${id}/index`, { method: "POST" }),
-  importHistory: (id: string, limit: PullRequestImportLimit): Promise<{ status: "queued" | "simulated"; simulated?: boolean }> =>
+  connectRepositories: (repositories: Array<Record<string, unknown>>): Promise<RepositoryBatchConnectionResult> =>
+    request("/api/repositories/batch", { method: "POST", body: JSON.stringify({ repositories }) }),
+  indexRepository: (id: string): Promise<{ status: "queued" | "dispatch_pending" | "completed"; simulated?: boolean }> => request(`/api/repositories/${id}/index`, { method: "POST" }),
+  importHistory: (id: string, limit: PullRequestImportLimit): Promise<{ status: "queued" | "dispatch_pending" | "simulated"; simulated?: boolean }> =>
     request(`/api/repositories/${id}/github-import`, { method: "POST", body: JSON.stringify({ limit }) }),
   deleteRepository: (id: string, confirmation: string): Promise<{ deletedId: string; challengedKnowledgeIds: string[] }> =>
     request(`/api/repositories/${id}?confirm=${encodeURIComponent(confirmation)}`, { method: "DELETE" }),

@@ -1,10 +1,10 @@
 import "dotenv/config";
 
 const docker = process.argv.includes("--docker");
-const requireGitHubRepository = process.argv.includes("--github-repository");
+const requireGitHub = process.argv.includes("--github");
 const requireAI = process.argv.includes("--ai");
 const deploymentMode = process.env.LORE_DEPLOYMENT_MODE === "saas" ? "saas" : "local";
-const demo = !docker && process.env.DEMO_MODE !== "false";
+const demo = !docker && process.env.DEMO_MODE === "true";
 const errors: string[] = [];
 const warnings: string[] = [];
 const ok: string[] = [];
@@ -56,8 +56,8 @@ if (deploymentMode === "local") {
   ok.push("GitHub: SaaS OAuth identity and App installation configuration checked (secrets hidden).");
 }
 
-if (requireGitHubRepository && !present("GITHUB_TOKEN") && deploymentMode === "local") {
-  errors.push("Live repository verification needs GITHUB_TOKEN.");
+if (requireGitHub && !present("GITHUB_TOKEN") && deploymentMode === "local") {
+  errors.push("Live GitHub repository discovery needs GITHUB_TOKEN.");
 }
 
 const aiProvider = process.env.AI_PROVIDER?.trim().toLowerCase()

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   LoreStore,
   SourceControlProvider
@@ -12,6 +13,20 @@ import type {
 const evidenceId = (provider: string, externalId: string): string =>
   deterministicUuid("lore.evidence", `${provider}:${externalId}`);
 
+const evidenceHash = (record: EvidenceRecord): string => createHash("sha256").update(JSON.stringify({
+  url: record.url ?? null,
+  title: record.title ?? null,
+  content: record.content,
+  author: record.author ?? null,
+  occurredAt: record.occurredAt,
+  metadata: record.metadata
+})).digest("hex");
+
+const versioned = (record: EvidenceRecord): EvidenceRecord => ({
+  ...record,
+  contentHash: evidenceHash(record)
+});
+
 export class GitHubImportService {
   public constructor(
     private readonly provider: SourceControlProvider,
@@ -22,9 +37,9 @@ export class GitHubImportService {
     organisationId: string,
     repository: RepositorySummary,
     limit: PullRequestImportLimit
-  ): Promise<{ pullRequests: number; evidenceAdded: number; evidenceIds: string[] }> {
-    const existingEvidenceIds = new Set(
-      (await this.store.getEvidence(organisationId)).map((record) => record.id)
+  ): Promise<{ pullRequests: number; evidenceAdded: number; evidenceUpdated: number; evidenceIds: string[] }> {
+    const existingEvidence = new Map(
+      (await this.store.getEvidence(organisationId)).map((record) => [record.id, record])
     );
     const pullRequests = await this.provider.listMergedPullRequests(repository, limit);
     const retention = repository.retentionConfig ?? {
@@ -36,7 +51,7 @@ export class GitHubImportService {
     const evidence: EvidenceRecord[] = [];
     for (const pullRequest of pullRequests) {
       const externalId = `${repository.owner}/${repository.name}:pr:${pullRequest.number}`;
-      evidence.push({
+      evidence.push(versioned({
         id: evidenceId("github", externalId),
         organisationId,
         repositoryId: repository.id,
@@ -62,11 +77,11 @@ export class GitHubImportService {
             codeSnippetsRetained: false
           }
         }
-      });
+      }));
       if (!retention.retainReviewComments) continue;
       for (const comment of pullRequest.reviewComments) {
         const commentExternalId = `${repository.owner}/${repository.name}:review-comment:${comment.externalId}`;
-        evidence.push({
+        evidence.push(versioned({
           id: evidenceId("github", commentExternalId),
           organisationId,
           repositoryId: repository.id,
@@ -79,16 +94,24 @@ export class GitHubImportService {
           author: comment.author,
           occurredAt: comment.occurredAt,
           metadata: { pullRequest: pullRequest.number }
-        });
+        }));
       }
     }
     const newEvidenceIds = evidence
-      .filter((record) => !existingEvidenceIds.has(record.id))
+      .filter((record) => !existingEvidence.has(record.id))
       .map((record) => record.id);
+    const updatedEvidenceIds = evidence
+      .filter((record) => {
+        const existing = existingEvidence.get(record.id);
+        return existing && (existing.contentHash ?? evidenceHash(existing)) !== record.contentHash;
+      })
+      .map((record) => record.id);
+    await this.store.ingestEvidence(evidence);
     return {
       pullRequests: pullRequests.length,
-      evidenceAdded: await this.store.ingestEvidence(evidence),
-      evidenceIds: newEvidenceIds
+      evidenceAdded: newEvidenceIds.length,
+      evidenceUpdated: updatedEvidenceIds.length,
+      evidenceIds: [...newEvidenceIds, ...updatedEvidenceIds]
     };
   }
 }

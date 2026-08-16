@@ -11,7 +11,7 @@
 
 # REST API
 
-All product routes use `/api`. Human access uses a random opaque session cookie backed by a hashed, expiring, revocable `AuthSession`. Run `npm run demo` for an explicit demo login; persistent deployments use GitHub OAuth or the explicitly loopback-restricted local development bypass.
+All product routes use `/api`. Full local mode derives one trusted workstation identity from `GITHUB_TOKEN` and only accepts that fallback for a loopback `APP_URL`. Shared/SaaS human access uses a random opaque session cookie backed by a hashed, expiring, revocable `AuthSession` after GitHub OAuth.
 
 ## Accounts and organisations
 
@@ -25,6 +25,11 @@ GET    /api/auth/sessions
 DELETE /api/auth/sessions/others
 GET    /api/account/profile
 PATCH  /api/account/profile
+GET    /api/settings
+PATCH  /api/settings/user
+PATCH  /api/settings/organisation
+POST   /api/account/tokens
+DELETE /api/account/tokens/:id
 GET    /api/organisations
 POST   /api/organisations
 GET    /api/organisations/:id
@@ -46,7 +51,7 @@ curl -c /tmp/lore-demo.cookies -X POST http://127.0.0.1:3001/api/auth/demo
 curl -b /tmp/lore-demo.cookies http://127.0.0.1:3001/api/auth/session
 ```
 
-Real GitHub login is a browser redirect, not a JSON password endpoint. Open `http://localhost:5173/api/auth/github`; Lore validates state and PKCE, reads the verified GitHub identity server-side, discards the GitHub token, sets the Lore cookie, and redirects to the UI.
+In local mode, no login call is needed: the first request reads the GitHub identity through the configured PAT and creates the user/workspace when necessary. In SaaS mode, GitHub login is a browser redirect; Lore validates state and PKCE, reads the verified identity server-side, discards the OAuth token, sets the Lore cookie, and redirects to the UI.
 
 Create an organisation after login:
 
@@ -59,7 +64,7 @@ curl -b /tmp/lore-demo.cookies -c /tmp/lore-demo.cookies \
 
 The creation, switch, and invitation-acceptance responses rotate the Lore cookie. A browser handles this automatically; a command-line client must use `-c` as well as `-b` to save the replacement. Production mutations also require the token from `GET /api/auth/csrf` in the `csrf-token` header.
 
-See [Authentication, profiles, and organisations](authentication-and-organisations.md) for field definitions, role permissions, invitation behaviour, local OAuth registration, and security boundaries.
+See [Authentication, profiles, and organisations](authentication-and-organisations.md) for local PAT identity, SaaS OAuth, settings, roles, invitations, agent tokens, and security boundaries.
 
 ## Health and bootstrap
 
@@ -76,7 +81,9 @@ GET  /api/onboarding
 ## Repositories and ingestion
 
 ```text
+GET  /api/github/repositories
 POST /api/repositories
+POST /api/repositories/batch
 POST /api/repositories/:id/index
 PUT  /api/repositories/:id/analysis
 POST /api/repositories/:id/github-import
@@ -97,6 +104,8 @@ Worker-backed index and import requests return `202` with a job ID. Demo mode la
 ```text
 GET  /api/knowledge
 GET  /api/evidence
+GET  /api/evidence/:id/revisions
+GET  /api/jobs?limit=100
 POST /api/evidence/communications
 POST /api/knowledge
 GET  /api/knowledge/:id
@@ -143,9 +152,13 @@ The response returns the stored evidence plus extracted review candidates. Each 
 | `supports_existing` | Similar approved knowledge exists | Review it as additional support and merge where appropriate |
 | `conflicts` | The statement appears to oppose active knowledge | Investigate and create an explicit challenge; do not silently replace either side |
 
-Exact resubmissions reuse the same stable evidence identity and return `evidenceAdded: false`; they do not add another candidate. Distinct communications remain separate evidence even when they support the same decision. The bundled provider is deterministic and local, makes no external AI request, and recognises explicit phrases such as “we agreed”, “decision”, “must”, “never”, “prefer”, “warning”, and “regression”. Ordinary standup status updates are retained but not promoted into candidates. A real provider is not bundled yet.
+Exact resubmissions reuse the same stable evidence identity and return `evidenceAdded: false`; they do not add another candidate. Distinct communications remain separate evidence even when they support the same decision. Demo mode and automated tests use the bundled deterministic extractor. Full local mode uses the configured schema-validated OpenAI provider when `AI_PROVIDER=openai`; model output remains an untrusted proposal and never bypasses review. Ordinary standup status updates should be retained without being promoted when no explicit decision, rule, preference, warning, or regression is present.
 
 Filter retained evidence with `GET /api/evidence?type=communication&repositoryId=REPOSITORY_ID&limit=50`. Supported filters are `type`, `provider`, `repositoryId`, and `limit` (1–1,000); results are newest first and include `total` plus `truncated`.
+
+`GET /api/evidence/:id/revisions` returns every immutable snapshot for that evidence item in version order. GitHub imports append a revision and re-run extraction when an upstream PR body or retained review comment changes; an unchanged re-import creates neither a revision nor AI work.
+
+`GET /api/jobs` returns organisation-scoped durable job runs newest first. Each run includes its name, queued/dispatched/running/retrying/succeeded/dead-letter state, attempts, bounded error/result summary, and ordered lifecycle events. It never returns GitHub/OpenAI credentials or the outbox payload. When Redis is unavailable, enqueue responses use `status: "dispatch_pending"`; PostgreSQL retains the intent and the API reconciles it after transport recovery.
 
 Retention settings are applied before GitHub evidence is written. Summary-only mode cannot also retain raw diffs or snippets. Repository deletion requires the exact `owner/name`; repository-scoped rows cascade, while organisation-wide knowledge backed by removed evidence is challenged for reconfirmation.
 

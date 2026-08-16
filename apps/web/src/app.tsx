@@ -8,6 +8,7 @@ import {
   Command,
   Database,
   Home,
+  ListChecks,
   Menu,
   MessageSquareText,
   Search,
@@ -34,12 +35,17 @@ import type {
   UserSettings
 } from "@lore/shared/types.js";
 import { Brand, Toast } from "./components.js";
-import { loreApi, type GitHubIntegrationStatus } from "./api.js";
+import {
+  loreApi,
+  type GitHubIntegrationStatus,
+  type RepositoryBatchConnectionResult
+} from "./api.js";
 import {
   CandidatesPage,
   DashboardPage,
   EvidencePage,
   KnowledgePage,
+  JobsPage,
   PoliciesPage,
   RepositoriesPage,
   ReportsPage,
@@ -48,6 +54,7 @@ import {
   SettingsPage
 } from "./pages.js";
 import { LoginPage, OrganisationOnboardingPage, OrganisationsPage, ProfilePage } from "./account-pages.js";
+import { MarketingPage } from "./marketing-page.js";
 
 type PageId =
   | "dashboard"
@@ -57,6 +64,7 @@ type PageId =
   | "candidates"
   | "policies"
   | "sessions"
+  | "jobs"
   | "reports"
   | "reviewers"
   | "organisations"
@@ -71,6 +79,7 @@ const navItems: Array<{ id: PageId; label: string; icon: typeof Home }> = [
   { id: "candidates", label: "Candidates", icon: Sparkles },
   { id: "policies", label: "Policies", icon: ShieldCheck },
   { id: "sessions", label: "Sessions", icon: TerminalSquare },
+  { id: "jobs", label: "Activity", icon: ListChecks },
   { id: "reports", label: "Safety reports", icon: AlertTriangle },
   { id: "reviewers", label: "Reviewers", icon: UsersRound }
 ];
@@ -166,6 +175,11 @@ export function App() {
   }, []);
 
   useEffect(() => { void loadApplication(); }, [loadApplication]);
+
+  useEffect(() => {
+    if (!account?.authenticated || window.location.pathname.replace(/\/+$/, "") !== "/signin") return;
+    window.history.replaceState(null, "", `/${window.location.search}${window.location.hash}`);
+  }, [account?.authenticated]);
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -350,15 +364,22 @@ export function App() {
     }
   };
 
-  const connectRepository = async (input: Record<string, unknown>): Promise<void> => {
+  const connectRepositories = async (
+    inputs: Array<Record<string, unknown>>
+  ): Promise<RepositoryBatchConnectionResult> => {
     try {
       if (!apiConnected) throw new Error("Lore is disconnected; no changes were saved.");
-      const repository = (await loreApi.connectRepository(input)) as RepositorySummary;
+      const result = await loreApi.connectRepositories(inputs);
       setData((snapshot) => ({
         ...snapshot,
-        repositories: [...snapshot.repositories, repository]
+        repositories: [...snapshot.repositories, ...result.items]
       }));
-      notify("Repository connected. Import history next.");
+      const importMessage = result.initialImportsQueued
+        ? `; ${result.initialImportsQueued} history import${result.initialImportsQueued === 1 ? "" : "s"} queued`
+        : "";
+      const skippedMessage = result.skipped.length ? `; ${result.skipped.length} already connected` : "";
+      notify(`${result.connected} repositor${result.connected === 1 ? "y" : "ies"} connected${importMessage}${skippedMessage}`);
+      return result;
     } catch (error) {
       notify(error instanceof Error ? error.message : "Repository connection failed", "error");
       throw error;
@@ -506,7 +527,7 @@ export function App() {
             githubStatus={githubStatus}
             installationId={githubInstallationId}
             onInstallGitHub={installGitHubApp}
-            onConnect={connectRepository}
+            onConnect={connectRepositories}
             onIndex={indexRepository}
             onImport={importHistory}
             onDelete={deleteRepository}
@@ -547,6 +568,8 @@ export function App() {
         return <PoliciesPage policies={data.policies} onCreate={createPolicy} />;
       case "sessions":
         return <SessionsPage data={data} />;
+      case "jobs":
+        return <JobsPage />;
       case "reports":
         return <ReportsPage reports={data.reports} />;
       case "reviewers":
@@ -598,6 +621,7 @@ export function App() {
   }
 
   if (!account?.authenticated) {
+    if (window.location.pathname.replace(/\/+$/, "") !== "/signin") return <MarketingPage />;
     return (
       <LoginPage
         demoMode={account?.demoMode ?? demoMode}

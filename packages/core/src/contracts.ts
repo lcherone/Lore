@@ -9,8 +9,10 @@ import type {
   ContextPackageRecord,
   DashboardSnapshot,
   EvidenceRecord,
+  EvidenceRevisionRecord,
   KnowledgeItem,
   KnowledgeProposalRecord,
+  LoreJobName,
   GitHubUserIdentity,
   AuthSessionSummary,
   ApiTokenSummary,
@@ -26,6 +28,7 @@ import type {
   RepositorySummary,
   SafetyReport,
   SessionEvent,
+  UserProfile,
   UserSettings
 } from "@lore/shared/types.js";
 import type { ZodType } from "zod";
@@ -143,9 +146,9 @@ export interface LoreStore {
   health(): Promise<void>;
   validateMembership(organisationId: string, userId: string): Promise<void>;
   getMembershipRole(organisationId: string, userId: string): Promise<OrganisationRole>;
-  signInWithGitHub(identity: GitHubUserIdentity): Promise<import("@lore/shared/types.js").UserProfile>;
-  getUserProfile(userId: string): Promise<import("@lore/shared/types.js").UserProfile>;
-  updateUserProfile(userId: string, input: UserProfileUpdate): Promise<import("@lore/shared/types.js").UserProfile>;
+  signInWithGitHub(identity: GitHubUserIdentity): Promise<UserProfile>;
+  getUserProfile(userId: string): Promise<UserProfile>;
+  updateUserProfile(userId: string, input: UserProfileUpdate): Promise<UserProfile>;
   getUserSettings(userId: string): Promise<UserSettings>;
   updateUserSettings(userId: string, input: UserSettings): Promise<UserSettings>;
   createAuthSession(input: {
@@ -200,6 +203,7 @@ export interface LoreStore {
   removeOrganisationMember(organisationId: string, memberUserId: string): Promise<void>;
   getSnapshot(organisationId: string): Promise<DashboardSnapshot>;
   getEvidence(organisationId: string): Promise<EvidenceRecord[]>;
+  getEvidenceRevisions(organisationId: string, evidenceId: string): Promise<EvidenceRevisionRecord[]>;
   getRepository(organisationId: string, repositoryId: string): Promise<RepositorySummary>;
   resolveProviderRepository(
     provider: RepositorySummary["provider"],
@@ -276,6 +280,7 @@ export interface LoreStore {
     contextRevision?: number
   ): Promise<SafetyReport>;
   getChangeObservation(organisationId: string, observationId: string): Promise<ChangeObservation>;
+  /** Creates new evidence or appends an immutable revision when its content hash changes. */
   ingestEvidence(records: EvidenceRecord[]): Promise<number>;
   hasIngestionReceipt(organisationId: string, provider: string, externalId: string): Promise<boolean>;
   saveIngestionReceipt(organisationId: string, provider: string, externalId: string, eventType: string): Promise<void>;
@@ -289,10 +294,10 @@ export interface GitChangeReader {
 export interface JobDispatcher {
   health(): Promise<void>;
   dispatch(
-    name: "repository.index" | "github.import" | "knowledge.extract" | "knowledge.health",
+    name: LoreJobName,
     payload: Record<string, unknown>,
     idempotencyKey: string
-  ): Promise<{ id: string }>;
+  ): Promise<{ id: string; deferred?: boolean }>;
   schedule?(
     name: "github.import" | "knowledge.health",
     payload: Record<string, unknown>,
@@ -300,6 +305,7 @@ export interface JobDispatcher {
     everyMs: number
   ): Promise<{ id: string }>;
   unschedule?(schedulerId: string): Promise<boolean>;
+  reconcile?(): Promise<number>;
   close?(): Promise<void>;
 }
 

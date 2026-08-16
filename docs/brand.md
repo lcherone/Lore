@@ -45,6 +45,10 @@ Do not rotate, fill, skew, add glow, recolour individual layers, or place the ma
 | [`lore-demo-terminal.svg`](assets/lore-demo-terminal.svg) | One-command setup and readiness proof |
 | [`lore-mark.svg`](../apps/web/public/brand/lore-mark.svg) | Favicon, compact product mark, square placements |
 | [`lore-wordmark.svg`](../apps/web/public/brand/lore-wordmark.svg) | Product wordmark on light surfaces |
+| [`screenshots/lore-homepage.png`](assets/screenshots/lore-homepage.png) | Public product positioning and real-product hero |
+| [`screenshots/lore-login.png`](assets/screenshots/lore-login.png) | Focused public sign-in state |
+| [`screenshots/lore-settings.png`](assets/screenshots/lore-settings.png) | Local/SaaS status, user preferences, and organisation automation |
+| [`screenshots/lore-activity.png`](assets/screenshots/lore-activity.png) | Durable GitHub import and AI extraction lifecycle states |
 | [`screenshots/`](assets/screenshots/) | Current working product views for docs and announcements |
 
 The generated hero is a raster brand asset. The mark, lockups, headers, diagrams, controls, and icons remain production-quality vectors or code-native UI.
@@ -133,4 +137,3 @@ Every Markdown guide uses `assets/lore-docs-header.svg`, followed by links to pr
 ## Design sources and verification
 
 The dashboard and candidate-review concept images are retained under [`docs/design/`](design/). Current rendered screenshots live under [`docs/assets/screenshots/`](assets/screenshots/). Visual changes should be checked against both the design sources and the current brand tokens in [`apps/web/src/styles.css`](../apps/web/src/styles.css).
-

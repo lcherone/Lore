@@ -15,6 +15,7 @@ if (configured.name !== "openai") {
 const result = await configured.provider.generateStructured({
   schemaName: "lore_ai_readiness",
   schema,
+  task: "Verify the configured structured-output provider",
   promptVersion: "lore-ai-readiness/v1",
   systemInstructions: "You are validating Lore's structured extraction connection.",
   applicationInstructions: "Return status ready and capability structured-evidence-extraction.",

@@ -110,6 +110,51 @@ export interface EvidenceRecord {
   contentHash?: string;
 }
 
+export interface EvidenceRevisionRecord {
+  id: string;
+  evidenceId: string;
+  version: number;
+  contentHash: string;
+  url?: string;
+  title?: string;
+  content: string;
+  author?: string;
+  occurredAt: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export type LoreJobName = "repository.index" | "github.import" | "knowledge.extract" | "knowledge.health";
+export type JobRunState = "queued" | "dispatched" | "running" | "retrying" | "succeeded" | "failed" | "dead_letter";
+
+export interface JobEventRecord {
+  id: string;
+  jobRunId: string;
+  state: JobRunState;
+  message?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface JobRunRecord {
+  id: string;
+  organisationId: string;
+  repositoryId?: string;
+  name: LoreJobName;
+  state: JobRunState;
+  idempotencyKey: string;
+  externalJobId?: string;
+  attempt: number;
+  maximumAttempts: number;
+  queuedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  updatedAt: string;
+  errorMessage?: string;
+  resultSummary?: Record<string, unknown>;
+  events?: JobEventRecord[];
+}
+
 export interface CandidateComparison {
   disposition: EvidenceComparisonDisposition;
   matchedKnowledgeIds: string[];

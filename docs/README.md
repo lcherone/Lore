@@ -13,7 +13,7 @@
 
 # Lore documentation
 
-Start with the path that matches what you want to do. The demo is intentionally the first path: it teaches the product without asking for PostgreSQL, Redis, GitHub, or an AI key.
+Start with the path that matches what you want to do. The demo teaches the product without infrastructure; the full local path needs only `GITHUB_TOKEN`, `OPENAI_API_KEY`, and Docker.
 
 ## Pick your path
 
@@ -23,8 +23,8 @@ Start with the path that matches what you want to do. The demo is intentionally 
 | Understand every product capability | [Feature guide](features.md) | Screenshots, inputs, outputs, usage, and limitations for each feature |
 | Use Lore in a real checkout | [Onboarding](onboarding.md) | A local graph, task context, and a safety report |
 | Set up login, profiles, teams, roles, and invitations | [Authentication and organisations](authentication-and-organisations.md) | A real GitHub identity and private multi-organisation account |
-| Run the complete product against `D3R/soho-home` | [Local production](local-production.md) | Built UI, real login, durable services, PAT proof, and a bounded PR import |
-| Import GitHub history with a PAT | [GitHub integration](github.md) | A selected-repository, read-only historical import |
+| Run the complete product locally | [Local production](local-production.md) | Built UI, real identity, durable services, bulk repository selection, and automatic imports |
+| Import GitHub history with a PAT | [GitHub integration](github.md) | Searchable multi-repository, read-only historical imports |
 | Connect a coding agent | [MCP guide](mcp.md) | Deterministic Lore tools available to the agent |
 | Understand the internals | [Architecture](architecture.md) | Runtime, storage, queue, analysis, and trust-boundary model |
 | Operate or extend the project | [Development](development.md) · [API](api.md) | Local services, checks, endpoints, and contributor workflow |
@@ -83,10 +83,10 @@ The [feature guide](features.md) explains each step with working screenshots and
 | In-memory demo | Product exploration and screenshots | [Feature guide](features.md#one-command-demo) |
 | Local checkout | Private AST/Git analysis and agent context | [Onboarding](onboarding.md#connect-a-local-checkout) |
 | Local persistent stack | PostgreSQL, Redis, worker, and GitHub import | [Onboarding](onboarding.md#choose-a-mode) |
-| Production-shaped local evaluation | Real GitHub login, built UI, persistent queues, and `D3R/soho-home` import | [Local production](local-production.md) |
-| Local GitHub login | Personal accounts, profiles, organisations, roles, and invitations | [Authentication setup](authentication-and-organisations.md#real-github-login-on-a-local-machine) |
-| GitHub PAT | One-person, selected-repository evaluation | [GitHub PAT setup](github.md#recommended-first-run-local-fine-grained-pat) |
-| GitHub App | Installation credentials and signed webhooks | [GitHub App setup](github.md#github-app-mode) |
+| Full local installation | One PAT identity/repository picker, real AI, automatic PR evidence, persistent queues, MCP, boot and backup | [Local production](local-production.md) |
+| Local GitHub identity | Personal accounts, profiles, organisations, roles, and settings without OAuth callbacks | [Authentication setup](authentication-and-organisations.md#local-identity-the-existing-pat) |
+| GitHub PAT | One-person access to every token-visible repository | [GitHub PAT setup](github.md#which-pat-should-i-create) |
+| SaaS GitHub App | Installation credentials and signed webhooks | [GitHub SaaS setup](github.md#saasshared-deployment) |
 | External SaaS | Not currently approved | [SaaS readiness gates](saas-readiness.md) |
 
 ## Documentation conventions

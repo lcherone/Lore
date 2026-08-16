@@ -9,46 +9,143 @@
   <a href="onboarding.md"><strong>Setup</strong></a>
 </p>
 
-# MCP integration
+# MCP setup
 
-Lore exposes the same bounded context and verification semantics used by the CLI as a local stdio MCP server.
+Lore’s MCP server gives Codex, Claude, Cursor, and other MCP clients the same evidence-backed context, rules, decisions, impact analysis, and change verification as the CLI. It uses stdio, so it does not open another network port.
 
-Build the workspace, initialise the target checkout, then run:
+## Full local setup
+
+The local path does not need a Lore API token. The loopback-only Lore service already uses your single `GITHUB_TOKEN` identity.
+
+First, start Lore and connect the GitHub repository in the browser:
 
 ```bash
-npm run build
-cd /absolute/path/to/repository
-lore init --mode local
-lore index
-lore-mcp
+cd /Users/dev/Lore
+npm run local:up
+open http://localhost:5173/#repositories
 ```
 
-Or configure an MCP client:
+Select the repository from the token-backed repository picker. Lore immediately queues the configured initial PR import and recurring sync.
+
+Then connect the local checkout and build its code graph:
+
+```bash
+cd /absolute/path/to/soho-home
+node /Users/dev/Lore/dist/cli.js connect OWNER/REPOSITORY
+node /Users/dev/Lore/dist/cli.js index
+```
+
+`connect` discovers the active organisation and repository IDs from the local service. It writes private, mode-600 files under `.lore/` and adds `.lore/` to the checkout’s local Git exclude. Nothing needs to be copied into `.env`.
+
+Verify the real MCP protocol end to end:
+
+```bash
+cd /Users/dev/Lore
+npm run mcp:check -- /absolute/path/to/soho-home
+```
+
+The check launches the built stdio server through the official MCP client SDK, lists its tools, calls `lore_search`, and confirms that the result came from persistent service authority.
+
+## Client configuration
+
+Build Lore once after installing or updating it:
+
+```bash
+cd /Users/dev/Lore
+npm run build
+```
+
+### Codex
+
+Add this to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.lore]
+command = "node"
+args = ["/Users/dev/Lore/dist/mcp.js"]
+
+[mcp_servers.lore.env]
+LORE_REPOSITORY_PATH = "/absolute/path/to/soho-home"
+```
+
+### Claude Desktop or Cursor
+
+Add this server to the client’s MCP JSON configuration:
 
 ```json
 {
   "mcpServers": {
     "lore": {
-      "command": "lore-mcp",
-      "args": [],
+      "command": "node",
+      "args": ["/Users/dev/Lore/dist/mcp.js"],
       "env": {
-        "LORE_REPOSITORY_PATH": "/absolute/path/to/repository"
+        "LORE_REPOSITORY_PATH": "/absolute/path/to/soho-home"
       }
     }
   }
 }
 ```
 
-The server reads `.lore/config.json`, so its authority is explicit:
+Use absolute paths. Restart the MCP client after changing its configuration.
 
-- `local` uses only that checkout's locally indexed graph and Git history;
-- `demo` uses the bundled scenario only after `lore init --mode demo`;
-- `service` uses the configured Lore API for knowledge, context, evidence, sessions, and reports.
+## Copyable setup prompt
 
-Lore never substitutes fixture data when a service is unavailable. Service errors are returned as tool errors with no fabricated result.
+Paste this into an agent that can edit its own MCP configuration:
 
-Available tools are `lore_prepare_task`, `lore_get_context`, `lore_search`, `lore_lookup_symbol`, `lore_find_history`, `lore_get_rules`, `lore_get_decisions`, `lore_get_impact`, `lore_verify_change`, `lore_explain`, and `lore_propose_knowledge`. Responses separate mandatory, high-priority, advisory, warnings, provenance, and unknowns.
+```text
+Set up the Lore MCP server for this repository.
 
-`lore_propose_knowledge` validates a proposal against the local fixture only in explicit demo mode. In service mode, proposals enter through the evidence/extraction worker and human review workflow; MCP cannot directly mutate active knowledge.
+Lore is installed at /Users/dev/Lore and its local service is at
+http://127.0.0.1:3001. Use node /Users/dev/Lore/dist/mcp.js as a stdio MCP
+server and set LORE_REPOSITORY_PATH to the absolute path of this checkout.
 
-MCP is a deeper-query surface, not the enforcement boundary. Use `lore agent codex "task"` for the verified interactive wrapper, or have another agent call prepare before edits and verify before completion.
+Before editing, call lore_prepare_task with the complete task and inspect all
+mandatory rules, high-priority decisions, regressions, tests, provenance, and
+unknowns. Use lore_search, lore_get_rules, lore_get_decisions,
+lore_lookup_symbol, lore_find_history, and lore_get_impact when needed. Before
+claiming completion, call lore_verify_change and resolve or clearly report every
+blocker. Never treat advisory knowledge as a mandatory policy, and never invent
+context when Lore reports an unknown or service error.
+```
+
+## Available tools
+
+| Tool | Purpose |
+| --- | --- |
+| `lore_prepare_task` | Rank relevant code, evidence, rules, decisions, regressions, and tests before work starts. |
+| `lore_get_context` | Read the latest prepared context with priority and provenance preserved. |
+| `lore_search` | Search active knowledge, evidence, and indexed symbols. |
+| `lore_lookup_symbol` | Resolve files and symbols from the deterministic local graph. |
+| `lore_find_history` | Read bounded local Git history without shell interpolation. |
+| `lore_get_rules` | Return active rules and explicit policies separately from preferences. |
+| `lore_get_decisions` | Return evidence-backed decisions and their scope. |
+| `lore_get_impact` | Traverse bounded downstream relationships with confidence and depth limits. |
+| `lore_verify_change` | Inspect the current diff against context, policies, impact, regressions, and tests. |
+| `lore_explain` | Explain a file or symbol from code, history, consumers, tests, and evidence. |
+| `lore_propose_knowledge` | Validate a proposal; it never bypasses human review or directly activates knowledge. |
+
+## Remote/SaaS service mode
+
+A shared deployment must not trust anonymous loopback traffic. Create an organisation-scoped token in **Settings → Agent & MCP access**, save it once to a mode-600 file, then connect explicitly:
+
+```bash
+chmod 600 ~/.config/lore/token
+node /path/to/lore/dist/cli.js connect \
+  --api-url https://lore.example.com \
+  --organisation-id <organisation-id> \
+  --repository-id <repository-id> \
+  --token-file ~/.config/lore/token
+```
+
+The token is bound to its user and organisation, can be revoked in Settings, and cannot manage the account that created it.
+
+## Troubleshooting
+
+- `not connected`: start Lore with `npm run local:start`, then run `connect` again from the target checkout.
+- `repository is not connected`: add it through the browser’s token-backed picker first.
+- `MCP tool error`: run `npm run local:check`, then inspect `npm run local:logs`.
+- `service-backed structured content` check fails: rebuild with `npm run build` and confirm `.lore/config.json` says `"mode": "service"`.
+- empty symbol results: run `node /Users/dev/Lore/dist/cli.js index` from the checkout.
+- GitHub history is empty: the PAT may not have repository access, organisation approval, or SAML SSO authorisation; run `npm run github:check -- OWNER/REPOSITORY`.
+
+MCP is a context and verification surface, not the enforcement boundary. Active knowledge still requires governed ingestion, schema validation, evidence linkage, and human review.

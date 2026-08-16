@@ -23,17 +23,17 @@ npm run demo
 
 The demo wrapper installs dependencies when they are missing, forces the safe in-memory mode, and prints the URL. Use `npm run demo:check` for a temporary automated API/web readiness proof.
 
-Use local-production Docker mode to exercise real GitHub login, PostgreSQL, migrations, Redis, queued jobs, API, worker, and the production-built web assets. It does not seed demo data or enable the local identity bypass.
+Use full local Docker mode for everyday use: one GitHub PAT supplies profile identity, repository discovery, and evidence; PostgreSQL and persistent Redis run the real API, worker, AI extraction, CLI, MCP, and production-built web assets.
 
 ```bash
-npm run local:setup
-# Add the OAuth App and repository PAT values printed by the command.
-npm run local:up
+npm run local
 ```
 
-Follow [Run Lore locally like production](local-production.md) for the complete `D3R/soho-home` evaluation.
+The guided command securely prompts for the PAT when needed, preserves the configured OpenAI key, verifies both integrations, and starts the persistent production-built stack. Use `local:setup` plus `local:up` only when you prefer separate steps.
 
-Use native persistent mode when you already run PostgreSQL and Redis locally. Set `DEMO_MODE=false`, configure the two URLs and GitHub OAuth login, run migrations, then start `npm run dev` and `npm run worker` in separate terminals. Seed only when you explicitly want demo fixtures.
+Follow [Run Lore locally like production](local-production.md) for the complete repository-discovery, import, AI, persistence, and MCP workflow.
+
+Use native persistent mode when you already run PostgreSQL and Redis locally. Set `DEMO_MODE=false`, `LORE_DEPLOYMENT_MODE=local`, the two URLs, `GITHUB_TOKEN`, and the AI settings; run migrations, then start `npm run dev` and `npm run worker` in separate terminals. Seed only when you explicitly want demo fixtures.
 
 The CLI has its own explicit authority mode:
 
@@ -61,13 +61,10 @@ lore index
 
 The generated `.lore/config.json` contains identifiers, the API URL, the default agent, and trusted test commands. Do not add credentials. Lore adds `.lore/` to the checkout's local `.git/info/exclude` and always omits it from verification, so private state is neither tracked nor mistaken for a product change. Add `.lore/` to the shared `.gitignore` only when the whole team should inherit that convention.
 
-To connect the local config to an API repository record:
+For full local service authority, connect by GitHub name; Lore discovers the active organisation and repository IDs:
 
 ```bash
-lore connect \
-  --repository-id REPOSITORY_ID \
-  --organisation-id ORGANISATION_ID \
-  --api-url http://127.0.0.1:3001
+lore connect OWNER/REPOSITORY
 ```
 
 Running `lore index` in service mode uploads a bounded, sanitised entity/relationship graph. It does not upload a source checkout, and the browser cannot submit a local path.
@@ -108,16 +105,9 @@ Lore currently has one verified interactive adapter: Codex. It passes initial co
 
 ## GitHub history
 
-Choose one authentication mode before connecting a provider repository:
+Set one `GITHUB_TOKEN`. The searchable repository picker lists everything the token can read and lets you connect one or many repositories to the active organisation. A batch accepts up to 500 repositories and safely skips duplicates or already-connected entries. Every connection immediately queues the organisation’s initial import (`all` by default) and an hourly latest-100-PR sync. `{"limit":"all"}` paginates every merged PR plus submitted reviews, inline/conversation comments, commits, and files. Deterministic evidence IDs prevent duplicates, and only newly added evidence is sent to AI.
 
-- `GITHUB_AUTH_MODE=token` for a fine-grained, selected-repository PAT during the first local evaluation.
-- `GITHUB_AUTH_MODE=app` for repository installations and signed live webhooks.
-
-The secret stays in the worker environment. Token mode does not ask for an installation ID. App mode records the installation ID on the repository, so jobs and webhook routing cannot switch installations per request. Follow the complete [GitHub integration guide](github.md), including organisation approval and SSO notes.
-
-Start with 50 or 100 merged PRs in **Repositories → Import history**. Expand to 250–1,000 after checking retention and evidence quality, or use **All merged PRs** deliberately for the entire available merged history. Production-mode writes require the signed-in browser session and CSRF token; the UI handles both.
-
-For a mature repository, `{"limit":"all"}` paginates every merged PR plus its submitted reviews, inline and conversation comments, commits, and files. It can take a long time and consume substantial GitHub API quota, so bounded batches are the safer first run.
+Change the initial limit, interval, retention, or automatic extraction under **Settings → Organisation defaults** before connecting when a mature or sensitive repository needs a bounded first run. Follow the [GitHub integration guide](github.md), including classic/fine-grained PAT reach, organisation approval, and GitHub SAML SSO.
 
 Open the Candidates screen. Approve only statements whose evidence, class, and scope are accurate. Edit over-broad scope before approval. Reject noisy inferences with a reason; the audit trail records both decisions.
 
@@ -139,7 +129,7 @@ Open **Add evidence** in the web application. Choose the source type, optionally
 
 Lore retains the source and shows extracted suggestions underneath the form. Review the four outcome groups—new, already added, supporting, and conflicting—then choose **Review candidates**. Correct wording, class, and scope before approval; merge duplicate/supporting evidence into an existing item; reject noise. No suggestion becomes active merely because a model extracted it.
 
-The local bundled extractor is deterministic and does not call an external AI service. That makes the first evaluation safe to run without an API key, but its language recognition is deliberately narrower than a production model. Before configuring any future hosted model, complete the provider data-retention, training, region, subprocessor, DPA, and incident-response review in [SaaS readiness](saas-readiness.md).
+Demo uses a deterministic bundled extractor. Full local mode uses the real schema-validated OpenAI adapter when `AI_PROVIDER=openai`; `npm run ai:check` proves it without sending repository/customer data. Before processing sensitive company communications, complete the provider data-retention, training, region, subprocessor, DPA, and incident-response review in [SaaS readiness](saas-readiness.md).
 
 For API use, see the copy-ready `curl` request and outcome contract in [REST API](api.md#communication-evidence).
 
@@ -165,7 +155,7 @@ The worker intentionally refuses an in-memory production path. Set `DATABASE_URL
 
 ### GitHub import is queued but nothing changes
 
-Run the worker and `npm run setup:check`. In token mode, confirm the token path, owner-only permissions, selected repository, Pull requests/Issues read permissions, organisation approval, and SAML access. In App mode, check the App ID/private key and installation access. Inspect structured `job.failed` output without printing any credential.
+Run `npm run local:status`, `npm run local:logs`, and `npm run github:check -- OWNER/REPOSITORY`. Confirm PAT reach, Pull requests/Issues read permissions, organisation approval, and SAML access. Inspect structured `job.failed` output without printing any credential.
 
 ### A candidate remains weak
 

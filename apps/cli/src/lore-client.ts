@@ -33,11 +33,13 @@ export interface LoreClient {
 export class HttpLoreClient implements LoreClient {
   public constructor(private readonly config: LocalConfig, private readonly token = process.env.LORE_API_TOKEN) {}
 
-  async #resolveToken(): Promise<string> {
+  async #resolveToken(): Promise<string | undefined> {
     if (this.token?.trim()) return this.token.trim();
     const configuredPath = process.env.LORE_API_TOKEN_FILE?.trim() || this.config.apiTokenFile;
     if (!configuredPath) {
-      throw new Error("Service mode requires LORE_API_TOKEN, LORE_API_TOKEN_FILE, or `lore connect --token-file ...`");
+      const hostname = new URL(this.config.apiUrl).hostname;
+      if (new Set(["localhost", "127.0.0.1", "::1"]).has(hostname)) return undefined;
+      throw new Error("Remote service mode requires LORE_API_TOKEN, LORE_API_TOKEN_FILE, or `lore connect --token-file ...`");
     }
     const path = resolve(configuredPath);
     const metadata = await lstat(path);
@@ -133,7 +135,7 @@ export class HttpLoreClient implements LoreClient {
       ...init,
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${token}`,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...(init?.headers ?? {})
       }
     });

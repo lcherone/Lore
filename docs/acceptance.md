@@ -18,10 +18,10 @@ This document maps the original product brief to concrete, runnable Lore surface
 | Brief outcome                   | Shipped surface                                                                                                              | How to prove it                                                                                                  |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Connect a repository            | GitHub repository UI/API plus trusted local CLI                                                                              | Connect GitHub from **Repositories**; use `lore connect` for a checkout without exposing its path to the browser |
-| Import merged PR history        | Local fine-grained PAT or GitHub App adapter, bounded/all history job, BullMQ worker                                         | Queue **Import history** with 100 first, then 250–1,000 or all merged PRs                                        |
-| Preserve PR/review evidence     | Idempotent evidence store and ingestion receipts                                                                             | Repeat the same import; the second pass adds no duplicate evidence                                               |
+| Import merged PR history        | Local PAT or GitHub App adapter, chosen-limit/all history job, BullMQ worker                                                  | Connect a repository for the default complete import, or queue 100, 250–1,000, or all merged PRs manually       |
+| Preserve PR/review evidence     | Stable source identities, immutable evidence revisions, and ingestion receipts                                               | Repeat unchanged input for no duplicate; edit retained input and confirm a new revision                          |
 | Capture communication evidence  | Authorised note/transcript form, stable evidence identity, structured extraction, comparison labels, and candidate handoff  | Use **Add evidence**, submit the example twice, and confirm one evidence record plus no duplicate candidate      |
-| Propose knowledge safely        | Versioned, structured AI request and mock provider                                                                           | Run the worker with `AI_PROVIDER=mock`; only validated candidates are created                                    |
+| Propose knowledge safely        | Versioned, structured AI request with deterministic mock and real OpenAI Responses adapters                                  | Run tests with `AI_PROVIDER=mock`, then `npm run ai:check`; only schema-validated candidates are created          |
 | Review candidates               | Evidence, confidence, contradiction, edit, scope, class, merge, approve, and reject UI                                       | Complete an action in **Candidates** and inspect the updated queue                                               |
 | Index local code/history        | TypeScript and PHP AST analysis, safe Git adapter, co-change graph                                                           | Run `lore index` in a Git checkout                                                                               |
 | Prepare task context            | Ranking, precedence, bounded impact, evidence, regressions, tests, unknowns                                                  | Run `lore prepare "task"` or use the dashboard                                                                   |
@@ -33,7 +33,7 @@ This document maps the original product brief to concrete, runnable Lore surface
 
 1. **Core data model:** PostgreSQL/Prisma models, migrations, canonical UUIDs, membership boundaries, evidence links, revisions, proposals, challenges, usage, sessions, immutable context records, bounded change observations, append-only session events, linked reports, policies, and audit events.
 2. **Local repository indexer:** local open/scan, language detection, TypeScript/PHP symbols, static relationships, bounded Git history, and statistically guarded co-change edges.
-3. **GitHub import:** worker-only PAT or GitHub App authentication, installation-scoped App routing, paginated historical merged PRs, submitted reviews, inline and conversation comments, commits, changed files, optional raw diff retention, bounded/all jobs, and idempotency.
+3. **GitHub import:** server-side PAT or GitHub App authentication, token-visible local repository discovery, installation-scoped SaaS App routing, paginated merged PRs, submitted reviews, inline and conversation comments, commits, changed files, optional raw diff retention, chosen-limit/all jobs, and idempotency.
 4. **AI extraction:** replaceable provider contract, versioned prompts, untrusted-input separation, structured Zod output, deduplication/contradiction validation, scope suggestion, and server-side confidence.
 5. **Knowledge review:** ad-hoc communication capture, transcript signal extraction, new/duplicate/support/conflict comparison, candidate search/filter, evidence, confidence explanation, contradictions, statement/scope/class editing, evidence-preserving merge, approve, reject, challenge, archive, and manual confirmation.
 6. **Task context:** task concepts, candidate code, expanded impact, precedence-ranked knowledge, evidence, regressions, recommended tests, warnings, and explicit unknowns.
@@ -62,6 +62,8 @@ npm run lint
 npm test
 npm run build
 npm run test:coverage
+npm run smoke:evidence
+npm run smoke:jobs
 npm audit --omit=dev
 docker compose config --quiet
 docker compose -f docker-compose.yml -f docker-compose.github-token.yml config --quiet
@@ -75,6 +77,6 @@ For UI acceptance, verify the dashboard context modal, Add evidence transcript f
 
 ## Deliberately extensible, not faked
 
-The brief explicitly places these outside the first usable release: production SSO/membership administration, Slack/documentation sync, Jira/Linear provider implementations, GitHub Check and PR-comment publication, a hosted SaaS control plane, billing, and optional embeddings. Lore includes the relevant provider and service boundaries where they affect the core design, but does not present non-existent integrations as working features.
+The brief explicitly places these outside the first usable release: enterprise SSO/SCIM, Slack/documentation sync, Jira/Linear provider implementations, GitHub Check and PR-comment publication, a hosted SaaS control plane, billing, and optional embeddings. Lore includes the relevant provider and service boundaries where they affect the core design, but does not present non-existent integrations as working features.
 
-The only bundled AI provider is deterministic `mock`. A real provider requires an explicit adapter, credentials, evaluation fixtures, cost limits, and the same structured-output and no-direct-mutation guarantees.
+Demo and tests use the bundled deterministic `mock` provider. Full local mode ships an OpenAI Responses adapter with strict structured output, explicit credentials, `store: false`, and the same proposal-only/no-direct-mutation guarantees. Provider evaluation fixtures, organisation cost limits, and SaaS privacy approval remain external-deployment work.

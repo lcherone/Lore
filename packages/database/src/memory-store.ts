@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { newUuid } from "@lore/shared/ids.js";
 import { createDemoSnapshot, getDemoEvidence } from "@lore/shared/demo-data.js";
 import { createDemoCodeGraph } from "@lore/shared/demo-graph.js";
@@ -11,6 +12,7 @@ import type {
   ContextPackageRecord,
   DashboardSnapshot,
   EvidenceRecord,
+  EvidenceRevisionRecord,
   KnowledgeItem,
   KnowledgeProposalRecord,
   AuthSessionSummary,
@@ -47,6 +49,7 @@ import { createChangeObservation } from "./change-observation.js";
 export class InMemoryLoreStore implements LoreStore {
   readonly #snapshots = new Map<string, DashboardSnapshot>();
   readonly #evidence: EvidenceRecord[];
+  readonly #evidenceRevisions = new Map<string, EvidenceRevisionRecord[]>();
   readonly #receipts = new Set<string>();
   readonly #proposals: KnowledgeProposalRecord[] = [];
   readonly #observations: ChangeObservation[] = [];
@@ -64,7 +67,14 @@ export class InMemoryLoreStore implements LoreStore {
 
   public constructor(snapshot = createDemoSnapshot(), evidence = getDemoEvidence()) {
     this.#snapshots.set(snapshot.organisation.id, structuredClone(snapshot));
-    this.#evidence = structuredClone(evidence);
+    this.#evidence = structuredClone(evidence).map((record) => ({
+      ...record,
+      contentHash: this.#evidenceHash(record)
+    }));
+    const createdAt = new Date().toISOString();
+    for (const record of this.#evidence) {
+      this.#evidenceRevisions.set(record.id, [this.#revision(record, 1, createdAt)]);
+    }
     this.#graphs.set("repo_soho_ecom", createDemoCodeGraph());
     const now = new Date().toISOString();
     this.#users.set("user_casey", {
@@ -421,6 +431,15 @@ export class InMemoryLoreStore implements LoreStore {
   async getEvidence(organisationId: string): Promise<EvidenceRecord[]> {
     this.#assertOrganisation(organisationId);
     return structuredClone(this.#evidence.filter((record) => record.organisationId === organisationId));
+  }
+
+  async getEvidenceRevisions(organisationId: string, evidenceId: string): Promise<EvidenceRevisionRecord[]> {
+    this.#assertOrganisation(organisationId);
+    const evidence = this.#evidence.find(
+      (record) => record.id === evidenceId && record.organisationId === organisationId
+    );
+    if (!evidence) throw new NotFoundError("Evidence", evidenceId);
+    return structuredClone(this.#evidenceRevisions.get(evidenceId) ?? []);
   }
 
   async getRepository(organisationId: string, repositoryId: string) {
@@ -886,21 +905,31 @@ export class InMemoryLoreStore implements LoreStore {
   }
 
   async ingestEvidence(records: EvidenceRecord[]): Promise<number> {
-    let added = 0;
+    let changed = 0;
     for (const record of records) {
       this.#assertOrganisation(record.organisationId);
-      const duplicate = this.#evidence.some(
+      const index = this.#evidence.findIndex(
         (existing) =>
           existing.organisationId === record.organisationId &&
           existing.provider === record.provider &&
           existing.externalId === record.externalId
       );
-      if (!duplicate) {
-        this.#evidence.push(structuredClone(record));
-        added += 1;
+      const normalized = { ...structuredClone(record), contentHash: this.#evidenceHash(record) };
+      if (index < 0) {
+        this.#evidence.push(normalized);
+        this.#evidenceRevisions.set(record.id, [this.#revision(normalized, 1)]);
+        changed += 1;
+        continue;
       }
+      const existing = this.#evidence[index]!;
+      if (this.#evidenceHash(existing) === normalized.contentHash) continue;
+      const revisions = this.#evidenceRevisions.get(existing.id) ?? [this.#revision(existing, 1)];
+      revisions.push(this.#revision({ ...normalized, id: existing.id }, revisions.length + 1));
+      this.#evidenceRevisions.set(existing.id, revisions);
+      this.#evidence[index] = { ...normalized, id: existing.id };
+      changed += 1;
     }
-    return added;
+    return changed;
   }
 
   async hasIngestionReceipt(organisationId: string, provider: string, externalId: string): Promise<boolean> {
@@ -922,6 +951,33 @@ export class InMemoryLoreStore implements LoreStore {
   public createId(prefix: string): string {
     void prefix;
     return newUuid();
+  }
+
+  #evidenceHash(record: EvidenceRecord): string {
+    return record.contentHash ?? createHash("sha256").update(JSON.stringify({
+      url: record.url ?? null,
+      title: record.title ?? null,
+      content: record.content,
+      author: record.author ?? null,
+      occurredAt: record.occurredAt,
+      metadata: record.metadata
+    })).digest("hex");
+  }
+
+  #revision(record: EvidenceRecord, version: number, createdAt = new Date().toISOString()): EvidenceRevisionRecord {
+    return {
+      id: newUuid(),
+      evidenceId: record.id,
+      version,
+      contentHash: this.#evidenceHash(record),
+      ...(record.url ? { url: record.url } : {}),
+      ...(record.title ? { title: record.title } : {}),
+      content: record.content,
+      ...(record.author ? { author: record.author } : {}),
+      occurredAt: record.occurredAt,
+      metadata: structuredClone(record.metadata),
+      createdAt
+    };
   }
 
   #apiTokenSummary(token: ApiTokenRecord): ApiTokenSummary {

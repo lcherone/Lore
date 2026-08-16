@@ -11,125 +11,48 @@
 
 # Authentication, profiles, and organisations
 
-Lore uses GitHub to prove who a person is, then creates its own short-lived, revocable browser session. A Lore account is personal. Engineering memory remains private inside organisations the account owns or has joined.
+Lore has the same account, profile, organisation, role, and settings model locally and in SaaS. The deployment mode changes how GitHub proves identity; it does not remove product features.
 
-This page is the complete local setup guide. No payment system is required.
+## Local identity: the existing PAT
 
-## The three GitHub credentials are different
-
-| Purpose | Setting | Required locally? | What it can access |
-| --- | --- | --- | --- |
-| **Sign a person in** | `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET` | Yes for real login; no for the demo account | The signed-in user's public profile and verified email |
-| **Import old pull requests locally** | `GITHUB_TOKEN_PATH` or `GITHUB_TOKEN` | Only when importing real history | Repositories selected for that PAT |
-| **Receive webhooks / shared repository access** | `GITHUB_APP_ID`, private key, and webhook secret | No | Repositories where the GitHub App is installed |
-
-Signing in does **not** give Lore access to the user's repositories. A PAT or repository GitHub App is configured separately. This separation lets a person belong to an organisation without silently granting that organisation access to every repository they can see.
-
-```mermaid
-flowchart LR
-  Person[GitHub user] -->|OAuth profile + verified email| Identity[Lore account]
-  Identity -->|owner / admin / member / viewer| Org[Lore organisation]
-  PAT[Fine-grained PAT] -->|local historical import| Repo[Selected repositories]
-  App[Repository GitHub App] -->|installation + webhooks| Repo
-  Org --> Repo
-```
-
-## Fastest option: try the complete account UI
-
-```bash
-npm run demo
-```
-
-Open [http://localhost:5173](http://localhost:5173), then choose **Explore the demo account**. The demo includes the login screen, profile, organisation switcher, member management, invitations, and role UI. It needs no GitHub credentials, database, or Redis. Demo accounts and changes disappear when the API stops.
-
-## Real GitHub login on a local machine
-
-GitHub can redirect a browser back to `localhost`; the application does not need to be publicly deployed. Only inbound webhooks require a public HTTPS endpoint.
-
-### 1. Create a GitHub OAuth App
-
-Open GitHub **Settings → Developer settings → OAuth Apps → New OAuth App**. For a local Vite/API setup enter:
-
-```text
-Application name:              Lore local
-Homepage URL:                  http://localhost:5173
-Authorization callback URL:   http://localhost:5173/api/auth/github/callback
-```
-
-Register the application, copy its Client ID, then generate a Client Secret. GitHub displays a new client secret only once; place it in `.env`, never in a committed file, screenshot, ticket, or chat transcript.
-
-Lore uses GitHub's web application authorization-code flow, a random state value, PKCE with `S256`, and an exact callback URL. See GitHub's official [OAuth authorization guide](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps) and [OAuth App security guidance](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/best-practices-for-creating-an-oauth-app).
-
-### 2. Configure `.env`
+A loopback-only local installation uses the same `GITHUB_TOKEN` needed for repository access:
 
 ```dotenv
-DEMO_MODE=false
-APP_URL=http://localhost:5173
-WEB_ORIGIN=http://localhost:5173
-
-SESSION_SECRET=replace-with-a-random-value-of-at-least-32-characters
-AUTH_SESSION_TTL_HOURS=24
-
-GITHUB_OAUTH_CLIENT_ID=Ov23liExample
-GITHUB_OAUTH_CLIENT_SECRET=replace-with-the-generated-secret
-GITHUB_OAUTH_CALLBACK_URL=http://localhost:5173/api/auth/github/callback
+LORE_DEPLOYMENT_MODE=local
+GITHUB_TOKEN=github_pat_...
 ```
 
-Generate a session secret locally:
+No OAuth App or callback is needed. On the first request, Lore:
 
-```bash
-openssl rand -base64 48
+1. validates that the configured application URL is loopback-only;
+2. calls GitHub’s authenticated-user endpoint with the PAT;
+3. reads the profile and a verified email where available;
+4. links the stable GitHub numeric ID to a durable Lore user;
+5. seeds name, avatar, login, profile URL, bio, company, location, and website;
+6. automatically creates `<GitHub name>'s Workspace` if the user has no organisations;
+7. keeps every repository, setting, evidence item, and knowledge record scoped to the selected Lore organisation.
+
+The PAT remains in the API/worker environment. The browser never receives it. Local API access is accepted without a second Lore API token only because the complete Docker stack publishes its ports on `127.0.0.1` and verifies a loopback `APP_URL`.
+
+The local user can still create several organisations—for example **Personal**, **Acme Engineering**, and **Soho Home**—and keep their repositories and knowledge separate.
+
+## SaaS/shared identity: GitHub OAuth
+
+A remote multi-user service cannot safely treat one server PAT as every visitor. `LORE_DEPLOYMENT_MODE=saas` therefore requires a GitHub OAuth App:
+
+```dotenv
+GITHUB_OAUTH_CLIENT_ID=
+GITHUB_OAUTH_CLIENT_SECRET=
+GITHUB_OAUTH_CALLBACK_URL=https://lore.example.com/api/auth/github/callback
 ```
 
-Use `localhost` consistently. Do not open the UI as `127.0.0.1` while the callback and `APP_URL` use `localhost`, because cookies are host-bound.
+The SaaS login uses an authorization code, signed state, PKCE, and an exact callback; reads the user profile and verified email; discards the GitHub OAuth access token; and issues a random Lore session whose hash, expiry, last-seen time, revocation state, user, and active organisation are stored server-side.
 
-### 3. Start persistence and apply the schema
-
-GitHub accounts, profiles, organisations, memberships, invitations, and sessions are durable PostgreSQL records.
-
-For the complete production-shaped Docker stack, prefer:
-
-```bash
-npm run local:setup
-npm run local:up
-```
-
-This validates OAuth and repository credentials, builds production assets, applies migrations, and starts PostgreSQL, Redis, API, worker, and web services. See [Run Lore locally like production](local-production.md).
-
-For native development with PostgreSQL and Redis already running:
-
-```bash
-npm install
-npm run setup:check
-npm run db:migrate
-npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173) and choose **Continue with GitHub**. The Vite development server proxies `/api/auth/github/callback` to the local API, so the callback URL above works without a public deployment.
-
-If the rest of Lore is running in persistent mode, start its worker separately:
-
-```bash
-npm run worker
-```
-
-The worker is required for imports and indexing, not for signing in or editing an account.
-
-## What happens on first login
-
-1. Lore sends the browser to GitHub with `read:user user:email`, state, and a PKCE challenge.
-2. GitHub returns a one-use code. Lore validates the signed browser transaction and exchanges the code server-side.
-3. Lore fetches `/user` and `/user/emails`, and requires a verified GitHub email. GitHub documents the email endpoint in [List email addresses for the authenticated user](https://docs.github.com/en/rest/users/emails).
-4. The account is linked to GitHub's stable numeric user ID. A GitHub login can be renamed; it is not used as the durable identity key.
-5. Name, avatar, bio, company, location, website, GitHub login, and GitHub profile URL seed the profile.
-6. The GitHub access token is discarded. Lore stores no GitHub login token and cannot use login to read repositories later.
-7. Lore places only a random opaque value in the browser cookie. Its SHA-256 hash, expiry, last-seen time, revocation state, user, and selected organisation are stored server-side.
-
-If an existing Lore account has the same verified email, the GitHub identity is linked to it. User-edited profile fields are not overwritten by later logins.
+OAuth identifies the human. A GitHub App supplies repository installation authority and signed webhooks. The complete advanced configuration is isolated in [`.env.saas.example`](../.env.saas.example).
 
 ## Personal profiles
 
-Open the avatar or **Your profile** in the sidebar. A user can edit:
+Open the avatar or **Your profile**. A user can edit:
 
 - display name;
 - job title and company;
@@ -137,103 +60,119 @@ Open the avatar or **Your profile** in the sidebar. A user can edit:
 - website;
 - bio.
 
-The verified email, GitHub login, and GitHub profile link remain identity information. Changing those requires a fresh, verified GitHub identity flow rather than an untrusted text field.
+GitHub login, profile URL, and identity email are provider-backed fields. User-edited profile fields are preserved when the PAT profile refreshes or the user signs in again through OAuth.
 
-The **Account security** section lists active Lore sessions, their last activity and expiry, and lets the user revoke every other session. **Sign out** revokes the current server-side session immediately.
+The **Account security** section lists real browser sessions in SaaS mode and lets a user revoke other sessions. Local single-user authentication is derived from the workstation PAT, so signing out cannot revoke GitHub access; revoke or rotate the PAT to remove that authority.
 
 ## Organisations and privacy
 
-A new user with no memberships sees organisation onboarding. They can:
+A user can:
 
 - create a private organisation and become its owner;
-- accept an invitation sent to their verified GitHub email;
-- later create more organisations;
+- create several organisations under one personal account;
 - switch organisations from the top bar;
-- keep one personal account across every organisation.
+- accept an invitation sent to the GitHub identity email;
+- invite colleagues and assign least privilege in shared mode;
+- maintain separate repository, evidence, knowledge, retention, automation, and MCP settings per organisation.
 
-The selected organisation is part of the server-side session, not a browser-supplied tenant ID. Switching rotates the session token. Every product request validates that the user still has a current membership before reading organisation data.
+The active organisation comes from server-side authentication state, not an arbitrary tenant ID supplied by a browser. Every product request validates current membership. An organisation-scoped agent token cannot switch into another organisation.
 
 ### Roles
 
-| Role | Read organisation data | Create/change engineering memory | Invite and manage members | Change organisation settings |
-| --- | ---: | ---: | ---: | ---: |
-| **Owner** | Yes | Yes | Yes | Yes |
-| **Admin** | Yes | Yes | Yes, except ownership | Yes |
-| **Member** | Yes | Yes | No | No |
-| **Viewer** | Yes | No | No | No |
+| Role | Read organisation data | Change engineering memory | Connect repositories | Invite/manage members | Change organisation settings |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **Owner** | Yes | Yes | Yes | Yes | Yes |
+| **Admin** | Yes | Yes | Yes | Yes, except ownership | Yes |
+| **Member** | Yes | Yes | Configurable per organisation | No | No |
+| **Viewer** | Yes | No | No | No | No |
 
-An owner cannot be demoted or removed through member management. Ownership transfer and organisation deletion are intentionally not exposed yet; adding them requires a deliberate, re-authenticated recovery flow.
+An owner cannot be demoted or removed through member management. Ownership transfer and organisation deletion require a deliberate recovery design before SaaS launch.
 
 ### Invitations
 
 1. Open **Organisation → Invite a colleague**.
-2. Enter their work email and choose admin, member, or viewer.
+2. Enter the work email and choose admin, member, or viewer.
 3. Copy the generated link and send it through an approved channel.
-4. The recipient signs in with GitHub.
-5. Lore shows the invitation only when GitHub confirms the exact verified email.
-6. Accepting it creates the membership and switches the active organisation.
+4. The recipient signs in through GitHub OAuth on the shared deployment.
+5. Lore shows the invitation only when the verified GitHub email matches.
+6. Accepting creates membership and selects the organisation.
 
-The link is convenient routing, not the authority to join. Possessing it is insufficient: the authenticated, verified email must match. Invitations expire after seven days and can be revoked from the organisation screen. Lore currently provides copyable links but does not send email; transactional email is a later operational integration.
+The link is routing, not authority. Invitations expire after seven days and can be revoked. Lore does not yet send transactional email. In a strictly local install, other people cannot reach the loopback URL, but the organisation and invitation model is still present for product parity and later migration.
+
+## User and organisation settings
+
+**Settings → Your preferences** stores settings against the user:
+
+- start page;
+- default manual import limit;
+- theme;
+- onboarding guidance;
+- in-app import/candidate notices.
+
+**Settings → Organisation defaults** stores settings only against the active organisation:
+
+- automatic GitHub import;
+- initial PR limit and recurring sync interval;
+- automatic AI extraction;
+- ad-hoc communication evidence;
+- whether members can connect repositories;
+- MCP/API-token access;
+- default evidence retention for new repositories.
+
+Only owners/admins can edit organisation defaults. Changing automatic-sync settings updates schedulers for existing repositories in that organisation.
+
+## Agent and MCP authentication
+
+Local MCP uses the loopback service and needs no second token. Shared/SaaS agents use a Lore token created in **Settings → Agent & MCP access**.
+
+The full token is shown once. Lore stores only its SHA-256 hash plus name, prefix, user, organisation, scopes, expiry, last-used time, revocation, and creation time. Tokens cannot manage the account that created them and are rejected when organisation MCP access is disabled.
 
 ## Session and request security
 
-- Session tokens contain no user ID, role, email, or organisation data.
-- Only token hashes are stored in PostgreSQL.
-- Sessions expire after `AUTH_SESSION_TTL_HOURS` (minimum 1, maximum 720; default 24).
-- Tokens rotate after login, organisation creation, organisation switching, and invitation acceptance.
-- A removed membership stops authorising tenant requests even if the browser still has a cookie.
+- SaaS session tokens contain no user ID, role, email, or organisation data.
+- Only session/API-token hashes are stored in PostgreSQL.
+- Sessions expire after `AUTH_SESSION_TTL_HOURS` (1–720; default 24).
+- SaaS session tokens rotate after login, organisation creation/switch, and invitation acceptance.
+- Removed membership immediately stops tenant access.
 - Cookies are `HttpOnly`, `SameSite=Lax`, signed, and `Secure` in production.
-- Production cookie-authenticated mutations use CSRF protection.
-- Sensitive headers, cookies, keys, and token-shaped fields are redacted from structured logs.
-- Viewer write attempts fail at the API boundary, not only in the interface.
+- Cookie-authenticated production mutations use CSRF protection.
+- Viewer writes fail at the API boundary.
+- Sensitive headers, cookies, keys, tokens, and API keys are redacted from structured logs.
+- The local PAT fallback fails if `APP_URL` is not localhost/loopback.
 
-OWASP recommends opaque, meaningless session identifiers, server-side session state, regeneration after privilege changes, expiration, and revocation. Lore follows that model; see the [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) and [OAuth 2.0 Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/OAuth2_Cheat_Sheet.html).
+## Quick setup
 
-## Local development bypass
-
-`LOCAL_DEV_AUTH=true` remains available for API/CLI development where a browser OAuth round-trip is undesirable. It is restricted to a loopback `APP_URL` and requires existing database user and organisation IDs:
-
-```dotenv
-LOCAL_DEV_AUTH=true
-LOCAL_USER_ID=existing-user-uuid
-LOCAL_ORGANISATION_ID=existing-organisation-uuid
-LOCAL_USER_NAME=Local Developer
+```bash
+cd /Users/dev/Lore
+npm run local:setup
+# Set GITHUB_TOKEN and OPENAI_API_KEY in .env
+npm run local:up
 ```
 
-Do not enable it in shared, preview, staging, or production environments. GitHub sign-in is the supported human login path.
+Open [http://localhost:5173](http://localhost:5173). Your profile and first private workspace appear automatically.
 
 ## Troubleshooting
 
-### GitHub sign-in is not configured
+### Local mode asks for OAuth or fixed IDs
 
-Set both `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`, then restart the API. The login screen deliberately stays unavailable when only one is set.
+Those values are obsolete for the normal local path. Ensure `LORE_DEPLOYMENT_MODE=local`, set `GITHUB_TOKEN`, rerun `npm run local:setup`, and remove blank OAuth/App/local-ID lines.
 
-### Callback says state is invalid or expired
+### Profile email is a GitHub noreply address
 
-Start again from Lore, finish within ten minutes, and use the same browser and host. A second login attempt, cleared cookies, or changing between `localhost` and `127.0.0.1` invalidates the first transaction.
+Some PATs cannot read `/user/emails`, and the GitHub profile may hide its public email. Lore then uses the stable GitHub noreply form for the local account. For SaaS invitation matching, use OAuth with verified-email scope.
 
-### GitHub says the callback URL is incorrect
+### Another person cannot open the local invitation
 
-The OAuth App callback and `GITHUB_OAUTH_CALLBACK_URL` must both be exactly:
+Expected: every published local port is loopback-only. Use a reviewed shared deployment only after the [SaaS readiness](saas-readiness.md) gates are complete.
 
-```text
-http://localhost:5173/api/auth/github/callback
-```
+### SaaS callback is invalid or expired
 
-### Lore requires a verified email
-
-Verify an email in GitHub account settings and allow the requested `user:email` scope. Lore does not accept an unverified profile email for identity linking or invitation acceptance.
+Restart from Lore, finish within ten minutes, use the same browser, and keep the public hostname consistent. A second login, cleared cookie, or host change invalidates the first transaction.
 
 ### A user cannot see an invitation
 
-Compare the invitation email with the verified email returned by their GitHub account. Revoke and recreate an incorrectly addressed invitation. Lore intentionally does not allow an owner to override this check from the browser.
+Compare the invitation email with the verified email returned by GitHub OAuth. Revoke and recreate an incorrectly addressed invitation; link possession cannot bypass the match.
 
-### Old cookie stops working after switching organisation
+## External deployment boundary
 
-That is expected. Organisation changes rotate and revoke the old session token. Refresh the active tab; close stale tabs if they continue showing a signed-out state.
-
-## SaaS boundary
-
-This implementation supplies a real account, profile, session, organisation, invitation, and baseline RBAC foundation. It does **not** by itself make Lore ready for an external multi-tenant SaaS launch. Enterprise SSO/SAML, MFA policy enforcement, SCIM, support access, installation ownership binding, immutable audit export, tenant cryptographic isolation, deletion/export, operational monitoring, incident response, legal documents, DPIA, PCI scope decisions, and independent penetration testing remain launch gates.
-
-Do not deploy externally until the relevant controls in [SaaS readiness](saas-readiness.md) are implemented, tested, independently reviewed, and approved for the intended customer data.
+The account and organisation foundation is implemented, but it does not by itself approve a SaaS launch. Enterprise OIDC/SAML, MFA enforcement, SCIM, support access, installation-ownership binding, immutable audit export, cryptographic tenant isolation, deletion/export, monitoring, incident response, legal documents, DPIA, PCI scope decisions, and independent penetration testing remain launch gates in [SaaS readiness](saas-readiness.md).

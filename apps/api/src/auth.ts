@@ -51,9 +51,7 @@ export async function resolveAuthentication(
   store: LoreStore,
   demoMode: boolean
 ): Promise<AuthContext | undefined> {
-  const authorization = Array.isArray(request.headers.authorization)
-    ? request.headers.authorization[0]
-    : request.headers.authorization;
+  const authorization = request.headers.authorization;
   if (authorization?.startsWith("Bearer ")) {
     const rawToken = authorization.slice("Bearer ".length).trim();
     if (rawToken.startsWith("lore_pat_") && rawToken.length >= 40) {
@@ -120,6 +118,7 @@ export function requireAuth(request: FastifyRequest): AuthContext {
 }
 
 export function tenantContext(request: FastifyRequest, _demoMode?: boolean): TenantContext {
+  void _demoMode;
   const auth = requireAuth(request);
   if (!auth.activeOrganisationId || !auth.role) {
     throw new LoreError("Choose or create an organisation to continue", "ORGANISATION_REQUIRED", 409);

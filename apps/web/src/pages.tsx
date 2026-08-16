@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -16,6 +16,7 @@ import {
   Filter,
   GitBranch,
   History,
+  LoaderCircle,
   Link2,
   ListFilter,
   MessageSquareText,
@@ -37,6 +38,7 @@ import type {
   ContextPackage,
   DashboardSnapshot,
   EvidenceRecord,
+  JobRunRecord,
   KnowledgeItem,
   KnowledgeKind,
   KnowledgeScope,
@@ -59,7 +61,13 @@ import {
   SeverityLabel
 } from "./components.js";
 import { parseGitHubRepositoryReference } from "./github-repository.js";
-import { loreApi, type GitHubRepositoryOption } from "./api.js";
+import {
+  loreApi,
+  type GitHubRepositoryOption,
+  type RepositoryBatchConnectionResult
+} from "./api.js";
+
+const MAX_REPOSITORIES_PER_BATCH = 500;
 
 const formatDate = (value: string): string =>
   new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(
@@ -67,7 +75,9 @@ const formatDate = (value: string): string =>
   );
 
 const relativeTime = (value: string): string => {
-  const hours = Math.max(1, Math.round((Date.now() - new Date(value).getTime()) / 3_600_000));
+  const minutes = Math.max(1, Math.round((Date.now() - new Date(value).getTime()) / 60_000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   const days = Math.round(hours / 24);
   return `${days}d ago`;
@@ -1455,7 +1465,7 @@ export function RepositoriesPage({
   };
   installationId?: string;
   onInstallGitHub: () => Promise<void>;
-  onConnect: (input: Record<string, unknown>) => Promise<void>;
+  onConnect: (inputs: Array<Record<string, unknown>>) => Promise<RepositoryBatchConnectionResult>;
   onIndex: (repository: RepositorySummary) => Promise<void>;
   onImport: (repository: RepositorySummary, limit: PullRequestImportLimit) => Promise<void>;
   onDelete: (repository: RepositorySummary, confirmation: string) => Promise<void>;
@@ -1471,7 +1481,8 @@ export function RepositoriesPage({
   const [installationId, setInstallationId] = useState(initialInstallationId ?? "");
   const [importLimit, setImportLimit] = useState<PullRequestImportLimit>(defaultImportLimit);
   const [repositoryReference, setRepositoryReference] = useState("");
-  const [selectedGitHubRepositoryId, setSelectedGitHubRepositoryId] = useState("");
+  const [selectedGitHubRepositoryIds, setSelectedGitHubRepositoryIds] = useState<string[]>([]);
+  const [repositorySearch, setRepositorySearch] = useState("");
   const [availableRepositories, setAvailableRepositories] = useState<GitHubRepositoryOption[]>([]);
   const [repositoriesLoading, setRepositoriesLoading] = useState(false);
   const [defaultBranch, setDefaultBranch] = useState("main");
@@ -1492,7 +1503,7 @@ export function RepositoriesPage({
     setConnectOpen(true);
   }, [initialInstallationId]);
   useEffect(() => {
-    if (!connectOpen || githubStatus.mode !== "token") return;
+    if (!connectOpen || (githubStatus.mode !== "token" && githubStatus.mode !== "demo")) return;
     let cancelled = false;
     setRepositoriesLoading(true);
     void loreApi.githubRepositories().then(({ items }) => {
@@ -1504,24 +1515,83 @@ export function RepositoriesPage({
     });
     return () => { cancelled = true; };
   }, [connectOpen, githubStatus.mode]);
+  const connectedRepositoryKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const repository of repositories) {
+      keys.add(`name:${repository.owner.toLowerCase()}/${repository.name.toLowerCase()}`);
+      if (repository.providerRepositoryId) keys.add(`id:${repository.providerRepositoryId}`);
+    }
+    return keys;
+  }, [repositories]);
+  const isConnected = (repository: GitHubRepositoryOption): boolean =>
+    connectedRepositoryKeys.has(`id:${repository.id}`) ||
+    connectedRepositoryKeys.has(`name:${repository.fullName.toLowerCase()}`);
+  const filteredRepositories = useMemo(() => {
+    const query = repositorySearch.trim().toLowerCase();
+    if (!query) return availableRepositories;
+    return availableRepositories.filter((repository) =>
+      repository.fullName.toLowerCase().includes(query) ||
+      repository.description?.toLowerCase().includes(query)
+    );
+  }, [availableRepositories, repositorySearch]);
+  const selectableFilteredRepositories = filteredRepositories.filter((repository) => !isConnected(repository));
+  const selectedRepositoryIds = new Set(selectedGitHubRepositoryIds);
+  const allFilteredSelected = selectableFilteredRepositories.length > 0 &&
+    selectableFilteredRepositories.every((repository) => selectedRepositoryIds.has(repository.id));
+  const toggleFilteredRepositories = (): void => {
+    const next = new Set(selectedGitHubRepositoryIds);
+    if (allFilteredSelected) {
+      for (const repository of selectableFilteredRepositories) next.delete(repository.id);
+    } else {
+      for (const repository of selectableFilteredRepositories) {
+        if (next.size >= MAX_REPOSITORIES_PER_BATCH) break;
+        next.add(repository.id);
+      }
+    }
+    setSelectedGitHubRepositoryIds([...next]);
+  };
+  const closeConnect = (): void => {
+    setConnectOpen(false);
+    setRepositoryReference("");
+    setSelectedGitHubRepositoryIds([]);
+    setRepositorySearch("");
+    setDefaultBranch("main");
+    setConnectError(undefined);
+  };
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     setSaving(true);
     setConnectError(undefined);
     try {
-      const { owner, name } = parseGitHubRepositoryReference(repositoryReference);
-      await onConnect({
-        provider: "github",
-        ...(selectedGitHubRepositoryId ? { providerRepositoryId: selectedGitHubRepositoryId } : {}),
-        owner,
-        name,
-        defaultBranch,
-        ...(installationId ? { providerInstallationId: installationId } : {})
-      });
-      setConnectOpen(false);
-      setRepositoryReference("");
-      setSelectedGitHubRepositoryId("");
-      setDefaultBranch("main");
+      const selectedRepositories = availableRepositories.filter((repository) =>
+        selectedRepositoryIds.has(repository.id) && !isConnected(repository)
+      );
+      const inputs: Array<Record<string, unknown>> = selectedRepositories.length
+        ? selectedRepositories.map((repository) => ({
+            provider: "github",
+            providerRepositoryId: repository.id,
+            owner: repository.owner,
+            name: repository.name,
+            defaultBranch: repository.defaultBranch,
+            cloneUrl: repository.cloneUrl
+          }))
+        : (() => {
+            const { owner, name } = parseGitHubRepositoryReference(repositoryReference);
+            return [{
+              provider: "github",
+              owner,
+              name,
+              defaultBranch,
+              ...(installationId ? { providerInstallationId: installationId } : {})
+            }];
+          })();
+      const result = await onConnect(inputs);
+      if (!result.connected && result.skipped.length) {
+        setConnectError("Every selected repository is already connected to this organisation.");
+        setSelectedGitHubRepositoryIds([]);
+        return;
+      }
+      closeConnect();
     } catch (error) {
       setConnectError(error instanceof Error ? error.message : "Repository could not be connected");
     } finally {
@@ -1566,8 +1636,11 @@ export function RepositoriesPage({
         title="Repositories"
         description="Connect source history, then keep code structure and evidence current."
         actions={
-          <Button variant="primary" icon={<Plus size={16} />} onClick={() => setConnectOpen(true)}>
-            Connect repository
+          <Button variant="primary" icon={<Plus size={16} />} onClick={() => {
+            setConnectError(undefined);
+            setConnectOpen(true);
+          }}>
+            Connect repositories
           </Button>
         }
       />
@@ -1577,13 +1650,20 @@ export function RepositoriesPage({
           <p>Connect GitHub, import merged pull requests, then index the local checkout.</p>
         </div>
         {["Repository connected", "History imported", "Local graph indexed"].map((step, index) => (
-          <span key={step} className={index === 0 ? "is-complete" : ""}>
-            <i>{index === 0 ? <Check size={13} /> : index + 1}</i>
+          <span key={step} className={index === 0 && repositories.length > 0 ? "is-complete" : ""}>
+            <i>{index === 0 && repositories.length > 0 ? <Check size={13} /> : index + 1}</i>
             {step}
           </span>
         ))}
       </div>}
       <div className="repository-list">
+        {!repositories.length && (
+          <EmptyState
+            title="No repositories connected"
+            body="Choose any repositories available to your GitHub token. Lore keeps each repository's evidence, imports, retention, and indexing state separate inside this organisation."
+            action={<Button variant="primary" onClick={() => setConnectOpen(true)}>Choose repositories</Button>}
+          />
+        )}
         {repositories.map((repository) => (
           <article key={repository.id}>
             <div className="repo-icon">
@@ -1662,11 +1742,12 @@ export function RepositoriesPage({
       </div>
       {connectOpen && (
         <Modal
-          title="Connect a GitHub repository"
-          onClose={() => setConnectOpen(false)}
+          title="Connect GitHub repositories"
+          wide={githubStatus.mode === "token" || githubStatus.mode === "demo"}
+          onClose={closeConnect}
           footer={
             <>
-              <Button variant="secondary" onClick={() => setConnectOpen(false)}>
+              <Button variant="secondary" onClick={closeConnect}>
                 Cancel
               </Button>
               <Button
@@ -1675,13 +1756,16 @@ export function RepositoriesPage({
                 type="submit"
                 disabled={
                   saving ||
-                  !repositoryReference.trim() ||
-                  !defaultBranch.trim() ||
+                  (!selectedGitHubRepositoryIds.length && (!repositoryReference.trim() || !defaultBranch.trim())) ||
                   !githubStatus.historicalImportReady ||
                   (githubStatus.mode === "app" && !installationId)
                 }
               >
-                {saving ? "Connecting…" : "Connect repository"}
+                {saving
+                  ? "Connecting…"
+                  : selectedGitHubRepositoryIds.length
+                    ? `Connect ${selectedGitHubRepositoryIds.length} ${selectedGitHubRepositoryIds.length === 1 ? "repository" : "repositories"}`
+                    : "Connect repository"}
               </Button>
             </>
           }
@@ -1711,8 +1795,9 @@ export function RepositoriesPage({
                   </>
                 ) : (
                   <>
-                    <strong>GitHub is not configured</strong> Set <code>GITHUB_AUTH_MODE</code> and
-                    the matching worker credential, then restart Lore.
+                    <strong>GitHub is not configured</strong> For a local installation, set only
+                    <code> GITHUB_TOKEN</code> and restart Lore. Hosted deployments use the separate
+                    SaaS configuration.
                   </>
                 )}
               </span>
@@ -1722,33 +1807,122 @@ export function RepositoriesPage({
                 Install GitHub App
               </Button>
             )}
-            {githubStatus.mode === "token" && (
-              <FormField
-                label="Repositories available to your token"
-                hint={repositoriesLoading ? "Loading every repository the token can read…" : `${availableRepositories.length} accessible repositories found. Private and organisation repositories are included when the token permits them.`}
-              >
-                <select
-                  value={selectedGitHubRepositoryId}
-                  disabled={repositoriesLoading}
-                  onChange={(event) => {
-                    const selected = availableRepositories.find((item) => item.id === event.target.value);
-                    setSelectedGitHubRepositoryId(event.target.value);
-                    if (selected) {
-                      setRepositoryReference(selected.fullName);
-                      setDefaultBranch(selected.defaultBranch);
-                    }
-                  }}
-                >
-                  <option value="">Choose a repository or enter one below</option>
-                  {availableRepositories.map((repository) => (
-                    <option key={repository.id} value={repository.id} disabled={repository.archived}>
-                      {repository.fullName}{repository.private ? " · private" : ""}{repository.archived ? " · archived" : ""}
-                    </option>
-                  ))}
-                </select>
-              </FormField>
+            {(githubStatus.mode === "token" || githubStatus.mode === "demo") && (
+              <section className="repository-discovery" aria-labelledby="repository-discovery-title">
+                <header>
+                  <div>
+                    <strong id="repository-discovery-title">
+                      {githubStatus.mode === "demo"
+                        ? "Development fixture repositories"
+                        : "Repositories available to your token"}
+                    </strong>
+                    <small>
+                      {repositoriesLoading
+                        ? githubStatus.mode === "demo"
+                          ? "Loading mocked repositories…"
+                          : "Loading every repository the token can read…"
+                        : `${availableRepositories.length} ${githubStatus.mode === "demo" ? "mocked" : "accessible"} · ${repositories.length} connected to this organisation`}
+                    </small>
+                  </div>
+                  <span>{selectedGitHubRepositoryIds.length} selected</span>
+                </header>
+                <div className="repository-discovery__toolbar">
+                  <label>
+                    <Search size={15} />
+                    <input
+                      type="search"
+                      name="repositorySearch"
+                      value={repositorySearch}
+                      onChange={(event) => setRepositorySearch(event.target.value)}
+                      placeholder="Search owner, repository, or description"
+                      aria-label="Search accessible GitHub repositories"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!selectableFilteredRepositories.length}
+                    onClick={toggleFilteredRepositories}
+                  >
+                    {allFilteredSelected ? "Clear results" : `Select results (${Math.min(selectableFilteredRepositories.length, MAX_REPOSITORIES_PER_BATCH)})`}
+                  </button>
+                </div>
+                <div className="repository-discovery__list" role="list" aria-label="Accessible GitHub repositories">
+                  {repositoriesLoading && (
+                    <div className="repository-discovery__state"><LoaderCircle className="spin" size={18} /> Loading repositories…</div>
+                  )}
+                  {!repositoriesLoading && !filteredRepositories.length && (
+                    <div className="repository-discovery__state">No accessible repositories match this search.</div>
+                  )}
+                  {!repositoriesLoading && filteredRepositories.map((repository) => {
+                    const connected = isConnected(repository);
+                    const selected = selectedRepositoryIds.has(repository.id);
+                    return (
+                      <label
+                        className={`repository-option${connected ? " is-connected" : ""}${selected ? " is-selected" : ""}`}
+                        key={repository.id}
+                        role="listitem"
+                      >
+                        <input
+                          type="checkbox"
+                          name="repositorySelection"
+                          checked={selected}
+                          disabled={connected || (!selected && selectedGitHubRepositoryIds.length >= MAX_REPOSITORIES_PER_BATCH)}
+                          onChange={(event) => setSelectedGitHubRepositoryIds((current) =>
+                            event.target.checked
+                              ? [...current, repository.id]
+                              : current.filter((id) => id !== repository.id)
+                          )}
+                        />
+                        <span>
+                          <strong>{repository.fullName}</strong>
+                          <small>{repository.description || `${repository.defaultBranch} default branch`}</small>
+                        </span>
+                        <em>
+                          {connected ? "Connected" : repository.archived ? "Archived" : repository.private ? "Private" : "Public"}
+                        </em>
+                      </label>
+                    );
+                  })}
+                </div>
+                <footer>
+                  <span>
+                    {githubStatus.mode === "demo"
+                      ? "These fixtures exist only in development demo mode and reset with the API."
+                      : "Your organisation controls the imported evidence; it never limits GitHub discovery."}
+                  </span>
+                  <small>Connect up to {MAX_REPOSITORIES_PER_BATCH} per action and repeat for larger accounts.</small>
+                </footer>
+              </section>
             )}
-            <div className="form-grid">
+            {githubStatus.mode === "token" || githubStatus.mode === "demo" ? (
+              <details className="manual-repository-connect">
+                <summary>Connect a repository by URL instead</summary>
+                <div className="form-grid">
+                  <FormField
+                    label="GitHub repository"
+                    hint="Paste the complete GitHub URL or enter OWNER/REPOSITORY."
+                  >
+                    <input
+                      name="repositoryReference"
+                      required={!selectedGitHubRepositoryIds.length}
+                      value={repositoryReference}
+                      onChange={(event) => setRepositoryReference(event.target.value)}
+                      placeholder="https://github.com/acme/commerce"
+                    />
+                  </FormField>
+                  <FormField label="Default branch" hint="Used by local indexing and context links.">
+                    <input
+                      name="defaultBranch"
+                      required={!selectedGitHubRepositoryIds.length}
+                      value={defaultBranch}
+                      onChange={(event) => setDefaultBranch(event.target.value)}
+                      placeholder="main"
+                    />
+                  </FormField>
+                </div>
+              </details>
+            ) : (
+              <div className="form-grid">
               <FormField
                 label="GitHub repository"
                 hint="Paste the complete GitHub URL or enter OWNER/REPOSITORY."
@@ -1758,7 +1932,7 @@ export function RepositoriesPage({
                   required
                   value={repositoryReference}
                   onChange={(event) => setRepositoryReference(event.target.value)}
-                  placeholder="https://github.com/D3R/soho-home"
+                  placeholder="https://github.com/acme/commerce"
                 />
               </FormField>
               <FormField label="Default branch" hint="Used by local indexing and context links.">
@@ -1770,7 +1944,8 @@ export function RepositoriesPage({
                   placeholder="main"
                 />
               </FormField>
-            </div>
+              </div>
+            )}
             {connectError && <div className="form-error">{connectError}</div>}
             {githubStatus.mode === "app" && (
               <FormField
@@ -2161,6 +2336,70 @@ export function SessionsPage({ data }: { data: DashboardSnapshot }) {
   );
 }
 
+const jobName = (value: JobRunRecord["name"]): string => ({
+  "repository.index": "Repository indexing",
+  "github.import": "GitHub evidence import",
+  "knowledge.extract": "AI candidate extraction",
+  "knowledge.health": "Knowledge health review"
+})[value];
+
+export function JobsPage() {
+  const [jobs, setJobs] = useState<JobRunRecord[]>([]);
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async (): Promise<void> => {
+      try {
+        const response = await loreApi.jobs();
+        if (active) { setJobs(response.items); setError(undefined); setLoading(false); }
+      } catch (cause) {
+        if (active) { setError(cause instanceof Error ? cause.message : "Background activity is unavailable"); setLoading(false); }
+      } finally {
+        if (active) timer = setTimeout(() => void load(), 5_000);
+      }
+    };
+    void load();
+    return () => { active = false; if (timer) clearTimeout(timer); };
+  }, []);
+
+  return (
+    <div className="page-pad">
+      <PageHeader
+        title="Background activity"
+        description="Durable imports, indexing, AI extraction, retries, and terminal outcomes. This view refreshes every five seconds."
+      />
+      {error && <div className="form-error">{error}</div>}
+      {loading ? (
+        <EmptyState title="Loading background activity" body="Reading durable job state from PostgreSQL." />
+      ) : jobs.length === 0 ? (
+        <EmptyState title="No background activity yet" body="Connect a repository or start an import. Lore will retain its dispatch and worker lifecycle here." />
+      ) : (
+        <div className="session-list job-list">
+          {jobs.map((job) => (
+            <article key={job.id}>
+              <span className={`session-status job-status--${job.state}`}>
+                {job.state === "running" || job.state === "retrying" ? <LoaderCircle size={18} /> : <History size={18} />}
+              </span>
+              <div>
+                <h2>{jobName(job.name)}</h2>
+                <p>{job.state.replace("_", " ")} · queued {relativeTime(job.queuedAt)}</p>
+                {job.errorMessage && <small>{job.errorMessage}</small>}
+              </div>
+              <div><span>Attempt</span><strong>{job.attempt}/{job.maximumAttempts}</strong></div>
+              <div><span>Events</span><strong>{job.events?.length ?? 0}</strong></div>
+              <div className={`job-state job-state--${job.state}`}>{job.state.replace("_", " ")}</div>
+              <ChevronRight size={17} />
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ReportsPage({ reports }: { reports: SafetyReport[] }) {
   const [selected, setSelected] = useState(reports[0]);
   return (
@@ -2397,9 +2636,9 @@ export function SettingsPage({
   };
   const snippets = [
     ["Start Lore", "npm run local:up"],
-    ["Connect checkout", "npm run cli -- connect --api-url http://127.0.0.1:3000 --organisation-id <org-id> --repository-id <repo-id> --token-file ~/.config/lore/token"],
+    ["Connect checkout", "node /Users/dev/Lore/dist/cli.js connect OWNER/REPOSITORY"],
+    ["Index checkout", "node /Users/dev/Lore/dist/cli.js index"],
     ["Check MCP", "npm run mcp:check -- /absolute/path/to/checkout"],
-    ["Run MCP server", "npm run mcp"]
   ];
 
   const saveUser = async (): Promise<void> => {
@@ -2483,7 +2722,14 @@ export function SettingsPage({
           <div><span>Jobs</span><strong>{deployment.jobs === "redis" ? "Redis worker" : "In-process"}</strong></div>
           <div><span>GitHub history</span><strong>{deployment.github.historicalImportReady ? `${deployment.github.mode} ready` : "Needs credentials"}</strong></div>
           <div><span>AI extraction</span><strong>{deployment.ai.configured ? `${deployment.ai.provider} · ${deployment.ai.model ?? "configured"}` : "Needs configuration"}</strong></div>
-          <div><span>GitHub login</span><strong>{deployment.login.configured ? "Ready" : "Needs OAuth app"}</strong></div>
+          <div>
+            <span>{deployment.deploymentMode === "local" ? "Local identity" : "GitHub login"}</span>
+            <strong>{deployment.deploymentMode === "local"
+              ? deployment.productMode === "demo"
+                ? "Demo account"
+                : deployment.github.historicalImportReady ? "PAT auto-sign-in" : "Needs GITHUB_TOKEN"
+              : deployment.login.configured ? "OAuth ready" : "Needs OAuth app"}</strong>
+          </div>
           <div><span>MCP</span><strong>{deployment.mcp.serviceBacked ? "Service-backed stdio" : "Local/demo stdio"}</strong></div>
         </div>
       </section>
@@ -2493,9 +2739,9 @@ export function SettingsPage({
           <Button variant="primary" disabled={saving === "user"} onClick={() => void saveUser()}>{saving === "user" ? "Saving…" : "Save preferences"}</Button>
         </div>
         <div className="settings-form-grid">
-          <label className="form-field"><span>Start page</span><select value={userDraft.startPage} onChange={(event) => setUserDraft({ ...userDraft, startPage: event.target.value as typeof userDraft.startPage })}><option value="dashboard">Dashboard</option><option value="repositories">Repositories</option><option value="knowledge">Knowledge</option><option value="evidence">Add evidence</option><option value="candidates">Candidates</option><option value="sessions">Sessions</option></select></label>
-          <label className="form-field"><span>Default history import</span><select value={String(userDraft.defaultImportLimit)} onChange={(event) => setUserDraft({ ...userDraft, defaultImportLimit: event.target.value === "all" ? "all" : Number(event.target.value) as PullRequestImportLimit })}>{[50,100,250,500,1000].map((limit) => <option key={limit} value={limit}>{limit} merged PRs</option>)}<option value="all">All merged PRs</option></select></label>
-          <label className="form-field"><span>Theme</span><select value={userDraft.theme} onChange={(event) => setUserDraft({ ...userDraft, theme: event.target.value as typeof userDraft.theme })}><option value="system">Use system</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+          <label className="form-field" htmlFor="settings-start-page"><span>Start page</span><select id="settings-start-page" name="startPage" value={userDraft.startPage} onChange={(event) => setUserDraft({ ...userDraft, startPage: event.target.value as typeof userDraft.startPage })}><option value="dashboard">Dashboard</option><option value="repositories">Repositories</option><option value="knowledge">Knowledge</option><option value="evidence">Add evidence</option><option value="candidates">Candidates</option><option value="sessions">Sessions</option></select></label>
+          <label className="form-field" htmlFor="settings-default-import"><span>Default history import</span><select id="settings-default-import" name="defaultImportLimit" value={String(userDraft.defaultImportLimit)} onChange={(event) => setUserDraft({ ...userDraft, defaultImportLimit: event.target.value === "all" ? "all" : Number(event.target.value) as PullRequestImportLimit })}>{[50,100,250,500,1000].map((limit) => <option key={limit} value={limit}>{limit} merged PRs</option>)}<option value="all">All merged PRs</option></select></label>
+          <label className="form-field" htmlFor="settings-theme"><span>Theme</span><select id="settings-theme" name="theme" value={userDraft.theme} onChange={(event) => setUserDraft({ ...userDraft, theme: event.target.value as typeof userDraft.theme })}><option value="system">Use system</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
         </div>
         <div className="settings-checks">
           <label><input type="checkbox" checked={userDraft.showGettingStarted} onChange={(event) => setUserDraft({ ...userDraft, showGettingStarted: event.target.checked })} /><span><strong>Show onboarding guidance</strong><small>Keep the repository setup checklist visible.</small></span></label>
@@ -2511,8 +2757,8 @@ export function SettingsPage({
         {!canManageOrganisation && <p className="warning-callout"><AlertTriangle size={15} /> Your role can view these defaults but cannot change them.</p>}
         <fieldset className="settings-fieldset" disabled={!canManageOrganisation}>
           <div className="settings-form-grid">
-            <label className="form-field"><span>Initial history import</span><select value={String(organisationDraft.githubImportLimit)} onChange={(event) => setOrganisationDraft({ ...organisationDraft, githubImportLimit: event.target.value === "all" ? "all" : Number(event.target.value) as PullRequestImportLimit })}>{[50,100,250,500,1000].map((limit) => <option key={limit} value={limit}>{limit} merged PRs</option>)}<option value="all">All merged PRs</option></select><small>“All” paginates every merged PR the token can access.</small></label>
-            <label className="form-field"><span>Sync interval</span><select value={organisationDraft.githubSyncIntervalMinutes} onChange={(event) => setOrganisationDraft({ ...organisationDraft, githubSyncIntervalMinutes: Number(event.target.value) })}><option value={15}>Every 15 minutes</option><option value={30}>Every 30 minutes</option><option value={60}>Hourly</option><option value={360}>Every 6 hours</option><option value={1440}>Daily</option></select><small>Recurring sync fetches the latest 100 merged PRs and only extracts new evidence.</small></label>
+            <label className="form-field" htmlFor="settings-initial-import"><span>Initial history import</span><select id="settings-initial-import" name="githubImportLimit" value={String(organisationDraft.githubImportLimit)} onChange={(event) => setOrganisationDraft({ ...organisationDraft, githubImportLimit: event.target.value === "all" ? "all" : Number(event.target.value) as PullRequestImportLimit })}>{[50,100,250,500,1000].map((limit) => <option key={limit} value={limit}>{limit} merged PRs</option>)}<option value="all">All merged PRs</option></select><small>“All” paginates every merged PR the token can access.</small></label>
+            <label className="form-field" htmlFor="settings-sync-interval"><span>Sync interval</span><select id="settings-sync-interval" name="githubSyncIntervalMinutes" value={organisationDraft.githubSyncIntervalMinutes} onChange={(event) => setOrganisationDraft({ ...organisationDraft, githubSyncIntervalMinutes: Number(event.target.value) })}><option value={15}>Every 15 minutes</option><option value={30}>Every 30 minutes</option><option value={60}>Hourly</option><option value={360}>Every 6 hours</option><option value={1440}>Daily</option></select><small>Recurring sync fetches the latest 100 merged PRs and only extracts new evidence.</small></label>
           </div>
           <div className="settings-checks">
             {([
@@ -2536,17 +2782,19 @@ export function SettingsPage({
       </section>
       <section>
         <h2>Agent & MCP access</h2>
-        <p>Create a token for this user and active organisation. Store it in a mode-600 file outside any repository.</p>
-        <div className="token-create">
-          <label className="form-field"><span>Token name</span><input value={tokenName} minLength={3} maxLength={100} onChange={(event) => setTokenName(event.target.value)} /></label>
-          <label className="form-field"><span>Expires</span><select value={tokenExpiry} onChange={(event) => setTokenExpiry(Number(event.target.value) as 30 | 90 | 365)}><option value={30}>30 days</option><option value={90}>90 days</option><option value={365}>1 year</option></select></label>
+        {deployment.deploymentMode === "local" ? (
+          <div className="info-callout"><TerminalSquare size={18} /><span><strong>No extra local token is needed</strong> Connect a checkout with <code>node /Users/dev/Lore/dist/cli.js connect OWNER/REPOSITORY</code>. Lore discovers the active local organisation and repository, and MCP reuses the loopback-only service.</span></div>
+        ) : <p>Create a token for this user and active organisation. Store it in a mode-600 file outside any repository.</p>}
+        {deployment.deploymentMode === "saas" && <><div className="token-create">
+          <label className="form-field" htmlFor="settings-token-name"><span>Token name</span><input id="settings-token-name" name="tokenName" value={tokenName} minLength={3} maxLength={100} onChange={(event) => setTokenName(event.target.value)} /></label>
+          <label className="form-field" htmlFor="settings-token-expiry"><span>Expires</span><select id="settings-token-expiry" name="tokenExpiry" value={tokenExpiry} onChange={(event) => setTokenExpiry(Number(event.target.value) as 30 | 90 | 365)}><option value={30}>30 days</option><option value={90}>90 days</option><option value={365}>1 year</option></select></label>
           <Button variant="primary" disabled={tokenName.trim().length < 3 || saving === "token"} onClick={() => void createToken()}>{saving === "token" ? "Creating…" : "Create token"}</Button>
         </div>
         {revealedToken && <div className="token-reveal"><strong>Copy this token now</strong><code>{revealedToken}</code><button aria-label="Copy token" onClick={() => copy("token", revealedToken)}>{copied === "token" ? <Check size={15} /> : <Copy size={15} />}</button><small>Suggested file: <code>~/.config/lore/token</code>, then run <code>chmod 600 ~/.config/lore/token</code>.</small></div>}
         <div className="token-list">
           {settings.apiTokens.map((token) => <div key={token.id}><span><strong>{token.name}</strong><small>{token.prefix}… · expires {token.expiresAt ? formatDate(token.expiresAt) : "never"}</small></span><Button variant="quiet" disabled={saving === `token-${token.id}`} onClick={() => void revokeToken(token.id)}>Revoke</Button></div>)}
           {!settings.apiTokens.length && <p>No active agent tokens for this organisation.</p>}
-        </div>
+        </div></>}
       </section>
       <section>
         <h2>{deployment.deploymentMode === "local" ? "Local GitHub setup" : "SaaS GitHub setup"}</h2>

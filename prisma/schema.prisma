@@ -145,6 +145,16 @@ enum OrganisationRole {
   viewer
 }
 
+enum JobRunState {
+  queued
+  dispatched
+  running
+  retrying
+  succeeded
+  failed
+  dead_letter
+}
+
 model Organisation {
   id               String            @id @default(uuid()) @db.Uuid
   name             String
@@ -167,6 +177,7 @@ model Organisation {
   invitations      OrganisationInvitation[]
   ingestionReceipts IngestionReceipt[]
   apiTokens        ApiToken[]
+  jobRuns          JobRun[]
 }
 
 model User {
@@ -306,10 +317,66 @@ model Repository {
   sessions             AgentSession[]
   reports              ChangeSafetyReport[]
   observations         ChangeObservation[]
+  jobRuns              JobRun[]
 
   @@unique([organisationId, provider, owner, name])
   @@index([provider, providerInstallationId, providerRepositoryId])
   @@index([organisationId])
+}
+
+model JobRun {
+  id               String       @id @default(uuid()) @db.Uuid
+  organisationId   String       @db.Uuid
+  repositoryId     String?      @db.Uuid
+  name             String
+  state            JobRunState  @default(queued)
+  idempotencyKey   String
+  externalJobId    String?
+  attempt          Int          @default(0)
+  maximumAttempts  Int          @default(3)
+  queuedAt         DateTime     @default(now())
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  errorMessage     String?
+  resultSummary    Json?
+  updatedAt        DateTime     @updatedAt
+  organisation     Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository       Repository?  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  events           JobEvent[]
+  outbox            JobDispatchOutbox?
+
+  @@unique([organisationId, idempotencyKey])
+  @@index([organisationId, state, queuedAt])
+  @@index([externalJobId])
+}
+
+model JobEvent {
+  id        String      @id @default(uuid()) @db.Uuid
+  jobRunId  String      @db.Uuid
+  state     JobRunState
+  message   String?
+  metadata  Json        @default("{}")
+  createdAt DateTime    @default(now())
+  jobRun    JobRun      @relation(fields: [jobRunId], references: [id], onDelete: Cascade)
+
+  @@index([jobRunId, createdAt])
+}
+
+model JobDispatchOutbox {
+  id             String   @id @default(uuid()) @db.Uuid
+  jobRunId       String   @unique @db.Uuid
+  name           String
+  payload        Json
+  idempotencyKey String
+  dispatchTries  Int      @default(0)
+  lastError      String?
+  nextAttemptAt  DateTime @default(now())
+  dispatchedAt   DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  jobRun         JobRun   @relation(fields: [jobRunId], references: [id], onDelete: Cascade)
+
+  @@index([dispatchedAt, nextAttemptAt])
 }
 
 model CodeEntity {
@@ -372,12 +439,33 @@ model Evidence {
   metadata       Json          @default("{}")
   contentHash    String?
   createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
   organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   repository     Repository?   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   knowledgeLinks KnowledgeEvidence[]
+  revisions      EvidenceRevision[]
 
   @@unique([organisationId, provider, externalId])
   @@index([organisationId, repositoryId, occurredAt])
+}
+
+model EvidenceRevision {
+  id          String   @id @default(uuid()) @db.Uuid
+  evidenceId  String   @db.Uuid
+  version     Int
+  contentHash String
+  url         String?
+  title       String?
+  content     String
+  author      String?
+  occurredAt  DateTime
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  evidence    Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  @@unique([evidenceId, version])
+  @@unique([evidenceId, contentHash])
+  @@index([evidenceId, createdAt])
 }
 
 model KnowledgeItem {

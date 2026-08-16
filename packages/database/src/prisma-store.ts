@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { ApiTokenRecord, AuthSessionRecord, LoreStore, ManualKnowledgeInput, RepositoryAnalysisOutput, UserProfileUpdate } from "@lore/core/index.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "@lore/core/index.js";
@@ -14,6 +14,7 @@ import type {
   ContextPackageRecord,
   DashboardSnapshot,
   EvidenceRecord,
+  EvidenceRevisionRecord,
   KnowledgeItem,
   KnowledgeProposalRecord,
   AuthSessionSummary,
@@ -59,6 +60,16 @@ interface EvidenceRow {
   metadata: unknown;
   contentHash?: string | null;
 }
+
+const evidenceHash = (record: Pick<EvidenceRecord, "url" | "title" | "content" | "author" | "occurredAt" | "metadata" | "contentHash">): string =>
+  record.contentHash ?? createHash("sha256").update(JSON.stringify({
+    url: record.url ?? null,
+    title: record.title ?? null,
+    content: record.content,
+    author: record.author ?? null,
+    occurredAt: record.occurredAt,
+    metadata: record.metadata
+  })).digest("hex");
 
 interface UserRow {
   id: string;
@@ -614,6 +625,32 @@ export class PrismaLoreStore implements LoreStore {
     await this.#assertOrganisation(organisationId);
     const rows = await this.prisma.evidence.findMany({ where: { organisationId }, orderBy: { occurredAt: "desc" } });
     return rows.map((row) => this.#mapEvidence(row));
+  }
+
+  async getEvidenceRevisions(organisationId: string, evidenceId: string): Promise<EvidenceRevisionRecord[]> {
+    await this.#assertOrganisation(organisationId);
+    const evidence = await this.prisma.evidence.findFirst({
+      where: { id: evidenceId, organisationId },
+      select: { id: true }
+    });
+    if (!evidence) throw new NotFoundError("Evidence", evidenceId);
+    const revisions = await this.prisma.evidenceRevision.findMany({
+      where: { evidenceId },
+      orderBy: { version: "asc" }
+    });
+    return revisions.map((revision) => ({
+      id: revision.id,
+      evidenceId: revision.evidenceId,
+      version: revision.version,
+      contentHash: revision.contentHash,
+      ...optional(revision.url, "url"),
+      ...optional(revision.title, "title"),
+      content: revision.content,
+      ...optional(revision.author, "author"),
+      occurredAt: revision.occurredAt.toISOString(),
+      metadata: asRecord(revision.metadata),
+      createdAt: revision.createdAt.toISOString()
+    }));
   }
 
   async getRepository(organisationId: string, repositoryId: string): Promise<RepositorySummary> {
@@ -1606,25 +1643,93 @@ export class PrismaLoreStore implements LoreStore {
 
   async ingestEvidence(records: EvidenceRecord[]): Promise<number> {
     if (records.length === 0) return 0;
-    const result = await this.prisma.evidence.createMany({
-      data: records.map((record) => ({
-        id: record.id,
-        organisationId: record.organisationId,
-        repositoryId: record.repositoryId,
-        type: record.type,
-        provider: record.provider,
-        externalId: record.externalId,
-        url: record.url,
-        title: record.title,
-        content: record.content,
-        author: record.author,
-        occurredAt: new Date(record.occurredAt),
-        metadata: record.metadata as Prisma.InputJsonValue,
-        contentHash: record.contentHash
-      })),
-      skipDuplicates: true
+    for (const organisationId of new Set(records.map((record) => record.organisationId))) {
+      await this.#assertOrganisation(organisationId);
+    }
+    return this.prisma.$transaction(async (transaction) => {
+      let changed = 0;
+      for (const record of records) {
+        const contentHash = evidenceHash(record);
+        const existing = await transaction.evidence.findUnique({
+          where: {
+            organisationId_provider_externalId: {
+              organisationId: record.organisationId,
+              provider: record.provider,
+              externalId: record.externalId
+            }
+          }
+        });
+        const snapshot = {
+          contentHash,
+          url: record.url,
+          title: record.title,
+          content: record.content,
+          author: record.author,
+          occurredAt: new Date(record.occurredAt),
+          metadata: record.metadata as Prisma.InputJsonValue
+        };
+        if (!existing) {
+          await transaction.evidence.create({
+            data: {
+              id: record.id,
+              organisationId: record.organisationId,
+              repositoryId: record.repositoryId,
+              type: record.type,
+              provider: record.provider,
+              externalId: record.externalId,
+              ...snapshot,
+              revisions: { create: { version: 1, ...snapshot } }
+            }
+          });
+          changed += 1;
+          continue;
+        }
+
+        const existingHash = evidenceHash({
+          url: existing.url ?? undefined,
+          title: existing.title ?? undefined,
+          content: existing.content,
+          author: existing.author ?? undefined,
+          occurredAt: existing.occurredAt.toISOString(),
+          metadata: asRecord(existing.metadata),
+          contentHash: existing.contentHash ?? undefined
+        });
+        if (existingHash === contentHash) continue;
+
+        const latest = await transaction.evidenceRevision.aggregate({
+          where: { evidenceId: existing.id },
+          _max: { version: true }
+        });
+        let nextVersion = (latest._max.version ?? 0) + 1;
+        if (nextVersion === 1) {
+          await transaction.evidenceRevision.create({
+            data: {
+              evidenceId: existing.id,
+              version: 1,
+              contentHash: existingHash,
+              url: existing.url,
+              title: existing.title,
+              content: existing.content,
+              author: existing.author,
+              occurredAt: existing.occurredAt,
+              metadata: existing.metadata as Prisma.InputJsonValue
+            }
+          });
+          nextVersion = 2;
+        }
+        await transaction.evidence.update({
+          where: { id: existing.id },
+          data: {
+            repositoryId: record.repositoryId,
+            type: record.type,
+            ...snapshot,
+            revisions: { create: { version: nextVersion, ...snapshot } }
+          }
+        });
+        changed += 1;
+      }
+      return changed;
     });
-    return result.count;
   }
 
   async hasIngestionReceipt(organisationId: string, provider: string, externalId: string): Promise<boolean> {

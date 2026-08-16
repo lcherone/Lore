@@ -19,7 +19,18 @@ try {
   const missing = [...required].filter((name) => !tools.tools.some((tool) => tool.name === name));
   if (missing.length) throw new Error(`MCP tools missing: ${missing.join(", ")}`);
   const result = await client.callTool({ name: "lore_search", arguments: { query: "engineering" } });
-  if (result.isError) throw new Error("lore_search returned an MCP tool error");
+  if (result.isError) {
+    const content = Array.isArray(result.content) ? result.content : [];
+    const detail = content
+      .flatMap((item: unknown) =>
+        item && typeof item === "object" && "type" in item && item.type === "text" && "text" in item && typeof item.text === "string"
+          ? [item.text]
+          : []
+      )
+      .join(" ")
+      .slice(0, 500);
+    throw new Error(`lore_search returned an MCP tool error${detail ? `: ${detail}` : ""}`);
+  }
   const structured = result.structuredContent as Record<string, unknown> | undefined;
   if (structured?.mode !== "service") throw new Error("lore_search did not report persistent service authority");
   process.stdout.write(`✓ MCP handshake completed for ${repositoryPath}\n`);

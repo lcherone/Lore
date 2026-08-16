@@ -12,7 +12,17 @@ import { z, ZodError } from "zod";
 import type { AIProvider, JobDispatcher, LoreStore } from "@lore/core/index.js";
 import { LoreError, NotFoundError } from "@lore/core/index.js";
 import { createBundledMockAIProvider, createConfiguredAIProvider } from "@lore/ai/index.js";
-import { BullMqJobDispatcher, createLoreStore, InMemoryJobDispatcher } from "@lore/database/index.js";
+import {
+  BullMqJobDispatcher,
+  createLoreStore,
+  createPrismaClient,
+  InMemoryJobDispatcher,
+  InMemoryJobLedger,
+  PersistentJobDispatcher,
+  PrismaJobLedger,
+  PrismaLoreStore,
+  type JobLedger
+} from "@lore/database/index.js";
 import { TaskPreparationService } from "@lore/context/index.js";
 import { KnowledgeCandidateExtractionService, KnowledgeService } from "@lore/knowledge/index.js";
 import { ChangeVerificationService } from "@lore/reporting/index.js";
@@ -41,13 +51,15 @@ import type {
   RepositorySummary
 } from "@lore/shared/types.js";
 import { deterministicUuid, newUuid } from "@lore/shared/ids.js";
+import { DEMO_ORGANISATION_ID, DEMO_REPOSITORY_ID } from "@lore/shared/demo-data.js";
 import { policyPatternError } from "@lore/shared/policy-patterns.js";
 import {
   githubIntegrationStatus,
   GitHubTokenAccountClient,
   resolveGitHubAuthMode,
   verifyGitHubWebhook,
-  webhookEvidence
+  webhookEvidence,
+  type GitHubRepositoryOption
 } from "@lore/github/index.js";
 import {
   accountSession,
@@ -73,6 +85,7 @@ import { ApiMetrics } from "./metrics.js";
 export interface ApiDependencies {
   store: LoreStore;
   jobs: JobDispatcher;
+  jobLedger: JobLedger;
   aiProvider: AIProvider;
   githubIdentityProvider: GitHubIdentityProvider;
 }
@@ -126,6 +139,30 @@ const repositoryInputSchema = z.object({
   defaultBranch: z.string().min(1).max(200).default("main"),
   cloneUrl: z.string().max(2_000).optional(),
   retentionConfig: repositoryRetentionSchema.optional()
+});
+
+const repositoryBatchInputSchema = z.object({
+  repositories: z.array(repositoryInputSchema).min(1).max(500)
+});
+
+type RepositoryInput = z.infer<typeof repositoryInputSchema>;
+
+const demoGitHubRepositories: GitHubRepositoryOption[] = Array.from({ length: 120 }, (_, index) => {
+  const number = String(index + 1).padStart(3, "0");
+  const owner = ["northstar-platform", "northstar-products", "casey-labs"][index % 3]!;
+  const name = `service-${number}`;
+  return {
+    id: String(900_000 + index),
+    owner,
+    name,
+    fullName: `${owner}/${name}`,
+    private: index % 2 === 0,
+    archived: index === 119,
+    defaultBranch: index % 4 === 0 ? "master" : "main",
+    description: index < 12 ? `Payments platform component ${number}` : `Development fixture repository ${number}`,
+    cloneUrl: `https://github.com/${owner}/${name}.git`,
+    htmlUrl: `https://github.com/${owner}/${name}`
+  };
 });
 
 const codeEntitySchema = z.object({
@@ -262,11 +299,64 @@ function markdownKnowledgeItems(
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<FastifyInstance> {
-  const demoMode = options.demoMode ?? process.env.DEMO_MODE !== "false";
+  const demoMode = options.demoMode ?? process.env.DEMO_MODE === "true";
+  if (demoMode && process.env.NODE_ENV === "production") {
+    throw new Error("DEMO_MODE is development-only; use the persistent local or SaaS runtime in production");
+  }
   const deploymentMode = process.env.LORE_DEPLOYMENT_MODE === "saas" ? "saas" : "local";
+  const appUrl = new URL(process.env.APP_URL ?? "http://localhost:5173");
+  const webOrigins = (process.env.WEB_ORIGIN ?? appUrl.origin)
+    .split(",")
+    .map((origin) => new URL(origin.trim()).origin);
+  const secureCookies = appUrl.protocol === "https:";
+  const configuredAllowedHosts = (process.env.LORE_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((hostname) => hostname.trim().toLowerCase())
+    .filter(Boolean);
+  if (configuredAllowedHosts.some((hostname) => !/^(?:[a-z0-9.-]+|\[[a-f0-9:]+\])$/i.test(hostname))) {
+    throw new Error("LORE_ALLOWED_HOSTS must contain comma-separated hostnames without schemes, ports, or paths");
+  }
+  const allowedHosts = new Set([
+    appUrl.hostname.toLowerCase(),
+    ...webOrigins.map((origin) => new URL(origin).hostname.toLowerCase()),
+    ...configuredAllowedHosts.map((hostname) => hostname.replace(/^\[|\]$/g, ""))
+  ]);
+  if (deploymentMode === "local") {
+    for (const hostname of ["localhost", "127.0.0.1", "::1"]) allowedHosts.add(hostname);
+  }
   const sessionSecret = process.env.SESSION_SECRET ?? "demo-only-session-secret-change-before-production";
-  const store = options.dependencies?.store ?? createLoreStore({ ...process.env, DEMO_MODE: String(demoMode) });
-  const jobs: JobDispatcher = options.dependencies?.jobs ?? (demoMode ? new InMemoryJobDispatcher() : new BullMqJobDispatcher(process.env.REDIS_URL));
+  const ownedPrisma = !demoMode && !options.dependencies?.store
+    ? createPrismaClient(process.env.DATABASE_URL)
+    : undefined;
+  const store = options.dependencies?.store
+    ?? (ownedPrisma ? new PrismaLoreStore(ownedPrisma) : createLoreStore({ ...process.env, DEMO_MODE: String(demoMode) }));
+  const jobLedger: JobLedger = options.dependencies?.jobLedger
+    ?? (ownedPrisma ? new PrismaJobLedger(ownedPrisma) : new InMemoryJobLedger());
+  if (demoMode && !options.dependencies?.jobLedger) {
+    const imported = await jobLedger.enqueue({
+      organisationId: DEMO_ORGANISATION_ID,
+      repositoryId: DEMO_REPOSITORY_ID,
+      name: "github.import",
+      payload: { organisationId: DEMO_ORGANISATION_ID, repositoryId: DEMO_REPOSITORY_ID, limit: "all" },
+      idempotencyKey: "demo-import-complete"
+    });
+    await jobLedger.markDispatched(imported.id, "demo-import-complete");
+    await jobLedger.markRunning({ runId: imported.id, organisationId: DEMO_ORGANISATION_ID, repositoryId: DEMO_REPOSITORY_ID, name: "github.import", externalJobId: "demo-import-complete", attempt: 1, maximumAttempts: 3 });
+    await jobLedger.markSucceeded(imported.id, { pullRequests: 248, evidenceAdded: 811, evidenceUpdated: 3 });
+
+    const extracting = await jobLedger.enqueue({
+      organisationId: DEMO_ORGANISATION_ID,
+      repositoryId: DEMO_REPOSITORY_ID,
+      name: "knowledge.extract",
+      payload: { organisationId: DEMO_ORGANISATION_ID, repositoryId: DEMO_REPOSITORY_ID, evidenceIds: ["demo"] },
+      idempotencyKey: "demo-extraction-running"
+    });
+    await jobLedger.markDispatched(extracting.id, "demo-extraction-running");
+    await jobLedger.markRunning({ runId: extracting.id, organisationId: DEMO_ORGANISATION_ID, repositoryId: DEMO_REPOSITORY_ID, name: "knowledge.extract", externalJobId: "demo-extraction-running", attempt: 1, maximumAttempts: 3 });
+  }
+  const transport: JobDispatcher = options.dependencies?.jobs
+    ?? (demoMode ? new InMemoryJobDispatcher() : new BullMqJobDispatcher(process.env.REDIS_URL));
+  const jobs: JobDispatcher = new PersistentJobDispatcher(transport, jobLedger);
   const aiRuntime = options.dependencies?.aiProvider
     ? { provider: options.dependencies.aiProvider, name: "injected" as const }
     : createConfiguredAIProvider(process.env, createBundledMockAIProvider());
@@ -313,6 +403,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return localAuthenticationPromise;
   };
   if (!demoMode && process.env.NODE_ENV === "production") {
+    if (process.env.LOCAL_DEV_AUTH === "true") {
+      throw new Error("LOCAL_DEV_AUTH cannot be enabled in production mode");
+    }
     if (sessionSecret.length < 32 || sessionSecret.startsWith("replace-with")) {
       throw new Error("SESSION_SECRET must be a non-placeholder random value of at least 32 characters");
     }
@@ -390,11 +483,38 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     organisationId: string,
     repository: RepositorySummary,
     limit: PullRequestImportLimit
-  ): Promise<{ id: string }> => jobs.dispatch(
+  ): Promise<{ id: string; deferred?: boolean }> => jobs.dispatch(
     "github.import",
     githubImportPayload(organisationId, repository, limit),
     `github-import-${repository.id}-${randomUUID()}`
   );
+
+  const connectRepository = async (
+    organisationId: string,
+    userId: string,
+    input: RepositoryInput,
+    settings: OrganisationSettings
+  ): Promise<RepositorySummary & { initialImportQueued: boolean }> => {
+    const repository = await store.addRepository(organisationId, {
+      ...input,
+      retentionConfig: input.retentionConfig ?? settings.repositoryRetention,
+      languageSummary: {},
+      indexedAt: new Date().toISOString()
+    }, userId);
+    let initialImportQueued = false;
+    if (
+      repository.provider === "github" &&
+      settings.autoImportGitHub &&
+      githubIntegrationStatus(process.env, demoMode).historicalImportReady &&
+      !demoMode
+    ) {
+      await queueGitHubImport(organisationId, repository, settings.githubImportLimit);
+      initialImportQueued = true;
+    }
+    await updateRepositorySync(organisationId, repository, settings);
+    return { ...repository, initialImportQueued };
+  };
+
   const app = Fastify({
     trustProxy: process.env.TRUST_PROXY === "true",
     logger: options.logger === false ? false : {
@@ -417,17 +537,53 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
 
   await app.register(cookie, { secret: sessionSecret, hook: "onRequest" });
   await app.register(cors, {
-    origin: (process.env.WEB_ORIGIN ?? "http://localhost:5173").split(","),
+    origin: webOrigins,
     credentials: true
   });
   await app.register(rateLimit, { max: demoMode ? 1_000 : 300, timeWindow: "1 minute" });
   await app.register(rawBody, { field: "rawBody", global: false, encoding: false, runFirst: true });
 
+  if (!demoMode && process.env.NODE_ENV === "production") {
+    app.addHook("onRequest", async (request) => {
+      const hostHeader = request.headers.host?.trim();
+      let hostname: string | undefined;
+      try {
+        hostname = hostHeader ? new URL(`http://${hostHeader}`).hostname.toLowerCase() : undefined;
+      } catch {
+        throw new LoreError("Request Host is malformed", "INVALID_HOST", 400);
+      }
+      const path = request.url.split("?")[0]!;
+      const healthPath = path === "/healthz" || path === "/readyz" || path === "/metrics";
+      const loopbackHealth = healthPath && hostname && new Set(["localhost", "127.0.0.1", "::1"]).has(hostname);
+      if (!hostname || (!allowedHosts.has(hostname) && !loopbackHealth)) {
+        throw new LoreError("Request Host is not allowed", "INVALID_HOST", 400);
+      }
+
+      const origin = request.headers.origin?.trim();
+      if (origin) {
+        let normalizedOrigin: string;
+        try {
+          normalizedOrigin = new URL(origin).origin;
+        } catch {
+          throw new LoreError("Request Origin is malformed", "INVALID_ORIGIN", 403);
+        }
+        if (!webOrigins.includes(normalizedOrigin)) {
+          throw new LoreError("Request Origin is not allowed", "INVALID_ORIGIN", 403);
+        }
+      }
+      const browserWrite = !["GET", "HEAD", "OPTIONS"].includes(request.method)
+        && Boolean(request.cookies[SESSION_COOKIE]);
+      if (browserWrite && path !== "/api/github/webhook" && !origin) {
+        throw new LoreError("Browser mutations require an allowed Origin", "INVALID_ORIGIN", 403);
+      }
+    });
+  }
+
   let csrfEnabled = false;
   if (!demoMode && process.env.NODE_ENV === "production") {
     csrfEnabled = true;
     await app.register(csrfProtection, {
-      cookieOpts: { signed: true, sameSite: "strict", secure: true, httpOnly: true }
+      cookieOpts: { signed: true, sameSite: "strict", secure: secureCookies, httpOnly: true }
     });
     app.addHook("onRequest", (request, reply, done) => {
       if (["GET", "HEAD", "OPTIONS"].includes(request.method) || request.url === "/api/github/webhook" || !request.cookies.lore_session) {
@@ -482,8 +638,19 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     }
     void auth;
   });
+  const reconcileJobs = (): void => {
+    void jobs.reconcile?.().catch((error: unknown) => {
+      app.log.error({ err: error, event: "jobs.reconcile.failed" }, "Job reconciliation failed");
+    });
+  };
+  const reconciliationTimer = !demoMode && jobs.reconcile
+    ? setInterval(reconcileJobs, 30_000).unref()
+    : undefined;
+  if (!demoMode) reconcileJobs();
   app.addHook("onClose", async () => {
+    if (reconciliationTimer) clearInterval(reconciliationTimer);
     await jobs.close?.();
+    await ownedPrisma?.$disconnect();
   });
 
   app.setErrorHandler((error, request, reply) => {
@@ -494,6 +661,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     }
     if (error instanceof LoreError) {
       void reply.status(error.statusCode).send({ error: error.code, message: error.message, details: error.details, requestId: request.id });
+      return;
+    }
+    const httpError = typeof error === "object" && error !== null
+      ? error as { statusCode?: unknown; code?: unknown }
+      : undefined;
+    if (typeof httpError?.statusCode === "number" && httpError.statusCode >= 400 && httpError.statusCode < 500) {
+      const csrfRejected = typeof httpError.code === "string" && httpError.code.startsWith("FST_CSRF_");
+      void reply.status(httpError.statusCode).send({
+        error: csrfRejected ? "CSRF_REJECTED" : "REQUEST_REJECTED",
+        message: csrfRejected ? "The browser request did not include a valid CSRF token" : "The request was rejected",
+        requestId: request.id
+      });
       return;
     }
     request.log.error({ err: error, event: "request.failed" }, "Request failed");
@@ -511,7 +690,6 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   });
   app.get("/metrics", async (_request, reply) => reply.type("text/plain; version=0.0.4").send(metrics.render()));
 
-  const secureCookies = process.env.NODE_ENV === "production";
   const setSessionCookie = (reply: FastifyReply, token: string, expiresAt: string): void => {
     reply.setCookie(SESSION_COOKIE, token, {
       signed: true,
@@ -563,7 +741,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     request,
     store,
     demoMode,
-    deploymentMode === "local" ? Boolean(localGitHubAccount) : githubIdentityProvider.configured
+    demoMode
+      ? githubIdentityProvider.configured
+      : deploymentMode === "local" ? Boolean(localGitHubAccount) : githubIdentityProvider.configured
   ));
   app.get("/api/auth/csrf", async (_request, reply) => ({ enabled: csrfEnabled, token: csrfEnabled ? reply.generateCsrf() : undefined }));
 
@@ -775,24 +955,65 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     if (tenant.role === "member" && !settings.memberCanConnectRepositories) {
       throw new LoreError("Only organisation owners and admins can connect repositories", "FORBIDDEN", 403);
     }
-    const repository = await store.addRepository(tenant.organisationId, {
-      ...input,
-      retentionConfig: input.retentionConfig ?? settings.repositoryRetention,
-      languageSummary: {},
-      indexedAt: new Date().toISOString()
-    }, tenant.userId);
-    let initialImportQueued = false;
-    if (
-      repository.provider === "github" &&
-      settings.autoImportGitHub &&
-      githubIntegrationStatus(process.env, demoMode).historicalImportReady &&
-      !demoMode
-    ) {
-      await queueGitHubImport(tenant.organisationId, repository, settings.githubImportLimit);
-      initialImportQueued = true;
+    const repository = await connectRepository(tenant.organisationId, tenant.userId, input, settings);
+    return reply.status(201).send(repository);
+  });
+
+  app.post("/api/repositories/batch", async (request, reply) => {
+    const tenant = tenantContext(request, demoMode);
+    const input = repositoryBatchInputSchema.parse(request.body);
+    const settings = await store.getOrganisationSettings(tenant.organisationId);
+    if (tenant.role === "member" && !settings.memberCanConnectRepositories) {
+      throw new LoreError("Only organisation owners and admins can connect repositories", "FORBIDDEN", 403);
     }
-    await updateRepositorySync(tenant.organisationId, repository, settings);
-    return reply.status(201).send({ ...repository, initialImportQueued });
+
+    const snapshot = await store.getSnapshot(tenant.organisationId);
+    const connectedProviderIds = new Set(
+      snapshot.repositories.flatMap((repository) => repository.providerRepositoryId
+        ? [`${repository.provider}:${repository.providerRepositoryId}`]
+        : [])
+    );
+    const connectedNames = new Set(
+      snapshot.repositories.map((repository) =>
+        `${repository.provider}:${repository.owner.toLowerCase()}/${repository.name.toLowerCase()}`)
+    );
+    const requestKeys = new Set<string>();
+    const items: Array<RepositorySummary & { initialImportQueued: boolean }> = [];
+    const skipped: Array<{ fullName: string; reason: "already_connected" | "duplicate_request" }> = [];
+
+    for (const repositoryInput of input.repositories) {
+      const fullName = `${repositoryInput.owner}/${repositoryInput.name}`;
+      const providerIdKey = repositoryInput.providerRepositoryId
+        ? `${repositoryInput.provider}:${repositoryInput.providerRepositoryId}`
+        : undefined;
+      const nameKey = `${repositoryInput.provider}:${fullName.toLowerCase()}`;
+      const requestKey = providerIdKey ?? nameKey;
+      if (requestKeys.has(requestKey)) {
+        skipped.push({ fullName, reason: "duplicate_request" });
+        continue;
+      }
+      requestKeys.add(requestKey);
+      if ((providerIdKey && connectedProviderIds.has(providerIdKey)) || connectedNames.has(nameKey)) {
+        skipped.push({ fullName, reason: "already_connected" });
+        continue;
+      }
+      const repository = await connectRepository(
+        tenant.organisationId,
+        tenant.userId,
+        repositoryInput,
+        settings
+      );
+      items.push(repository);
+      if (providerIdKey) connectedProviderIds.add(providerIdKey);
+      connectedNames.add(nameKey);
+    }
+
+    return reply.status(201).send({
+      items,
+      connected: items.length,
+      skipped,
+      initialImportsQueued: items.filter((repository) => repository.initialImportQueued).length
+    });
   });
 
   app.post("/api/repositories/:id/index", async (request, reply) => {
@@ -813,7 +1034,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       { organisationId: tenant.organisationId, repositoryId: id, localPath },
       `repository-index-${id}-${repository.lastIndexedCommit ?? "initial"}`
     );
-    return reply.status(202).send({ jobId: job.id, status: "queued" });
+    return reply.status(202).send({ jobId: job.id, status: job.deferred ? "dispatch_pending" : "queued" });
   });
 
   app.put("/api/repositories/:id/analysis", async (request) => {
@@ -866,7 +1087,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     const job = await queueGitHubImport(tenant.organisationId, repository, input.limit);
     return reply.status(202).send({
       jobId: job.id,
-      status: demoMode ? "simulated" : "queued",
+      status: demoMode ? "simulated" : job.deferred ? "dispatch_pending" : "queued",
       simulated: demoMode,
       limit: input.limit
     });
@@ -1081,6 +1302,22 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     };
   });
 
+  app.get("/api/jobs", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    const { limit } = z.object({
+      limit: z.coerce.number().int().min(1).max(500).default(100)
+    }).parse(request.query);
+    const items = await jobLedger.list(tenant.organisationId, limit);
+    return { items, count: items.length };
+  });
+
+  app.get("/api/evidence/:id/revisions", async (request) => {
+    const tenant = tenantContext(request, demoMode);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const revisions = await store.getEvidenceRevisions(tenant.organisationId, id);
+    return { items: revisions, count: revisions.length };
+  });
+
   app.post("/api/evidence/communications", async (request, reply) => {
     const tenant = tenantContext(request, demoMode);
     const input = communicationEvidenceSchema.parse(request.body);
@@ -1292,6 +1529,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
 
   app.get("/api/github/repositories", async (request) => {
     tenantContext(request, demoMode);
+    if (demoMode) {
+      return { items: demoGitHubRepositories, count: demoGitHubRepositories.length };
+    }
     if (!localGitHubAccount) {
       throw new LoreError(
         "Repository discovery with a personal access token is available when GITHUB_TOKEN is configured",
@@ -1318,7 +1558,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     reply.setCookie("lore_oauth_state", state, {
       signed: true,
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: secureCookies,
       sameSite: "lax",
       path: "/",
       maxAge: 600

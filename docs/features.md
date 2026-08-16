@@ -15,7 +15,7 @@ This guide explains what every user-facing Lore feature does, what data it uses,
 
 ## One-command demo
 
-**What it does.** Starts a realistic Lore organisation, repository, graph, knowledge registry, candidate queue, reviewer directory, sessions, and safety reports without external services or credentials.
+**What it does.** Starts a realistic Lore organisation, a 120-repository discovery fixture, graph, knowledge registry, candidate queue, reviewer directory, sessions, and safety reports without external services or credentials.
 
 **How it works.** `scripts/lore-demo.sh` verifies Node.js 22+, installs dependencies only when missing, forces `DEMO_MODE=true`, disables GitHub credentials, and starts the Fastify API plus Vite UI. Demo writes stay in memory and reset when the API stops.
 
@@ -23,7 +23,7 @@ This guide explains what every user-facing Lore feature does, what data it uses,
 npm run demo
 ```
 
-Open [http://localhost:5173](http://localhost:5173). For an automated readiness proof:
+Open [http://localhost:5173](http://localhost:5173), choose **Explore Lore**, then **Explore the demo account**. For an automated readiness proof:
 
 ```bash
 npm run demo:check
@@ -33,19 +33,33 @@ npm run demo:check
   <img src="assets/lore-demo-terminal.svg" alt="Lore demo readiness output" width="100%" />
 </p>
 
-**Boundary.** Demo imports and queued jobs are simulated honestly. Use persistent mode for real GitHub history, durable knowledge, Redis jobs, and multi-process workers.
+**Boundary.** The repository picker, imports, and queued jobs use development fixtures or simulated outcomes. Use persistent mode for token-visible GitHub repositories, real history, durable knowledge, Redis jobs, and multi-process workers.
 
-## GitHub login, personal profiles, and organisations
+## Public product page and focused sign-in
+
+**What it does.** Gives unauthenticated visitors a standard product-led introduction to Lore while keeping authentication short and purposeful. The public page explains the product promise, evidence workflow, major capabilities, governance model, local-first path, documentation, and security material. It uses real Lore screens so feature claims can be inspected rather than inferred from decorative mockups.
+
+**How it works.** An unauthenticated request to `/` renders the public product page with one semantic heading, descriptive sections, crawlable links, social metadata, responsive layouts, descriptive screenshot alternatives, and a `robots.txt` policy. **Explore Lore** and **Sign in** lead to `/signin`. An authenticated session bypasses both public surfaces and renders the organisation workspace directly.
+
+<p align="center">
+  <img src="assets/screenshots/lore-homepage.png" alt="Lore public homepage with product positioning, real dashboard preview, capabilities, governance, documentation, and sign-in links" width="100%" />
+</p>
+
+**Use it.** Open [http://localhost:5173](http://localhost:5173) without a session and follow **Explore Lore**. Shared mode offers **Continue with GitHub**. Demo mode offers **Explore the demo account**. Full local PAT mode establishes the workstation user automatically and enters the private workspace without making OAuth a local requirement.
+
+<p align="center">
+  <img src="assets/screenshots/lore-login.png" alt="Focused Lore sign-in screen with one authentication action and a link back to the public homepage" width="100%" />
+</p>
+
+**SEO boundary.** The current Vite client application supplies static title, description, robot, Open Graph, and Twitter metadata plus semantic rendered content. A public SaaS launch should add the final canonical production URL, an absolute social preview image, sitemap generation, and server rendering or prerendering once the public domain is known.
+
+## GitHub identity, personal profiles, and organisations
 
 **What it does.** Gives every person one account with a GitHub-seeded, editable profile. The account can own or join multiple private organisations, switch between them, invite colleagues, and enforce owner, admin, member, or viewer access.
 
-**How it works.** Real login uses GitHub's authorization-code flow with state and PKCE, fetches a verified email plus profile, links the stable numeric GitHub identity, then discards the GitHub login token. Lore issues its own random opaque session; only its hash and server-side expiry, revocation, last-seen, user, and active organisation are persisted. Every tenant request validates current membership. Creating, switching, or joining an organisation rotates the session.
+**How it works.** Full local mode uses one server-side PAT to read the GitHub profile and automatically establish the loopback user/workspace. Shared/SaaS mode uses GitHub’s authorization-code flow with state and PKCE, then issues a random Lore session. Both link the stable numeric GitHub identity and persist scoped users, profiles, organisations, roles, and preferences. Every tenant request validates current membership.
 
-<p align="center">
-  <img src="assets/screenshots/lore-login.png" alt="Branded Lore sign-in screen explaining private organisations, GitHub identity, and team roles" width="100%" />
-</p>
-
-**Use it locally.** Run `npm run demo`, open [http://localhost:5173](http://localhost:5173), and choose **Explore the demo account**. For a real identity, register the local GitHub OAuth callback and follow [Authentication, profiles, and organisations](authentication-and-organisations.md#real-github-login-on-a-local-machine).
+**Use it locally.** Set `GITHUB_TOKEN`, run `npm run local:up`, and open [http://localhost:5173](http://localhost:5173). No callback is required; the profile and first private workspace are created automatically. The demo account remains available through `npm run demo`.
 
 Open the avatar or **Your profile**. GitHub supplies the first name, avatar, bio, company, location, website, login, profile link, and verified email. Display name, bio, company, title, location, website, and timezone are editable; later logins preserve user edits. The security section lists expiring sessions and can revoke every other session or sign out the current one.
 
@@ -61,7 +75,19 @@ Open **Organisation** to create or switch workspaces, inspect members, invite a 
 
 **Role boundary.** Owners manage everything. Admins manage settings, people, and engineering memory but cannot replace the owner. Members can work with repositories and engineering memory. Viewers are API-enforced read-only. Ownership transfer and organisation deletion intentionally wait for a re-authenticated recovery design.
 
-**Repository boundary.** GitHub login identifies a person but grants no repository access. Historical imports still require a selected-repository PAT or repository GitHub App from [GitHub repository integration](github.md).
+**Repository boundary.** Local mode deliberately uses the same PAT for profile and repositories because one trusted user owns the loopback process. Shared/SaaS mode separates OAuth identity from GitHub App repository installations.
+
+## Personal and organisation settings
+
+**What it does.** Separates preferences that follow a user from defaults that belong only to the active organisation.
+
+**How it works.** Personal start page, import limit, theme, onboarding, and notices are stored on the user. Automatic GitHub import, initial limit, recurring interval, AI extraction, communications, member repository access, MCP access, and retention defaults are stored on the organisation. Owners/admins can change organisation settings; members/viewers cannot.
+
+**Use it.** Open **Settings & setup**. The same screen truthfully reports local versus SaaS deployment, full versus demo product mode, persistence, jobs, GitHub readiness, AI provider/model, login mode, and MCP authority. Saving automatic-sync changes updates existing repository schedulers.
+
+<p align="center">
+  <img src="assets/screenshots/lore-settings.png" alt="Lore settings showing installation status, personal preferences, organisation GitHub automation, AI extraction, retention, and MCP access" width="100%" />
+</p>
 
 **SaaS boundary.** This is a working local account and baseline tenancy foundation, not an external-hosting approval. Enterprise SSO/MFA/SCIM, final granular roles, support access, audit export, installation ownership verification, deletion/export, regulated-data controls, legal materials, and independent testing remain in [SaaS readiness](saas-readiness.md).
 
@@ -114,9 +140,9 @@ lore --json prepare "TICKET-123 Update refund address mapping"
 
 **What it does.** Connects provider identity and local source structure without asking the browser to read a filesystem checkout.
 
-**How it works.** A repository record holds provider owner/name, default branch, optional GitHub App installation identity, status, and retention configuration. Trusted local CLI analysis uploads only the sanitised entity/relationship graph in service mode. Raw source stays local.
+**How it works.** In local mode, the UI loads every repository the PAT can read and stores each selected provider ID, owner/name, default branch, status, and retention configuration under the active organisation. Search and bulk selection are client-side over the paginated GitHub result; a batch API connects up to 500 repositories idempotently and reports connected, duplicate, and already-connected outcomes. Trusted local CLI analysis uploads only the sanitised entity/relationship graph in service mode. Raw source stays local.
 
-**Use it.** Open **Repositories → Connect repository**, enter `owner/name`, then import provider history and index the local checkout.
+**Use it.** Open **Repositories → Connect repositories**, search by owner/name/description, check individual repositories or **Select results**, then connect the selection. Repeat for another organisation or a token-visible account larger than 500 repositories. Each successful connection automatically queues history and recurring sync when organisation automation is enabled.
 
 <p align="center">
   <img src="assets/screenshots/lore-connect-repository.png" alt="Lore repository connection dialog" width="100%" />
@@ -132,10 +158,7 @@ lore index
 To bind that checkout to a persistent Lore repository:
 
 ```bash
-lore connect \
-  --repository-id REPOSITORY_UUID \
-  --organisation-id ORGANISATION_UUID \
-  --api-url http://127.0.0.1:3001
+lore connect OWNER/NAME
 lore index
 ```
 
@@ -145,11 +168,9 @@ lore index
 
 **What it does.** Converts accepted repository history into evidence for candidate extraction and future context.
 
-**How it works.** The worker authenticates with either a fine-grained PAT or GitHub App installation. It paginates merged PRs plus submitted review bodies, inline review comments, PR conversation comments, commits, changed paths, and available bounded patches. Stable provider IDs make ingestion idempotent.
+**How it works.** The local worker authenticates with the PAT and paginates merged PRs plus submitted review bodies, inline review comments, PR conversation comments, commits, changed paths, and optional bounded patches. Stable provider IDs make ingestion idempotent. Connecting queues the organisation’s complete initial import by default and installs an hourly latest-100-PR scheduler. Only new or upstream-edited evidence is sent to AI; edits append immutable evidence revisions.
 
-**Use it.** Follow the [GitHub guide](github.md) for the PAT/App permissions and secret-file setup. In **Repositories**, connect the GitHub URL, configure retention, choose **Import history**, and start with 50 or 100. The signed-in web application supplies the production session and CSRF protection.
-
-After validating access and retention, import the entire available merged history with `{"limit":"all"}`. “All” is intentionally not the first-run default because mature repositories can require thousands of API calls and significant memory.
+**Use it.** Follow the [GitHub guide](github.md), set `GITHUB_TOKEN`, configure organisation retention/import defaults, then select one or many repositories in Lore. Manual bounded or complete imports remain available at any time.
 
 ## Local AST and Git impact graph
 
@@ -164,6 +185,20 @@ lore explain AddressCode::fromRole
 ```
 
 The local graph is stored under owner-only `.lore/` state and excluded from verification. In service mode, only its bounded graph envelope is uploaded.
+
+## Durable background activity
+
+**What it does.** Makes GitHub imports, repository indexing, AI extraction, health checks, retries, and failures visible instead of hiding them inside a queue.
+
+**How it works.** Before Redis dispatch, the API atomically creates a PostgreSQL job run, its first append-only event, and an outbox intent. Successful dispatch, worker attempts, retries, redacted and bounded error text, dead-letter outcomes, and scalar-only result summaries extend that lifecycle. If Redis is temporarily unavailable, the request reports `dispatch_pending`; a bounded reconciler retries due intents every 30 seconds and after API restart. Recurring scheduler occurrences acquire their own run when the worker starts them.
+
+Open **Activity** to inspect organisation-scoped runs. The page refreshes every five seconds and stops its timer when it is not mounted.
+
+<p align="center">
+  <img src="assets/screenshots/lore-activity.png" alt="Lore background activity showing a completed GitHub import and running AI extraction with attempts and lifecycle state" width="100%" />
+</p>
+
+**Boundary.** The outbox payload never appears in the browser. Operator cancellation/manual replay, percentage progress, retention controls, and business-event-plus-outbox transactions are still tracked in the [roadmap](roadmap.md); the current implementation recovers the dispatch intent itself.
 
 ## Knowledge registry
 
@@ -201,7 +236,7 @@ Markdown imports split on headings and retain their source filename. They enter 
 
 **What it does.** Captures engineering context that never appears in a pull request: a Slack request, an in-person decision, call notes, an email, or a complete standup transcript. Lore preserves the original communication as evidence and turns only explicit decision, rule, preference, fact, warning, or regression signals into review candidates.
 
-**How it works.** Open **Add evidence**, choose the communication type and optional repository, add a title, paste the source text, and confirm that you are allowed to retain it. Lore sends the text through the same structured extraction, evidence validation, confidence, proposal, and candidate pipeline used for imported review evidence. The source is treated as untrusted data, so instructions inside a transcript cannot create policy or bypass validation. In the current local build, the bundled deterministic extractor makes no network request.
+**How it works.** Open **Add evidence**, choose the communication type and optional repository, add a title, paste the source text, and confirm that you are allowed to retain it. Lore sends the text through the same structured extraction, evidence validation, confidence, proposal, and candidate pipeline used for imported review evidence. The source is treated as untrusted data, so instructions inside a transcript cannot create policy or bypass validation. Full local mode uses the configured OpenAI structured-output adapter; the credential-free demo deliberately uses the deterministic mock provider.
 
 <p align="center">
   <img src="assets/screenshots/lore-communication-evidence.png" alt="Lore communication evidence screen with a standup transcript, privacy confirmation, comparison counts, and review candidates" width="100%" />
@@ -314,11 +349,11 @@ Press <kbd>⌘K</kbd> or <kbd>Ctrl+K</kbd> anywhere in the web app. The palette 
 ## Security and data boundaries
 
 - Browsers never submit local checkout paths.
-- GitHub PATs and App keys are resolved only by workers and never enter queue payloads or browser responses.
+- The local GitHub PAT is resolved only by the API/worker and never enters queue payloads, browser responses, PostgreSQL, or `.lore`; SaaS App keys remain server-side.
 - Repository text, reviews, tickets, and model output are untrusted data.
 - Git processes use argument arrays with `shell: false`; revisions and paths are validated and bounded.
 - Organisation and repository ownership are checked at persistent store boundaries.
 - Secret, cookie, token, and key-shaped log fields are redacted.
-- AI is optional; the bundled provider is deterministic mock data, while enforcement remains deterministic.
+- AI is optional. Full local mode can use the OpenAI Responses API with schema-validated structured output; the demo uses deterministic mock data, and enforcement remains deterministic in both modes.
 
 Read [Security](security.md), [AI safety](ai-safety.md), and [SaaS readiness](saas-readiness.md) before connecting sensitive customer repositories or exposing Lore externally.

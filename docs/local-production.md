@@ -5,200 +5,193 @@
 <p align="center">
   <a href="../README.md"><strong>Project home</strong></a> ·
   <a href="README.md"><strong>Documentation</strong></a> ·
-  <a href="authentication-and-organisations.md"><strong>Accounts</strong></a> ·
-  <a href="github.md"><strong>GitHub</strong></a>
+  <a href="github.md"><strong>GitHub</strong></a> ·
+  <a href="mcp.md"><strong>MCP</strong></a>
 </p>
 
-# Run Lore locally like production
+# Full local installation
 
-This is the recommended end-to-end evaluation mode. It uses production-built web assets, secure GitHub login, PostgreSQL persistence, Redis queues, database migrations, and the real worker. It does not use demo records or the local identity bypass.
+This is the recommended way to use Lore every day. It is the complete product—not a reduced demo—and keeps every published port on `127.0.0.1`.
 
-All published ports bind to `127.0.0.1`; this workflow is for one trusted workstation, not internet exposure.
+It includes:
 
-## What you need
+- your GitHub-backed profile;
+- multiple private Lore organisations and roles;
+- every GitHub repository the PAT can read;
+- automatic merged-PR evidence and recurring sync;
+- real OpenAI candidate extraction;
+- PostgreSQL data persistence;
+- persistent Redis jobs and schedulers;
+- the production-built React application, API, and worker;
+- CLI and MCP agent integration;
+- automatic start at macOS login and database backups.
+
+## Prerequisites
 
 - Node.js 22 or newer and npm.
-- Docker Desktop or Colima with the Docker daemon running.
-- A GitHub OAuth App for signing people into Lore.
-- A fine-grained GitHub PAT allowed to read `D3R/soho-home`.
-- Organisation approval and SAML SSO authorisation if D3R requires them.
+- Docker Desktop or Colima.
+- one GitHub PAT in `GITHUB_TOKEN`;
+- one OpenAI API key in `OPENAI_API_KEY`.
 
-GitHub login and GitHub repository access are deliberately separate. The OAuth App identifies you. The selected-repository PAT is available only to the worker and reads pull-request history.
+No GitHub OAuth App, callback, GitHub App, private key, installation ID, local user ID, or local organisation ID is required.
 
-## 1. Prepare the environment
+## 1. Configure
 
 ```bash
-npm run local:setup
+cd /Users/dev/Lore
+npm run local
 ```
 
-This command:
+This guided command prompts for the PAT without echoing it, writes the owner-only `.env`, preserves the existing OpenAI key, generates the local session secret, verifies providers, builds, migrates, and starts the complete stack. If you prefer separate setup and start steps, run `npm run local:setup`, edit `.env`, then run `npm run local:up`.
 
-- creates `.env` from `.env.example` when needed;
-- changes the local runtime switches to production/persistent mode;
-- disables `LOCAL_DEV_AUTH`;
-- creates a cryptographically random `SESSION_SECRET` when the current value is missing or a placeholder;
-- preserves existing GitHub credentials;
-- restricts `.env` to the current user on Unix.
-
-It never prints a secret.
-
-## 2. Create the GitHub OAuth App
-
-Open **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App** and enter exactly:
-
-```text
-Application name:              Lore local
-Homepage URL:                  http://localhost:5173
-Authorization callback URL:   http://localhost:5173/api/auth/github/callback
-```
-
-Add the resulting values to `.env`:
+The only local values you may need to add manually are:
 
 ```dotenv
-GITHUB_OAUTH_CLIENT_ID=your-client-id
-GITHUB_OAUTH_CLIENT_SECRET=your-client-secret
-GITHUB_OAUTH_CALLBACK_URL=http://localhost:5173/api/auth/github/callback
+GITHUB_TOKEN=github_pat_...
+OPENAI_API_KEY=sk-proj-...
 ```
 
-Use `localhost` consistently in the browser. The login token is used only to read your GitHub identity and verified email; Lore discards it after login.
+`local:setup` safely sets full local mode, generates a strong session secret, chooses `AI_PROVIDER=openai` when a key exists, and defaults to `gpt-4.1-mini`. It preserves credentials and never prints them. Do not configure repository names in `.env`; repository selection belongs to each Lore organisation and is managed in the application.
 
-## 3. Create the selected-repository PAT
+The local configuration surface is intentionally small. See `.env.saas.example` only when designing an external shared deployment.
 
-Create a fine-grained personal access token with:
-
-- **Resource owner:** `D3R`.
-- **Repository access:** only `soho-home`.
-- **Pull requests:** read-only.
-- **Issues:** read-only, because PR conversation comments use the Issues API.
-- A short evaluation expiry.
-
-If D3R controls PAT approval or SAML SSO, complete those steps before continuing. Do not add Contents write, Administration, Actions, or organisation-management permissions.
-
-Store the token outside this repository:
+## 2. Verify credentials independently
 
 ```bash
-mkdir -p "$HOME/.config/lore"
-touch "$HOME/.config/lore/github-token"
-chmod 600 "$HOME/.config/lore/github-token"
+npm run setup:check -- --docker --github --ai
+npm run ai:check
+# Optional: diagnose permissions for one repository
+npm run github:check -- OWNER/REPOSITORY
 ```
 
-Paste only the token into that file, then configure its absolute host path:
+The checks prove:
 
-```dotenv
-GITHUB_AUTH_MODE=token
-GITHUB_TOKEN_FILE=/Users/YOU/.config/lore/github-token
-LORE_TEST_REPOSITORY=D3R/soho-home
-LORE_GITHUB_PREFLIGHT=true
-```
+- the GitHub token and AI settings needed by the live stack are present;
+- the optional targeted check can read PRs, reviews, comments, commits, and changed files for the named repository;
+- Lore selected the OpenAI adapter rather than its mock;
+- the OpenAI Responses API returned schema-validated structured output;
+- no secret value is printed.
 
-Do not use `$HOME` inside `.env`; dotenv does not expand it.
-
-## 4. Prove GitHub access before importing
-
-```bash
-npm run github:check -- D3R/soho-home
-```
-
-The check reads the token without printing it and proves access to repository metadata, pull requests, submitted reviews, inline review comments, PR conversation comments, commits, and changed files. A `404` for this private repository normally means the token selected the wrong resource owner/repository or still needs organisation/SSO approval.
-
-## 5. Start everything
+## 3. Start the complete stack (when using separate steps)
 
 ```bash
 npm run local:up
 ```
 
-That single command runs the strict preflight, repeats the GitHub access proof, validates Compose, builds the images, applies migrations, starts PostgreSQL, Redis, API, worker, and Nginx, and waits for both the API dependencies and built web application to become ready.
+This one command preflights credentials, builds production images, applies database migrations, starts PostgreSQL, persistent Redis, API, worker, and web proxy, then waits for readiness.
 
-Open [http://localhost:5173](http://localhost:5173).
+Open [http://localhost:5173](http://localhost:5173). The API uses the PAT to refresh your GitHub profile and automatically creates your first private local workspace if you have no Lore organisations yet.
 
-Useful lifecycle commands:
+Useful commands:
 
 ```bash
+npm run local:start   # fast start from existing images
 npm run local:check
 npm run local:status
 npm run local:logs
-npm run local:down
+npm run local:down    # stops services; does not delete data
 ```
 
-`local:down` preserves PostgreSQL data. Normal starts never seed the demo organisation.
+## 4. Choose repositories in Lore
 
-## 6. Sign in and create the workspace
+Open **Repositories → Connect repositories**. The picker shows every repository GitHub reports for the authenticated PAT across personal, collaborator, and organisation memberships. Search by owner, name, or description; select one repository, all filtered results, or any combination; then connect the selection. Lore handles up to 500 repositories per action, so an account with a larger result set can connect it in batches. Already-connected and repeated selections are skipped safely.
 
-1. Choose **Continue with GitHub**.
-2. Authorise the Lore local OAuth App.
-3. Create an organisation such as **Soho Home Engineering** with slug `soho-home-engineering`.
-4. Open **Repositories → Connect repository**.
-5. Paste `https://github.com/D3R/soho-home`.
-6. Set the default branch to `master`.
-7. Connect the repository.
+The active organisation controls where imported evidence and knowledge are stored. Switch or create organisations in Lore, then make a separate repository selection for each workspace. Nothing is locked to a repository name, owner, demo fixture, or startup environment value.
 
-<p align="center">
-  <img src="assets/screenshots/lore-connect-repository.png" alt="Lore repository connection form filled with the D3R Soho Home GitHub URL and master branch" width="100%" />
-</p>
+Connection automatically:
 
-The organisation is private. Creating the Lore organisation does not create or modify anything on GitHub.
+1. applies the active organisation’s retention defaults;
+2. queues the initial import (all merged PRs by default);
+3. installs the hourly latest-100-PR sync scheduler;
+4. stores deterministic evidence for every new PR/review/comment;
+5. sends only new or upstream-edited evidence through real AI extraction while preserving immutable revisions;
+6. creates candidates that still require human approval.
 
-## 7. Choose retention before the first import
+Use **Settings → Organisation defaults** to change the initial limit, interval, retention, or automatic extraction before connecting.
 
-Open the repository's **Retention** action before importing:
-
-- Start with raw pull-request diffs disabled.
-- Keep review comments only if they are approved for local processing.
-- Use summary-only mode if PR bodies may contain data you should not retain.
-- Do not import customer data, cardholder data, credentials, or production payloads merely because the repository is accessible.
-
-## 8. Import in a bounded batch
-
-Choose **Import history**, select **50**, and queue the import. Follow the real worker:
+## 5. Connect the local checkout and MCP
 
 ```bash
-npm run local:logs
+cd /absolute/path/to/repository
+node /Users/dev/Lore/dist/cli.js connect OWNER/REPOSITORY
+node /Users/dev/Lore/dist/cli.js index
+
+cd /Users/dev/Lore
+npm run mcp:check -- /absolute/path/to/repository
 ```
 
-Wait for `job.completed` for `github.import`, followed by `knowledge.extract`. Then refresh Lore and inspect:
+No extra Lore API token is needed locally. See [MCP setup](mcp.md) for Codex, Claude Desktop, Cursor, the copyable agent prompt, and remote/SaaS token setup.
 
-- **Candidates** for extracted suggestions;
-- **Knowledge** for approved decisions and rules;
-- **Reviewers** for observed review evidence;
-- **Dashboard** for updated counts.
+## 6. Persist and start on login
 
-Approve, edit, merge, or reject candidates manually. Once the first 50 records look correct, use 100–1,000. Use **All merged PRs** only deliberately: `soho-home` is mature, and each PR can require several paginated GitHub calls. Imports are evidence-idempotent, but a large run can still consume time and API quota.
+Docker volumes persist both authoritative data and queued/scheduled work:
+
+- `lore-postgres` stores accounts, organisations, repositories, evidence, candidates, knowledge, sessions, reports, and settings;
+- `lore-redis` stores BullMQ jobs and recurring schedulers with AOF persistence.
+
+All long-running containers use `restart: unless-stopped`. Install the macOS login service once so Docker/Colima and Lore start after login:
+
+```bash
+npm run local:install
+```
+
+The LaunchAgent is written to `~/Library/LaunchAgents/dev.lore.local.plist`; logs go to `~/Library/Logs/Lore/`. It starts Colima when available, otherwise launches Docker Desktop, waits for Docker, and starts existing Lore images without rebuilding.
+
+Remove only the login service with:
+
+```bash
+npm run local:uninstall
+```
+
+This does not remove containers, volumes, `.env`, or backups.
+
+## 7. Back up
+
+```bash
+npm run local:backup
+```
+
+This creates a timestamped, mode-600 PostgreSQL custom-format dump under `backups/`. Keep copies outside the workstation according to your organisation’s approved backup policy. The command never exports the GitHub or OpenAI credentials because those are not stored in PostgreSQL.
+
+## Data-loss rules
+
+- `local:down` is safe and preserves both volumes.
+- normal image rebuilds and migrations preserve data.
+- do not run `docker compose down --volumes` unless permanent deletion is intentional.
+- removing the repository directory does not remove Docker volumes, but it removes `.env` and the boot script target; back up first.
+- revoke a PAT or OpenAI key at its provider if exposed; database backups do not contain either secret.
 
 ## Troubleshooting
 
-### The preflight says GitHub login is missing
+### Preflight asks for many GitHub values
 
-The account OAuth App and repository PAT are different. Add both `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`; a PAT cannot sign a browser user into Lore.
+It should not. In local mode, only `GITHUB_TOKEN` is required. Remove stale OAuth/App/local-ID settings and rerun `npm run local:setup`.
 
-### Docker is installed but unavailable
+### Repository is missing from the picker
 
-Start Docker Desktop, or run `colima start`, and retry `npm run local:up`.
+Run `npm run github:check -- OWNER/REPOSITORY`. The token may lack owner/repository selection, organisation approval, classic `repo` scope, or SAML SSO authorisation.
 
-### GitHub access returns 403 or 404
+### AI appears inactive
 
-Check PAT expiry, `D3R` as resource owner, `soho-home` selection, Pull requests/Issues read permissions, D3R approval, and SAML SSO. The secret-safe check is:
+Run `npm run ai:check`. Settings should show `openai · gpt-4.1-mini`. If the key exists but `AI_PROVIDER=mock`, rerun `npm run local:setup`.
 
-```bash
-npm run github:check -- D3R/soho-home
-```
+### Docker is not running
 
-### Import remains queued
+Start Docker Desktop or run `colima start`, then retry `npm run local:start`.
+
+### Import is queued but not completing
 
 ```bash
 npm run local:status
 npm run local:logs
 ```
 
-Confirm the worker is running and Redis is ready. The worker log reports an HTTP/permission failure without printing the PAT.
+Confirm the worker and Redis are healthy. Worker logs report safe error details without credentials.
 
-### Login redirects but does not create a session
+### MCP cannot connect
 
-Use `http://localhost:5173`, not `127.0.0.1`, and confirm the OAuth App callback matches exactly. Clear localhost cookies after changing the callback or session secret.
+Run `npm run local:check`, rebuild with `npm run build`, reconnect the checkout, then run `npm run mcp:check -- /absolute/path/to/checkout`.
 
-### Start from a clean database
+## Public deployment boundary
 
-Stopping with `npm run local:down` preserves data. Removing the `lore-postgres` volume permanently deletes local Lore accounts, organisations, evidence, and knowledge. Back up anything important and use the explicit Docker volume-removal command only when that deletion is intentional.
-
-## Deployment boundary
-
-This is production-shaped local execution, not approval for public SaaS deployment. It intentionally remains loopback-only and uses workstation-managed credentials. Complete the controls and governance in [SaaS readiness](saas-readiness.md) before processing regulated/customer data or exposing Lore outside the machine.
+This stack is production-shaped but loopback-only. It is not approval to process regulated/customer data or expose Lore publicly. Complete [SaaS readiness](saas-readiness.md), legal review, data mapping, tenant-isolation testing, incident response, deletion/export controls, subprocessors, and any PCI/customer contractual review first.

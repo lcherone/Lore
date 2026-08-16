@@ -8,8 +8,7 @@ import {
   Mail,
   MapPin,
   ShieldCheck,
-  UserRound,
-  UsersRound
+  UserRound
 } from "lucide-react";
 import type {
   AccountSession,
@@ -45,28 +44,15 @@ export function LoginPage({
   };
   return (
     <main className="login-shell">
-      <section className="login-story">
-        <Brand />
-        <div>
-          <span className="eyebrow">Engineering memory that can show its work</span>
-          <h1>Your team’s decisions, evidence, and safeguards—ready when the next change begins.</h1>
-          <p>
-            Lore turns pull requests, reviews, incidents, documentation, and team communication
-            into governed context for engineers and coding agents.
-          </p>
-        </div>
-        <ul>
-          <li><ShieldCheck size={18} /><span><strong>Private by organisation</strong> Every repository, rule, and evidence item stays inside an organisation boundary.</span></li>
-          <li><GitFork size={18} /><span><strong>One trusted identity</strong> Sign in with GitHub; Lore never stores the short-lived login access token.</span></li>
-          <li><UsersRound size={18} /><span><strong>Built for real teams</strong> Create organisations, invite colleagues, and assign least-privilege roles.</span></li>
-        </ul>
-        <small>Evidence-backed engineering memory · Local-first today · SaaS-ready foundations</small>
-      </section>
-      <section className="login-panel">
+      <header className="login-header">
+        <a href="/" aria-label="Back to Lore homepage"><Brand /></a>
+        <a href="/">Back to homepage</a>
+      </header>
+      <section className="login-panel" aria-labelledby="login-title">
         <div className="login-card">
-          <span className="login-card__mark"><GitFork size={24} /></span>
-          <h2>Welcome to Lore</h2>
-          <p>Use your GitHub account to create a private workspace or join an existing team.</p>
+          <span className="login-card__mark"><GitFork size={23} /></span>
+          <h1 id="login-title">Sign in to Lore</h1>
+          <p>Continue to your private engineering memory workspace.</p>
           {githubLoginEnabled ? (
             <Button variant="primary" icon={<GitFork size={18} />} onClick={githubLogin}>Continue with GitHub</Button>
           ) : demoMode ? (
@@ -87,7 +73,7 @@ export function LoginPage({
           {error && <div className="form-error">{error}</div>}
           <div className="login-trust">
             <ShieldCheck size={16} />
-            <span>GitHub proves your identity. Repository access is configured separately and is never granted by signing in.</span>
+            <span>GitHub proves your identity. Repository access is configured separately.</span>
           </div>
         </div>
       </section>

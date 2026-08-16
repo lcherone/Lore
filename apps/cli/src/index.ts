@@ -40,21 +40,46 @@ program
 
 program
   .command("connect")
-  .description("connect local configuration to a Lore API and repository")
-  .requiredOption("--repository-id <id>")
-  .requiredOption("--organisation-id <id>")
+  .description("connect this checkout to a repository in the local Lore service")
+  .argument("[repository]", "GitHub OWNER/REPOSITORY; local Lore discovers its IDs")
+  .option("--repository-id <id>", "explicit repository ID for remote/SaaS service mode")
+  .option("--organisation-id <id>", "explicit organisation ID for remote/SaaS service mode")
   .option("--api-url <url>", "Lore API URL", "http://127.0.0.1:3001")
   .option("--token-file <path>", "owner-only file containing a Lore API token")
-  .action(async (options: { repositoryId: string; organisationId: string; apiUrl: string; tokenFile?: string }) => {
+  .action(async (repository: string | undefined, options: { repositoryId?: string; organisationId?: string; apiUrl: string; tokenFile?: string }) => {
     const project = runtime().project;
+    let repositoryId = options.repositoryId;
+    let organisationId = options.organisationId;
+    let organisation = "service";
+    let repositoryName = repository;
+    if (!repositoryId || !organisationId) {
+      if (!repository) throw new Error("Pass OWNER/REPOSITORY for local discovery, or both --organisation-id and --repository-id for remote service mode");
+      const hostname = new URL(options.apiUrl).hostname;
+      if (!new Set(["localhost", "127.0.0.1", "::1"]).has(hostname)) {
+        throw new Error("Automatic repository discovery is loopback-only; pass explicit IDs and --token-file for a remote service");
+      }
+      const response = await fetch(new URL("/api/bootstrap", options.apiUrl));
+      const snapshot = await response.json() as { message?: string; organisation?: { id: string; slug: string }; repositories?: Array<{ id: string; owner: string; name: string }> };
+      if (!response.ok) throw new Error(snapshot.message ?? `Lore API returned HTTP ${response.status}`);
+      const match = snapshot.repositories?.find((item) => `${item.owner}/${item.name}`.toLowerCase() === repository.toLowerCase());
+      if (!match || !snapshot.organisation) {
+        throw new Error(`${repository} is not connected to the active local Lore organisation. Add it in Repositories first.`);
+      }
+      repositoryId = match.id;
+      organisationId = snapshot.organisation.id;
+      organisation = snapshot.organisation.slug;
+      repositoryName = `${match.owner}/${match.name}`;
+    }
     const config = await project.initialize({
-      repositoryId: options.repositoryId,
-      organisationId: options.organisationId,
+      repositoryId,
+      organisationId,
+      organisation,
+      ...(repositoryName ? { repository: repositoryName } : {}),
       apiUrl: options.apiUrl,
       ...(options.tokenFile ? { apiTokenFile: resolve(options.tokenFile) } : {}),
       mode: "service"
     });
-    print(config, `Connected to ${options.apiUrl}`);
+    print(config, `Connected ${config.repository} to ${options.apiUrl}\nNext: lore index`);
   });
 
 program
