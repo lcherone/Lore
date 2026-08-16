@@ -585,7 +585,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   const candidateExtractionService = new KnowledgeCandidateExtractionService(
     store,
     aiProvider,
-    `${aiRuntime.name}-ai:knowledge-extractor/v2${"model" in aiRuntime && aiRuntime.model ? `:${aiRuntime.model}` : ""}`
+    `${aiRuntime.name}-ai:knowledge-extractor/v3${"model" in aiRuntime && aiRuntime.model ? `:${aiRuntime.model}` : ""}`
   );
 
   const githubImportPayload = (

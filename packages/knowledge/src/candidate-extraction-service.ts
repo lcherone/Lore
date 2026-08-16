@@ -9,6 +9,7 @@ import type {
   KnowledgeItem
 } from "@lore/shared/types.js";
 import { KnowledgeHealthService } from "./knowledge-service.js";
+import { candidateQualityErrors } from "./candidate-quality.js";
 
 export interface CandidateExtractionItem {
   candidate: CandidateRecord;
@@ -70,7 +71,7 @@ export class KnowledgeCandidateExtractionService {
   public constructor(
     private readonly store: LoreStore,
     private readonly provider: AIProvider,
-    private readonly source = "mock-ai:knowledge-extractor/v1"
+    private readonly source = "mock-ai:knowledge-extractor/v3"
   ) {}
 
   async extract(input: {
@@ -101,6 +102,7 @@ export class KnowledgeCandidateExtractionService {
     let candidatesCreated = 0;
 
     for (const proposed of extraction.candidates) {
+      const evidenceRecords = sourceEvidence.filter((record) => proposed.evidenceIds.includes(record.id));
       const scope = {
         ...proposed.proposedScope,
         ...(repository && !proposed.proposedScope.repository
@@ -126,6 +128,7 @@ export class KnowledgeCandidateExtractionService {
       const outOfRequestEvidence = proposed.evidenceIds.filter((id) => !requested.has(id));
       const validationErrors = [
         ...validation.errors,
+        ...candidateQualityErrors(proposed, evidenceRecords),
         ...(outOfRequestEvidence.length
           ? ["The extractor cited evidence outside the requested source set."]
           : [])
@@ -141,7 +144,6 @@ export class KnowledgeCandidateExtractionService {
       });
       if (!valid) continue;
 
-      const evidenceRecords = sourceEvidence.filter((record) => proposed.evidenceIds.includes(record.id));
       const communicationOnly = evidenceRecords.every((record) => record.type === "communication");
       const factors: ConfidenceFactors = {
         supportingObservations: evidenceRecords.length,

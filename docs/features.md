@@ -224,7 +224,7 @@ Markdown imports split on headings and retain their source filename. They enter 
 
 **What it does.** Keeps extracted engineering knowledge advisory until a person verifies its statement, type, evidence, confidence, contradictions, and scope.
 
-**How it works.** Candidate confidence is calculated server-side from independent observations, PRs, reviewers, recency, explicitness, reliability, contradictions, human confirmation, scope stability, and current code match. A reviewer can edit, narrow, change type, merge, approve, or reject. Every decision is audited.
+**How it works.** Candidate confidence is calculated server-side from independent observations, PRs, reviewers, recency, explicitness, reliability, contradictions, human confirmation, scope stability, and current code match. GitHub extraction uses a bounded authored-content view: retained raw diffs, reusable PR-template checklists, compliance boilerplate, and link sections stay in the evidence record for audit but are excluded from the model input. Single-PR implementation facts, Git activity summaries, and AI-derived process policies fail validation instead of entering the review queue. A decision, rule, preference, warning, or regression from one pull request also needs an explicit authored signal of that kind; the changed code alone is not sufficient. A reviewer can edit, narrow, change type, merge, approve, or reject. Every decision is audited.
 
 <p align="center">
   <img src="assets/screenshots/lore-candidate-review.png" alt="Lore candidate review with statement, scope, evidence, confidence factors, contradictions, and approval actions" width="100%" />

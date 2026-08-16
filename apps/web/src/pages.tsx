@@ -69,6 +69,7 @@ import {
   type GitHubRepositoryOption,
   type RepositoryBatchConnectionResult
 } from "./api.js";
+import { createEvidencePreview } from "./evidence-preview.js";
 
 const MAX_REPOSITORIES_PER_BATCH = 500;
 const CODE_ENTITY_TYPES: CodeEntity["type"][] = [
@@ -817,6 +818,7 @@ export function CandidatesPage({
   const [mergeTargetId, setMergeTargetId] = useState("");
   const [working, setWorking] = useState(false);
   const detailRef = useRef<HTMLElement>(null);
+  const detailScrollRef = useRef<HTMLDivElement>(null);
   const filtered = candidates.filter(
     (candidate) =>
       (filter === "all" || candidate.kind === filter) &&
@@ -833,6 +835,7 @@ export function CandidatesPage({
     setStatement(selected.statement);
     setDraftKind(selected.kind);
     setDraftScope(selected.scope);
+    detailScrollRef.current?.scrollTo({ top: 0 });
   }, [selected?.id]);
 
   const select = (candidate: CandidateRecord): void => {
@@ -842,6 +845,8 @@ export function CandidatesPage({
     setDraftScope(candidate.scope);
     if (window.matchMedia("(max-width: 900px)").matches) {
       requestAnimationFrame(() => detailRef.current?.scrollIntoView({ block: "start" }));
+    } else {
+      detailScrollRef.current?.scrollTo({ top: 0 });
     }
   };
 
@@ -914,6 +919,7 @@ export function CandidatesPage({
 
         {selected ? (
           <main className="candidate-detail" ref={detailRef}>
+            <div className="candidate-detail__scroll" ref={detailScrollRef}>
             <div className="candidate-detail__heading">
               <h2>{selected.title}</h2>
               <div>
@@ -963,23 +969,47 @@ export function CandidatesPage({
             <div className="candidate-evidence-layout">
               <section className="evidence-timeline">
                 <h3>Why Lore believes this</h3>
-                {selected.evidence.map((item) => (
-                  <article key={item.id}>
-                    <span className="timeline-check">
-                      <Check size={13} />
-                    </span>
-                    <div>
-                      <strong>{item.title ?? item.externalId}</strong>
-                      <time>{formatDate(item.occurredAt)}</time>
-                      <p>“{item.content}”</p>
-                      {item.url && (
-                        <a href={item.url} target="_blank" rel="noreferrer">
-                          Open evidence <ExternalLink size={13} />
-                        </a>
-                      )}
-                    </div>
-                  </article>
-                ))}
+                <div className="candidate-rationale">
+                  <Sparkles size={16} />
+                  <div>
+                    <strong>Parsed rationale</strong>
+                    <p>{selected.rationale}</p>
+                  </div>
+                </div>
+                <h4>Supporting evidence</h4>
+                {selected.evidence.map((item) => {
+                  const preview = createEvidencePreview(
+                    item.content,
+                    `${selected.title} ${statement} ${selected.rationale}`,
+                    undefined,
+                    item.type
+                  );
+                  return (
+                    <article key={item.id}>
+                      <span className="timeline-check">
+                        <Check size={13} />
+                      </span>
+                      <div>
+                        <strong>{item.title ?? item.externalId}</strong>
+                        <time>{formatDate(item.occurredAt)}</time>
+                        <p className="evidence-preview">{preview.text}</p>
+                        <div className="evidence-source-actions">
+                          {item.url && (
+                            <a href={item.url} target="_blank" rel="noreferrer">
+                              Open evidence <ExternalLink size={13} />
+                            </a>
+                          )}
+                          {preview.truncated && (
+                            <details className="evidence-full-source">
+                              <summary>View full retained source</summary>
+                              <pre>{item.content}</pre>
+                            </details>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
               </section>
               <aside className="confidence-box">
                 <h3>Confidence explanation</h3>
@@ -1029,6 +1059,7 @@ export function CandidatesPage({
                 </p>
               )}
             </section>
+            </div>
             <footer className="candidate-actions">
               <span>
                 <ShieldCheck size={16} /> Approval creates an audited knowledge revision.

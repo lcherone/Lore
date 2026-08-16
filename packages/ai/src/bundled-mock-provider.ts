@@ -97,7 +97,7 @@ export function createBundledMockAIProvider(): MockAIProvider {
           })
           .filter((candidate) => candidate.statement.length >= 8)
       )
-      .slice(0, 50);
+      .slice(0, 20);
 
     return { candidates };
   });

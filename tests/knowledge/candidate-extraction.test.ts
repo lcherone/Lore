@@ -68,4 +68,84 @@ describe("candidate comparison", () => {
       "Release notes should include a link to the weekend support rota."
     )).resolves.toBe("new");
   });
+
+  it("persists only durable candidates after the extraction quality gate", async () => {
+    const store = new InMemoryLoreStore();
+    const id = deterministicUuid("test.pull-request", "quality-gate");
+    await store.ingestEvidence([{
+      id,
+      organisationId: "org_acme",
+      repositoryId: "repo_soho_ecom",
+      type: "pull_request",
+      provider: "github",
+      externalId: "owner/repository:pr:123",
+      title: "PR #123: Safer importer",
+      content: "The content importer must roll back unless live mode and the target database are confirmed.",
+      occurredAt: "2026-08-16T09:00:00.000Z",
+      metadata: { number: 123 }
+    }]);
+    const emptyScope = {
+      organisation: null,
+      repository: null,
+      paths: null,
+      excludedPaths: null,
+      symbols: null,
+      subsystem: null,
+      language: null,
+      framework: null,
+      team: null,
+      reviewer: null,
+      integration: null,
+      ticketType: null
+    };
+    const provider = new MockAIProvider(() => ({
+      candidates: [
+        {
+          kind: "fact",
+          title: "Importer exists",
+          statement: "A content importer exists in the current codebase.",
+          rationale: "The pull request adds it.",
+          proposedScope: emptyScope,
+          evidenceIds: [id],
+          possibleContradictionIds: []
+        },
+        {
+          kind: "rule",
+          title: "Deployment changelog must be updated",
+          statement: "The deployment changelog must be updated after a pull request is deployed.",
+          rationale: "The pull request template says so.",
+          proposedScope: emptyScope,
+          evidenceIds: [id],
+          possibleContradictionIds: []
+        },
+        {
+          kind: "decision",
+          title: "Use the importer",
+          statement: "The repository uses the content importer for staged data changes.",
+          rationale: "The pull request changed the importer.",
+          proposedScope: emptyScope,
+          evidenceIds: [id],
+          possibleContradictionIds: []
+        },
+        {
+          kind: "rule",
+          title: "Importer requires live confirmation",
+          statement: "The content importer must roll back unless live mode and the target database are confirmed.",
+          rationale: "The change summary identifies this as a safety invariant.",
+          proposedScope: emptyScope,
+          evidenceIds: [id],
+          possibleContradictionIds: []
+        }
+      ]
+    }));
+
+    const result = await new KnowledgeCandidateExtractionService(store, provider).extract({
+      organisationId: "org_acme",
+      repositoryId: "repo_soho_ecom",
+      evidenceIds: [id]
+    });
+
+    expect(result).toMatchObject({ proposals: 4, candidatesCreated: 1 });
+    expect(result.items.map((item) => item.candidate.title)).toEqual(["Importer requires live confirmation"]);
+  });
 });

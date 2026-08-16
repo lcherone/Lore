@@ -243,7 +243,7 @@ const executeJob = async (job: Job, runId?: string): Promise<unknown> => {
     const result = await new KnowledgeCandidateExtractionService(
       store,
       aiProvider,
-      `${aiRuntime.name}-ai:knowledge-extractor/v2${aiRuntime.model ? `:${aiRuntime.model}` : ""}`
+      `${aiRuntime.name}-ai:knowledge-extractor/v3${aiRuntime.model ? `:${aiRuntime.model}` : ""}`
     ).extract(input);
     return {
       evidenceAnalysed: result.evidenceAnalysed,
