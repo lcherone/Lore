@@ -135,7 +135,7 @@ The full token is shown once. Lore stores only its SHA-256 hash plus name, prefi
 - SaaS session tokens rotate after login, organisation creation/switch, and invitation acceptance.
 - Removed membership immediately stops tenant access.
 - Cookies are `HttpOnly`, `SameSite=Lax`, signed, and `Secure` in production.
-- Cookie-authenticated production mutations use CSRF protection.
+- Cookie-authenticated production mutations use CSRF protection. The signed, HTTP-only CSRF secret cookie is scoped to `/` so the token works across every API mutation, including organisation switching.
 - Viewer writes fail at the API boundary.
 - Sensitive headers, cookies, keys, tokens, and API keys are redacted from structured logs.
 - The local PAT fallback fails if `APP_URL` is not localhost/loopback.
@@ -172,6 +172,10 @@ Restart from Lore, finish within ten minutes, use the same browser, and keep the
 ### A user cannot see an invitation
 
 Compare the invitation email with the verified email returned by GitHub OAuth. Revoke and recreate an incorrectly addressed invitation; link possession cannot bypass the match.
+
+### Organisation switching does not move to the selected workspace
+
+Reload Lore once after an application update so the browser receives the current root-scoped CSRF cookie, then use the top-bar switcher or **Organisation → Your organisations**. A successful switch rotates the session and reloads all repository, evidence, candidate, knowledge, policy, and settings data from the selected tenant. If it fails, the UI now shows the API reason instead of leaving the old organisation silently selected.
 
 ## External deployment boundary
 

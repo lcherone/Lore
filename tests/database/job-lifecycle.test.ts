@@ -1,12 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { JobDispatcher } from "@lore/core/index.js";
-import { InMemoryJobDispatcher, InMemoryJobLedger, PersistentJobDispatcher } from "@lore/database/index.js";
+import {
+  InMemoryJobDispatcher,
+  InMemoryJobLedger,
+  PersistentJobDispatcher
+} from "@lore/database/index.js";
 
 class SwitchableDispatcher implements JobDispatcher {
   fail = true;
-  readonly jobs: Array<{ name: string; payload: Record<string, unknown>; idempotencyKey: string }> = [];
+  readonly jobs: Array<{ name: string; payload: Record<string, unknown>; idempotencyKey: string }> =
+    [];
   async health(): Promise<void> {}
-  async dispatch(name: "repository.index" | "github.import" | "knowledge.extract" | "knowledge.health", payload: Record<string, unknown>, idempotencyKey: string): Promise<{ id: string }> {
+  async dispatch(
+    name: "repository.index" | "github.import" | "knowledge.extract" | "knowledge.health",
+    payload: Record<string, unknown>,
+    idempotencyKey: string
+  ): Promise<{ id: string }> {
     if (this.fail) throw new Error("Redis unavailable");
     this.jobs.push({ name, payload, idempotencyKey });
     return { id: idempotencyKey };
@@ -39,8 +48,17 @@ describe("durable job lifecycle", () => {
     });
     await ledger.markSucceeded(runId, { evidenceAdded: 4 });
     const completed = (await ledger.list("org-1"))[0]!;
-    expect(completed).toMatchObject({ state: "succeeded", attempt: 1, resultSummary: { evidenceAdded: 4 } });
-    expect(completed.events?.map((event) => event.state)).toEqual(["queued", "dispatched", "running", "succeeded"]);
+    expect(completed).toMatchObject({
+      state: "succeeded",
+      attempt: 1,
+      resultSummary: { evidenceAdded: 4 }
+    });
+    expect(completed.events?.map((event) => event.state)).toEqual([
+      "queued",
+      "dispatched",
+      "running",
+      "succeeded"
+    ]);
   });
 
   it("retains an outbox intent and reconciles after transport recovery", async () => {
@@ -53,7 +71,7 @@ describe("durable job lifecycle", () => {
       "extract-evidence-1"
     );
     expect(queued.deferred).toBe(true);
-    expect((await ledger.pending())).toHaveLength(1);
+    expect(await ledger.pending()).toHaveLength(1);
     expect((await ledger.list("org-1"))[0]?.state).toBe("queued");
 
     transport.fail = false;
@@ -61,6 +79,37 @@ describe("durable job lifecycle", () => {
     expect(await ledger.pending()).toEqual([]);
     expect(transport.jobs[0]?.payload.loreJobRunId).toBe(queued.id);
     expect((await ledger.list("org-1"))[0]?.state).toBe("dispatched");
+  });
+
+  it("does not re-dispatch a completed idempotent business job", async () => {
+    const ledger = new InMemoryJobLedger();
+    const transport = new InMemoryJobDispatcher();
+    const dispatcher = new PersistentJobDispatcher(transport, ledger);
+    const first = await dispatcher.dispatch(
+      "knowledge.extract",
+      { organisationId: "org-1", repositoryId: "repo-1", evidenceIds: ["evidence-1"] },
+      "extract-stable-batch"
+    );
+    await ledger.markRunning({
+      runId: first.id,
+      organisationId: "org-1",
+      repositoryId: "repo-1",
+      name: "knowledge.extract",
+      externalJobId: "extract-stable-batch",
+      attempt: 1,
+      maximumAttempts: 3
+    });
+    await ledger.markSucceeded(first.id, { candidatesCreated: 1 });
+
+    const replay = await dispatcher.dispatch(
+      "knowledge.extract",
+      { organisationId: "org-1", repositoryId: "repo-1", evidenceIds: ["evidence-1"] },
+      "extract-stable-batch"
+    );
+
+    expect(replay.id).toBe(first.id);
+    expect(transport.jobs).toHaveLength(1);
+    expect((await ledger.list("org-1"))[0]?.state).toBe("succeeded");
   });
 
   it("redacts credentials and stores only bounded result summaries", async () => {
@@ -90,5 +139,54 @@ describe("durable job lifecycle", () => {
       records: "1 item",
       nested: "[details omitted]"
     });
+  });
+
+  it("reuses one durable run when a scheduled transport job retries", async () => {
+    const ledger = new InMemoryJobLedger();
+    const input = {
+      organisationId: "org-1",
+      repositoryId: "repo-1",
+      name: "github.import" as const,
+      externalJobId: "repeat:github-sync-repo-1:123",
+      maximumAttempts: 3
+    };
+    const firstRunId = await ledger.markRunning({ ...input, attempt: 1 });
+    await ledger.markFailed(firstRunId, new Error("temporary failure"), false);
+    const retriedRunId = await ledger.markRunning({ ...input, attempt: 2 });
+
+    expect(retriedRunId).toBe(firstRunId);
+    expect(await ledger.list("org-1")).toHaveLength(1);
+    expect((await ledger.list("org-1"))[0]).toMatchObject({ state: "retrying", attempt: 2 });
+  });
+
+  it("reconciles a transport-level stall that occurs outside the processor", async () => {
+    const ledger = new InMemoryJobLedger();
+    const runId = await ledger.markRunning({
+      organisationId: "org-1",
+      repositoryId: "repo-1",
+      name: "github.import",
+      externalJobId: "import-repo-1-stalled",
+      attempt: 1,
+      maximumAttempts: 3
+    });
+
+    await ledger.markTransportFailed(
+      "import-repo-1-stalled",
+      new Error("job stalled more than allowable limit"),
+      true
+    );
+    await ledger.markTransportFailed(
+      "import-repo-1-stalled",
+      new Error("job stalled more than allowable limit"),
+      true
+    );
+
+    const run = (await ledger.list("org-1"))[0]!;
+    expect(run.id).toBe(runId);
+    expect(run).toMatchObject({
+      state: "dead_letter",
+      errorMessage: "job stalled more than allowable limit"
+    });
+    expect(run.events?.filter((event) => event.state === "dead_letter")).toHaveLength(1);
   });
 });

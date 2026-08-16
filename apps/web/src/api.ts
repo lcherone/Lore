@@ -1,6 +1,9 @@
 import type {
   AccountSession,
   AuthSessionSummary,
+  CodeEntity,
+  CodeGraphPage,
+  CodeRelationshipView,
   CommunicationEvidenceAnalysis,
   CommunicationEvidenceInput,
   ContextPackage,
@@ -140,8 +143,32 @@ export const loreApi = {
   connectRepositories: (repositories: Array<Record<string, unknown>>): Promise<RepositoryBatchConnectionResult> =>
     request("/api/repositories/batch", { method: "POST", body: JSON.stringify({ repositories }) }),
   indexRepository: (id: string): Promise<{ status: "queued" | "dispatch_pending" | "completed"; simulated?: boolean }> => request(`/api/repositories/${id}/index`, { method: "POST" }),
-  importHistory: (id: string, limit: PullRequestImportLimit): Promise<{ status: "queued" | "dispatch_pending" | "simulated"; simulated?: boolean }> =>
+  importHistory: (id: string, limit: PullRequestImportLimit): Promise<{ status: "queued" | "dispatch_pending" | "already_running" | "simulated"; simulated?: boolean; alreadyRunning?: boolean }> =>
     request(`/api/repositories/${id}/github-import`, { method: "POST", body: JSON.stringify({ limit }) }),
+  extractRepositoryEvidence: (id: string): Promise<{ status: "queued" | "simulated"; evidenceQueued: number; batchesQueued: number }> =>
+    request(`/api/repositories/${id}/knowledge-extraction`, { method: "POST", body: JSON.stringify({}) }),
+  repositoryEntities: (
+    id: string,
+    input: { search?: string; type?: CodeEntity["type"]; page?: number; pageSize?: number }
+  ): Promise<CodeGraphPage<CodeEntity>> => {
+    const query = new URLSearchParams();
+    if (input.search) query.set("search", input.search);
+    if (input.type) query.set("type", input.type);
+    query.set("page", String(input.page ?? 1));
+    query.set("pageSize", String(input.pageSize ?? 50));
+    return request(`/api/repositories/${id}/entities?${query}`);
+  },
+  repositoryRelationships: (
+    id: string,
+    input: { search?: string; entityId?: string; page?: number; pageSize?: number }
+  ): Promise<CodeGraphPage<CodeRelationshipView>> => {
+    const query = new URLSearchParams();
+    if (input.search) query.set("search", input.search);
+    if (input.entityId) query.set("entityId", input.entityId);
+    query.set("page", String(input.page ?? 1));
+    query.set("pageSize", String(input.pageSize ?? 50));
+    return request(`/api/repositories/${id}/relationships?${query}`);
+  },
   deleteRepository: (id: string, confirmation: string): Promise<{ deletedId: string; challengedKnowledgeIds: string[] }> =>
     request(`/api/repositories/${id}?confirm=${encodeURIComponent(confirmation)}`, { method: "DELETE" }),
   updateRepositoryRetention: (id: string, retentionConfig: RepositoryRetentionConfig): Promise<RepositorySummary> =>

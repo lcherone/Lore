@@ -7,7 +7,11 @@ import type {
   CandidateRecord,
   ChangeObservation,
   CodeEntity,
+  CodeEntityListQuery,
+  CodeGraphPage,
   CodeRelationship,
+  CodeRelationshipListQuery,
+  CodeRelationshipView,
   ContextPackage,
   ContextPackageRecord,
   DashboardSnapshot,
@@ -50,17 +54,27 @@ export class InMemoryLoreStore implements LoreStore {
   readonly #snapshots = new Map<string, DashboardSnapshot>();
   readonly #evidence: EvidenceRecord[];
   readonly #evidenceRevisions = new Map<string, EvidenceRevisionRecord[]>();
+  readonly #syncCheckpoints = new Map<string, string>();
   readonly #receipts = new Set<string>();
   readonly #proposals: KnowledgeProposalRecord[] = [];
   readonly #observations: ChangeObservation[] = [];
   readonly #contexts = new Map<string, ContextPackageRecord[]>();
   readonly #sessionEvents = new Map<string, SessionEvent[]>();
-  readonly #graphs = new Map<string, { entities: CodeEntity[]; relationships: CodeRelationship[]; regressions: RegressionRecord[] }>();
+  readonly #graphs = new Map<
+    string,
+    { entities: CodeEntity[]; relationships: CodeRelationship[]; regressions: RegressionRecord[] }
+  >();
   readonly #users = new Map<string, UserProfile>();
   readonly #identityUsers = new Map<string, string>();
-  readonly #memberships = new Map<string, { organisationId: string; userId: string; role: OrganisationRole; createdAt: string }>();
+  readonly #memberships = new Map<
+    string,
+    { organisationId: string; userId: string; role: OrganisationRole; createdAt: string }
+  >();
   readonly #authSessions = new Map<string, AuthSessionRecord>();
-  readonly #invitations = new Map<string, OrganisationInvitation & { invitedByUserId: string; acceptedAt?: string; revokedAt?: string }>();
+  readonly #invitations = new Map<
+    string,
+    OrganisationInvitation & { invitedByUserId: string; acceptedAt?: string; revokedAt?: string }
+  >();
   readonly #userSettings = new Map<string, UserSettings>();
   readonly #organisationSettings = new Map<string, OrganisationSettings>();
   readonly #apiTokens = new Map<string, ApiTokenRecord>();
@@ -107,7 +121,8 @@ export class InMemoryLoreStore implements LoreStore {
   async validateMembership(organisationId: string, userId: string): Promise<void> {
     this.#assertOrganisation(organisationId);
     if (userId === "system") return;
-    if (!this.#memberships.has(`${organisationId}:${userId}`)) throw new ForbiddenError("The current user is not an active organisation member");
+    if (!this.#memberships.has(`${organisationId}:${userId}`))
+      throw new ForbiddenError("The current user is not an active organisation member");
   }
 
   async getMembershipRole(organisationId: string, userId: string): Promise<OrganisationRole> {
@@ -119,7 +134,9 @@ export class InMemoryLoreStore implements LoreStore {
     const identityKey = `github:${identity.providerUserId}`;
     const normalizedEmail = identity.email.trim().toLowerCase();
     const identityUserId = this.#identityUsers.get(identityKey);
-    const emailUserId = [...this.#users.values()].find((user) => user.email.toLowerCase() === normalizedEmail)?.id;
+    const emailUserId = [...this.#users.values()].find(
+      (user) => user.email.toLowerCase() === normalizedEmail
+    )?.id;
     if (identityUserId && emailUserId && identityUserId !== emailUserId) {
       throw new ConflictError("This verified email is already linked to another Lore account");
     }
@@ -133,12 +150,40 @@ export class InMemoryLoreStore implements LoreStore {
       name: existing?.profileEditedAt ? existing.name : identity.name,
       githubLogin: identity.login,
       githubProfileUrl: identity.profileUrl,
-      ...(identity.avatarUrl ? { avatarUrl: identity.avatarUrl } : existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
-      ...(existing?.profileEditedAt ? (existing.bio ? { bio: existing.bio } : {}) : identity.bio ? { bio: identity.bio } : {}),
-      ...(existing?.profileEditedAt ? (existing.company ? { company: existing.company } : {}) : identity.company ? { company: identity.company } : {}),
+      ...(identity.avatarUrl
+        ? { avatarUrl: identity.avatarUrl }
+        : existing?.avatarUrl
+          ? { avatarUrl: existing.avatarUrl }
+          : {}),
+      ...(existing?.profileEditedAt
+        ? existing.bio
+          ? { bio: existing.bio }
+          : {}
+        : identity.bio
+          ? { bio: identity.bio }
+          : {}),
+      ...(existing?.profileEditedAt
+        ? existing.company
+          ? { company: existing.company }
+          : {}
+        : identity.company
+          ? { company: identity.company }
+          : {}),
       ...(existing?.jobTitle ? { jobTitle: existing.jobTitle } : {}),
-      ...(existing?.profileEditedAt ? (existing.location ? { location: existing.location } : {}) : identity.location ? { location: identity.location } : {}),
-      ...(existing?.profileEditedAt ? (existing.websiteUrl ? { websiteUrl: existing.websiteUrl } : {}) : identity.websiteUrl ? { websiteUrl: identity.websiteUrl } : {}),
+      ...(existing?.profileEditedAt
+        ? existing.location
+          ? { location: existing.location }
+          : {}
+        : identity.location
+          ? { location: identity.location }
+          : {}),
+      ...(existing?.profileEditedAt
+        ? existing.websiteUrl
+          ? { websiteUrl: existing.websiteUrl }
+          : {}
+        : identity.websiteUrl
+          ? { websiteUrl: identity.websiteUrl }
+          : {}),
       ...(existing?.timezone ? { timezone: existing.timezone } : {}),
       ...(existing?.profileEditedAt ? { profileEditedAt: existing.profileEditedAt } : {}),
       lastLoginAt: now,
@@ -148,6 +193,30 @@ export class InMemoryLoreStore implements LoreStore {
     this.#users.set(id, user);
     this.#identityUsers.set(identityKey, id);
     return structuredClone(user);
+  }
+
+  async getLocalGitHubUser(credentialFingerprint: string): Promise<UserProfile | undefined> {
+    const userId = this.#identityUsers.get(`github-local-token:${credentialFingerprint}`);
+    return userId ? this.getUserProfile(userId) : undefined;
+  }
+
+  async getSoleGitHubUser(): Promise<UserProfile | undefined> {
+    const userIds = new Set(
+      [...this.#identityUsers.entries()]
+        .filter(([identity]) => identity.startsWith("github:"))
+        .map(([, userId]) => userId)
+    );
+    if (userIds.size !== 1) return undefined;
+    return this.getUserProfile([...userIds][0]!);
+  }
+
+  async linkLocalGitHubCredential(userId: string, credentialFingerprint: string): Promise<void> {
+    await this.getUserProfile(userId);
+    const key = `github-local-token:${credentialFingerprint}`;
+    const existing = this.#identityUsers.get(key);
+    if (existing && existing !== userId)
+      throw new ConflictError("This local GitHub credential is linked to another Lore account");
+    this.#identityUsers.set(key, userId);
   }
 
   async getUserProfile(userId: string): Promise<UserProfile> {
@@ -184,7 +253,8 @@ export class InMemoryLoreStore implements LoreStore {
     ipHash?: string;
   }): Promise<AuthSessionRecord> {
     await this.getUserProfile(input.userId);
-    if (input.activeOrganisationId) await this.validateMembership(input.activeOrganisationId, input.userId);
+    if (input.activeOrganisationId)
+      await this.validateMembership(input.activeOrganisationId, input.userId);
     const now = new Date().toISOString();
     const session: AuthSessionRecord = {
       id: newUuid(),
@@ -210,7 +280,9 @@ export class InMemoryLoreStore implements LoreStore {
   }
 
   async revokeAuthSession(sessionId: string, userId: string): Promise<void> {
-    const session = [...this.#authSessions.values()].find((item) => item.id === sessionId && item.userId === userId);
+    const session = [...this.#authSessions.values()].find(
+      (item) => item.id === sessionId && item.userId === userId
+    );
     if (session) session.revokedAt = new Date().toISOString();
   }
 
@@ -227,10 +299,17 @@ export class InMemoryLoreStore implements LoreStore {
 
   async listAuthSessions(userId: string, currentSessionId: string): Promise<AuthSessionSummary[]> {
     return [...this.#authSessions.values()]
-      .filter((session) => session.userId === userId && !session.revokedAt && Date.parse(session.expiresAt) > Date.now())
+      .filter(
+        (session) =>
+          session.userId === userId &&
+          !session.revokedAt &&
+          Date.parse(session.expiresAt) > Date.now()
+      )
       .map((session) => ({
         id: session.id,
-        ...(session.activeOrganisationId ? { activeOrganisationId: session.activeOrganisationId } : {}),
+        ...(session.activeOrganisationId
+          ? { activeOrganisationId: session.activeOrganisationId }
+          : {}),
         createdAt: session.createdAt,
         lastSeenAt: session.lastSeenAt,
         expiresAt: session.expiresAt,
@@ -246,7 +325,9 @@ export class InMemoryLoreStore implements LoreStore {
         return {
           ...snapshot.organisation,
           role: membership.role,
-          memberCount: [...this.#memberships.values()].filter((item) => item.organisationId === membership.organisationId).length,
+          memberCount: [...this.#memberships.values()].filter(
+            (item) => item.organisationId === membership.organisationId
+          ).length,
           createdAt: membership.createdAt
         };
       });
@@ -254,7 +335,9 @@ export class InMemoryLoreStore implements LoreStore {
 
   async getOrganisationSettings(organisationId: string): Promise<OrganisationSettings> {
     this.#assertOrganisation(organisationId);
-    return structuredClone(this.#organisationSettings.get(organisationId) ?? DEFAULT_ORGANISATION_SETTINGS);
+    return structuredClone(
+      this.#organisationSettings.get(organisationId) ?? DEFAULT_ORGANISATION_SETTINGS
+    );
   }
 
   async updateOrganisationSettings(
@@ -263,7 +346,8 @@ export class InMemoryLoreStore implements LoreStore {
     actorUserId: string
   ): Promise<OrganisationSettings> {
     const role = await this.getMembershipRole(organisationId, actorUserId);
-    if (role !== "owner" && role !== "admin") throw new ForbiddenError("Owner or admin access is required");
+    if (role !== "owner" && role !== "admin")
+      throw new ForbiddenError("Owner or admin access is required");
     this.#organisationSettings.set(organisationId, structuredClone(input));
     return structuredClone(input);
   }
@@ -295,7 +379,8 @@ export class InMemoryLoreStore implements LoreStore {
 
   async getApiToken(tokenHash: string): Promise<ApiTokenRecord | undefined> {
     const token = this.#apiTokens.get(tokenHash);
-    if (!token || token.revokedAt || (token.expiresAt && Date.parse(token.expiresAt) <= Date.now())) return undefined;
+    if (!token || token.revokedAt || (token.expiresAt && Date.parse(token.expiresAt) <= Date.now()))
+      return undefined;
     token.lastUsedAt = new Date().toISOString();
     return structuredClone(token);
   }
@@ -303,69 +388,128 @@ export class InMemoryLoreStore implements LoreStore {
   async listApiTokens(userId: string, organisationId: string): Promise<ApiTokenSummary[]> {
     await this.validateMembership(organisationId, userId);
     return [...this.#apiTokens.values()]
-      .filter((token) => token.userId === userId && token.organisationId === organisationId && !token.revokedAt)
+      .filter(
+        (token) =>
+          token.userId === userId && token.organisationId === organisationId && !token.revokedAt
+      )
       .map((token) => this.#apiTokenSummary(token));
   }
 
   async revokeApiToken(tokenId: string, userId: string, organisationId: string): Promise<void> {
     const token = [...this.#apiTokens.values()].find(
-      (candidate) => candidate.id === tokenId && candidate.userId === userId && candidate.organisationId === organisationId
+      (candidate) =>
+        candidate.id === tokenId &&
+        candidate.userId === userId &&
+        candidate.organisationId === organisationId
     );
     if (!token) throw new NotFoundError("API token", tokenId);
     token.revokedAt = new Date().toISOString();
   }
 
-  async createOrganisation(userId: string, input: { name: string; slug: string }): Promise<OrganisationAccess> {
+  async createOrganisation(
+    userId: string,
+    input: { name: string; slug: string }
+  ): Promise<OrganisationAccess> {
     await this.getUserProfile(userId);
-    if ([...this.#snapshots.values()].some((snapshot) => snapshot.organisation.slug === input.slug)) {
+    if (
+      [...this.#snapshots.values()].some((snapshot) => snapshot.organisation.slug === input.slug)
+    ) {
       throw new ConflictError("That organisation URL is already in use");
     }
     const id = newUuid();
     const now = new Date().toISOString();
     this.#snapshots.set(id, {
       organisation: { id, name: input.name, slug: input.slug },
-      repositories: [], knowledge: [], candidates: [], policies: [], reports: [], reviewers: [], sessions: []
+      repositories: [],
+      knowledge: [],
+      candidates: [],
+      policies: [],
+      reports: [],
+      reviewers: [],
+      sessions: []
     });
-    this.#memberships.set(`${id}:${userId}`, { organisationId: id, userId, role: "owner", createdAt: now });
-    return { id, name: input.name, slug: input.slug, role: "owner", memberCount: 1, createdAt: now };
+    this.#memberships.set(`${id}:${userId}`, {
+      organisationId: id,
+      userId,
+      role: "owner",
+      createdAt: now
+    });
+    return {
+      id,
+      name: input.name,
+      slug: input.slug,
+      role: "owner",
+      memberCount: 1,
+      createdAt: now
+    };
   }
 
-  async updateOrganisation(organisationId: string, input: { name?: string; slug?: string }, actorUserId: string): Promise<OrganisationAccess> {
+  async updateOrganisation(
+    organisationId: string,
+    input: { name?: string; slug?: string },
+    actorUserId: string
+  ): Promise<OrganisationAccess> {
     const role = await this.getMembershipRole(organisationId, actorUserId);
-    if (role !== "owner" && role !== "admin") throw new ForbiddenError("Owner or admin access is required");
+    if (role !== "owner" && role !== "admin")
+      throw new ForbiddenError("Owner or admin access is required");
     const snapshot = this.#snapshotFor(organisationId);
-    if (input.slug && [...this.#snapshots.values()].some((item) => item.organisation.id !== organisationId && item.organisation.slug === input.slug)) {
+    if (
+      input.slug &&
+      [...this.#snapshots.values()].some(
+        (item) => item.organisation.id !== organisationId && item.organisation.slug === input.slug
+      )
+    ) {
       throw new ConflictError("That organisation URL is already in use");
     }
     snapshot.organisation = { ...snapshot.organisation, ...input };
-    return (await this.listOrganisationAccess(actorUserId)).find((item) => item.id === organisationId)!;
+    return (await this.listOrganisationAccess(actorUserId)).find(
+      (item) => item.id === organisationId
+    )!;
   }
 
   async listOrganisationMembers(organisationId: string): Promise<OrganisationMember[]> {
     this.#assertOrganisation(organisationId);
-    return [...this.#memberships.values()].filter((item) => item.organisationId === organisationId).map((membership) => {
-      const user = this.#users.get(membership.userId)!;
-      return {
-        membershipId: `${membership.organisationId}:${membership.userId}`,
-        userId: user.id,
-        name: user.name,
-        email: user.email,
-        ...(user.githubLogin ? { githubLogin: user.githubLogin } : {}),
-        ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {}),
-        role: membership.role,
-        joinedAt: membership.createdAt
-      };
-    });
+    return [...this.#memberships.values()]
+      .filter((item) => item.organisationId === organisationId)
+      .map((membership) => {
+        const user = this.#users.get(membership.userId)!;
+        return {
+          membershipId: `${membership.organisationId}:${membership.userId}`,
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          ...(user.githubLogin ? { githubLogin: user.githubLogin } : {}),
+          ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {}),
+          role: membership.role,
+          joinedAt: membership.createdAt
+        };
+      });
   }
 
   async listOrganisationInvitations(organisationId: string): Promise<OrganisationInvitation[]> {
     this.#assertOrganisation(organisationId);
-    return [...this.#invitations.values()].filter((item) => item.organisationId === organisationId && !item.acceptedAt && !item.revokedAt && Date.parse(item.expiresAt) > Date.now()).map((item) => structuredClone(item));
+    return [...this.#invitations.values()]
+      .filter(
+        (item) =>
+          item.organisationId === organisationId &&
+          !item.acceptedAt &&
+          !item.revokedAt &&
+          Date.parse(item.expiresAt) > Date.now()
+      )
+      .map((item) => structuredClone(item));
   }
 
   async listPendingInvitations(userId: string): Promise<OrganisationInvitation[]> {
     const user = await this.getUserProfile(userId);
-    return [...this.#invitations.values()].filter((item) => item.email.toLowerCase() === user.email.toLowerCase() && !item.acceptedAt && !item.revokedAt && Date.parse(item.expiresAt) > Date.now()).map((item) => structuredClone(item));
+    return [...this.#invitations.values()]
+      .filter(
+        (item) =>
+          item.email.toLowerCase() === user.email.toLowerCase() &&
+          !item.acceptedAt &&
+          !item.revokedAt &&
+          Date.parse(item.expiresAt) > Date.now()
+      )
+      .map((item) => structuredClone(item));
   }
 
   async createOrganisationInvitation(
@@ -376,16 +520,32 @@ export class InMemoryLoreStore implements LoreStore {
     const inviter = await this.getUserProfile(invitedByUserId);
     const snapshot = this.#snapshotFor(organisationId);
     const email = input.email.trim().toLowerCase();
-    const existingUser = [...this.#users.values()].find((user) => user.email.toLowerCase() === email);
+    const existingUser = [...this.#users.values()].find(
+      (user) => user.email.toLowerCase() === email
+    );
     if (existingUser && this.#memberships.has(`${organisationId}:${existingUser.id}`)) {
       throw new ConflictError("This person is already an organisation member");
     }
-    if ([...this.#invitations.values()].some((item) => item.organisationId === organisationId && item.email.toLowerCase() === email && !item.acceptedAt && !item.revokedAt)) {
+    if (
+      [...this.#invitations.values()].some(
+        (item) =>
+          item.organisationId === organisationId &&
+          item.email.toLowerCase() === email &&
+          !item.acceptedAt &&
+          !item.revokedAt
+      )
+    ) {
       throw new ConflictError("A pending invitation already exists for this email");
     }
     const invitation = {
-      id: newUuid(), organisationId, organisationName: snapshot.organisation.name, email,
-      role: input.role, invitedByName: inviter.name, invitedByUserId, expiresAt: input.expiresAt,
+      id: newUuid(),
+      organisationId,
+      organisationName: snapshot.organisation.name,
+      email,
+      role: input.role,
+      invitedByName: inviter.name,
+      invitedByUserId,
+      expiresAt: input.expiresAt,
       createdAt: new Date().toISOString()
     };
     this.#invitations.set(invitation.id, invitation);
@@ -394,33 +554,59 @@ export class InMemoryLoreStore implements LoreStore {
 
   async revokeOrganisationInvitation(organisationId: string, invitationId: string): Promise<void> {
     const invitation = this.#invitations.get(invitationId);
-    if (!invitation || invitation.organisationId !== organisationId) throw new NotFoundError("Invitation", invitationId);
+    if (!invitation || invitation.organisationId !== organisationId)
+      throw new NotFoundError("Invitation", invitationId);
     invitation.revokedAt = new Date().toISOString();
   }
 
-  async acceptOrganisationInvitation(invitationId: string, userId: string): Promise<OrganisationAccess> {
+  async acceptOrganisationInvitation(
+    invitationId: string,
+    userId: string
+  ): Promise<OrganisationAccess> {
     const invitation = this.#invitations.get(invitationId);
     const user = await this.getUserProfile(userId);
-    if (!invitation || invitation.revokedAt || invitation.acceptedAt || Date.parse(invitation.expiresAt) <= Date.now()) throw new NotFoundError("Invitation", invitationId);
-    if (invitation.email.toLowerCase() !== user.email.toLowerCase()) throw new ForbiddenError("Sign in with the GitHub account matching the invited email");
+    if (
+      !invitation ||
+      invitation.revokedAt ||
+      invitation.acceptedAt ||
+      Date.parse(invitation.expiresAt) <= Date.now()
+    )
+      throw new NotFoundError("Invitation", invitationId);
+    if (invitation.email.toLowerCase() !== user.email.toLowerCase())
+      throw new ForbiddenError("Sign in with the GitHub account matching the invited email");
     const now = new Date().toISOString();
-    this.#memberships.set(`${invitation.organisationId}:${userId}`, { organisationId: invitation.organisationId, userId, role: invitation.role, createdAt: now });
+    this.#memberships.set(`${invitation.organisationId}:${userId}`, {
+      organisationId: invitation.organisationId,
+      userId,
+      role: invitation.role,
+      createdAt: now
+    });
     invitation.acceptedAt = now;
-    return (await this.listOrganisationAccess(userId)).find((item) => item.id === invitation.organisationId)!;
+    return (await this.listOrganisationAccess(userId)).find(
+      (item) => item.id === invitation.organisationId
+    )!;
   }
 
-  async updateOrganisationMemberRole(organisationId: string, memberUserId: string, role: Exclude<OrganisationRole, "owner">): Promise<OrganisationMember> {
+  async updateOrganisationMemberRole(
+    organisationId: string,
+    memberUserId: string,
+    role: Exclude<OrganisationRole, "owner">
+  ): Promise<OrganisationMember> {
     const membership = this.#memberships.get(`${organisationId}:${memberUserId}`);
     if (!membership) throw new NotFoundError("Organisation member", memberUserId);
-    if (membership.role === "owner") throw new ConflictError("The organisation owner role cannot be changed here");
+    if (membership.role === "owner")
+      throw new ConflictError("The organisation owner role cannot be changed here");
     membership.role = role;
-    return (await this.listOrganisationMembers(organisationId)).find((item) => item.userId === memberUserId)!;
+    return (await this.listOrganisationMembers(organisationId)).find(
+      (item) => item.userId === memberUserId
+    )!;
   }
 
   async removeOrganisationMember(organisationId: string, memberUserId: string): Promise<void> {
     const membership = this.#memberships.get(`${organisationId}:${memberUserId}`);
     if (!membership) throw new NotFoundError("Organisation member", memberUserId);
-    if (membership.role === "owner") throw new ConflictError("The organisation owner cannot be removed");
+    if (membership.role === "owner")
+      throw new ConflictError("The organisation owner cannot be removed");
     this.#memberships.delete(`${organisationId}:${memberUserId}`);
   }
 
@@ -430,10 +616,15 @@ export class InMemoryLoreStore implements LoreStore {
 
   async getEvidence(organisationId: string): Promise<EvidenceRecord[]> {
     this.#assertOrganisation(organisationId);
-    return structuredClone(this.#evidence.filter((record) => record.organisationId === organisationId));
+    return structuredClone(
+      this.#evidence.filter((record) => record.organisationId === organisationId)
+    );
   }
 
-  async getEvidenceRevisions(organisationId: string, evidenceId: string): Promise<EvidenceRevisionRecord[]> {
+  async getEvidenceRevisions(
+    organisationId: string,
+    evidenceId: string
+  ): Promise<EvidenceRevisionRecord[]> {
     this.#assertOrganisation(organisationId);
     const evidence = this.#evidence.find(
       (record) => record.id === evidenceId && record.organisationId === organisationId
@@ -442,9 +633,41 @@ export class InMemoryLoreStore implements LoreStore {
     return structuredClone(this.#evidenceRevisions.get(evidenceId) ?? []);
   }
 
+  async getSyncSourceVersions(
+    organisationId: string,
+    repositoryId: string,
+    provider: string,
+    stream: string
+  ): Promise<Record<string, string>> {
+    await this.getRepository(organisationId, repositoryId);
+    const prefix = `${organisationId}:${repositoryId}:${provider}:${stream}:`;
+    return Object.fromEntries(
+      [...this.#syncCheckpoints.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([key, sourceVersion]) => [key.slice(prefix.length), sourceVersion])
+    );
+  }
+
+  async saveSyncCheckpoint(input: {
+    organisationId: string;
+    repositoryId: string;
+    provider: string;
+    stream: string;
+    externalId: string;
+    sourceVersion: string;
+  }): Promise<void> {
+    await this.getRepository(input.organisationId, input.repositoryId);
+    this.#syncCheckpoints.set(
+      `${input.organisationId}:${input.repositoryId}:${input.provider}:${input.stream}:${input.externalId}`,
+      input.sourceVersion
+    );
+  }
+
   async getRepository(organisationId: string, repositoryId: string) {
     this.#assertOrganisation(organisationId);
-    const repository = this.#snapshotFor(organisationId).repositories.find((item) => item.id === repositoryId);
+    const repository = this.#snapshotFor(organisationId).repositories.find(
+      (item) => item.id === repositoryId
+    );
     if (!repository) throw new NotFoundError("Repository", repositoryId);
     return structuredClone(repository);
   }
@@ -456,21 +679,108 @@ export class InMemoryLoreStore implements LoreStore {
     owner: string,
     name: string
   ): Promise<RepositorySummary> {
-    const repository = [...this.#snapshots.values()].flatMap((snapshot) => snapshot.repositories).find(
-      (item) =>
-        item.provider === provider &&
-        item.providerInstallationId === providerInstallationId &&
-        ((item.providerRepositoryId && item.providerRepositoryId === providerRepositoryId) ||
-          (item.owner.toLowerCase() === owner.toLowerCase() && item.name.toLowerCase() === name.toLowerCase()))
-    );
+    const repository = [...this.#snapshots.values()]
+      .flatMap((snapshot) => snapshot.repositories)
+      .find(
+        (item) =>
+          item.provider === provider &&
+          item.providerInstallationId === providerInstallationId &&
+          ((item.providerRepositoryId && item.providerRepositoryId === providerRepositoryId) ||
+            (item.owner.toLowerCase() === owner.toLowerCase() &&
+              item.name.toLowerCase() === name.toLowerCase()))
+      );
     if (!repository) throw new NotFoundError("Provider repository", `${owner}/${name}`);
     return structuredClone(repository);
   }
 
-  async getCodeGraph(organisationId: string, repositoryId: string): Promise<{ entities: CodeEntity[]; relationships: CodeRelationship[] }> {
+  async getCodeGraph(
+    organisationId: string,
+    repositoryId: string
+  ): Promise<{ entities: CodeEntity[]; relationships: CodeRelationship[] }> {
     await this.getRepository(organisationId, repositoryId);
-    const graph = this.#graphs.get(repositoryId) ?? { entities: [], relationships: [], regressions: [] };
+    const graph = this.#graphs.get(repositoryId) ?? {
+      entities: [],
+      relationships: [],
+      regressions: []
+    };
     return structuredClone({ entities: graph.entities, relationships: graph.relationships });
+  }
+
+  async listCodeEntities(
+    organisationId: string,
+    repositoryId: string,
+    query: CodeEntityListQuery
+  ): Promise<CodeGraphPage<CodeEntity>> {
+    const graph = await this.getCodeGraph(organisationId, repositoryId);
+    const search = query.search?.trim().toLowerCase();
+    const filtered = graph.entities
+      .filter((entity) => !query.type || entity.type === query.type)
+      .filter(
+        (entity) =>
+          !search ||
+          `${entity.name} ${entity.qualifiedName} ${entity.path}`.toLowerCase().includes(search)
+      )
+      .toSorted(
+        (left, right) =>
+          left.path.localeCompare(right.path) || (left.startLine ?? 0) - (right.startLine ?? 0)
+      );
+    const offset = (query.page - 1) * query.pageSize;
+    const items = filtered.slice(offset, offset + query.pageSize);
+    return {
+      items,
+      count: items.length,
+      total: filtered.length,
+      page: query.page,
+      pageSize: query.pageSize,
+      hasMore: offset + items.length < filtered.length
+    };
+  }
+
+  async listCodeRelationships(
+    organisationId: string,
+    repositoryId: string,
+    query: CodeRelationshipListQuery
+  ): Promise<CodeGraphPage<CodeRelationshipView>> {
+    const graph = await this.getCodeGraph(organisationId, repositoryId);
+    const entities = new Map(graph.entities.map((entity) => [entity.id, entity]));
+    const search = query.search?.trim().toLowerCase();
+    const filtered = graph.relationships
+      .flatMap((relationship): CodeRelationshipView[] => {
+        const sourceEntity = entities.get(relationship.sourceEntityId);
+        const targetEntity = entities.get(relationship.targetEntityId);
+        if (!sourceEntity || !targetEntity) return [];
+        if (
+          query.entityId &&
+          relationship.sourceEntityId !== query.entityId &&
+          relationship.targetEntityId !== query.entityId
+        )
+          return [];
+        if (
+          search &&
+          !`${relationship.relationshipType} ${sourceEntity.qualifiedName} ${targetEntity.qualifiedName} ${sourceEntity.path} ${targetEntity.path}`
+            .toLowerCase()
+            .includes(search)
+        )
+          return [];
+        return [
+          {
+            ...relationship,
+            sourceEntity,
+            targetEntity
+          }
+        ];
+      })
+      .toSorted((left, right) => left.relationshipType.localeCompare(right.relationshipType));
+    const offset = (query.page - 1) * query.pageSize;
+    const items = filtered.slice(offset, offset + query.pageSize);
+    return {
+      items,
+      count: items.length,
+      total: filtered.length,
+      page: query.page,
+      pageSize: query.pageSize,
+      hasMore: offset + items.length < filtered.length
+    };
   }
 
   async getRegressions(organisationId: string, repositoryId: string): Promise<RegressionRecord[]> {
@@ -487,8 +797,11 @@ export class InMemoryLoreStore implements LoreStore {
       regressions: current?.regressions ?? []
     });
     const snapshot = this.#snapshotFor(organisationId);
-    const index = snapshot.repositories.findIndex((repository) => repository.id === output.repository.id);
-    if (index >= 0) snapshot.repositories[index] = structuredClone({ ...output.repository, status: "ready" });
+    const index = snapshot.repositories.findIndex(
+      (repository) => repository.id === output.repository.id
+    );
+    if (index >= 0)
+      snapshot.repositories[index] = structuredClone({ ...output.repository, status: "ready" });
   }
 
   async saveKnowledgeProposal(
@@ -506,10 +819,15 @@ export class InMemoryLoreStore implements LoreStore {
     return structuredClone(proposal);
   }
 
-  async createKnowledgeCandidate(organisationId: string, candidate: CandidateRecord): Promise<CandidateRecord> {
+  async createKnowledgeCandidate(
+    organisationId: string,
+    candidate: CandidateRecord
+  ): Promise<CandidateRecord> {
     this.#assertOrganisation(organisationId);
     const snapshot = this.#snapshotFor(organisationId);
-    const duplicate = snapshot.candidates.find((item) => item.id === candidate.id || item.statement === candidate.statement);
+    const duplicate = snapshot.candidates.find(
+      (item) => item.id === candidate.id || item.statement === candidate.statement
+    );
     if (duplicate) {
       duplicate.evidenceIds = [...new Set([...duplicate.evidenceIds, ...candidate.evidenceIds])];
       const evidenceIds = new Set(duplicate.evidence.map((item) => item.id));
@@ -523,23 +841,32 @@ export class InMemoryLoreStore implements LoreStore {
 
   async getCandidate(organisationId: string, candidateId: string): Promise<CandidateRecord> {
     this.#assertOrganisation(organisationId);
-    const candidate = this.#snapshotFor(organisationId).candidates.find((item) => item.id === candidateId);
+    const candidate = this.#snapshotFor(organisationId).candidates.find(
+      (item) => item.id === candidateId
+    );
     if (!candidate) throw new NotFoundError("Knowledge candidate", candidateId);
     return structuredClone(candidate);
   }
 
   async addRepository(
     organisationId: string,
-    input: Omit<RepositorySummary, "id" | "organisationId" | "entityCount" | "relationshipCount" | "status">,
+    input: Omit<
+      RepositorySummary,
+      "id" | "organisationId" | "entityCount" | "relationshipCount" | "status"
+    >,
     actor = "system"
   ): Promise<RepositorySummary> {
     void actor;
     this.#assertOrganisation(organisationId);
     const snapshot = this.#snapshotFor(organisationId);
     const duplicate = snapshot.repositories.find(
-      (repository) => repository.owner === input.owner && repository.name === input.name && repository.provider === input.provider
+      (repository) =>
+        repository.owner === input.owner &&
+        repository.name === input.name &&
+        repository.provider === input.provider
     );
-    if (duplicate) throw new ConflictError("Repository is already connected", { repositoryId: duplicate.id });
+    if (duplicate)
+      throw new ConflictError("Repository is already connected", { repositoryId: duplicate.id });
     const repository: RepositorySummary = {
       ...input,
       id: this.createId("repo"),
@@ -573,7 +900,10 @@ export class InMemoryLoreStore implements LoreStore {
       content: `${input.statement}\n\nRationale: ${input.rationale}`,
       author: actor,
       occurredAt: now,
-      metadata: { humanConfirmed: true, ...(input.sourceName ? { sourceName: input.sourceName } : {}) }
+      metadata: {
+        humanConfirmed: true,
+        ...(input.sourceName ? { sourceName: input.sourceName } : {})
+      }
     });
     const item: KnowledgeItem = {
       id: this.createId("knowledge"),
@@ -602,7 +932,12 @@ export class InMemoryLoreStore implements LoreStore {
   async approveCandidate(
     organisationId: string,
     candidateId: string,
-    input: { statement?: string; kind?: CandidateRecord["kind"]; scope?: CandidateRecord["scope"]; reason: string },
+    input: {
+      statement?: string;
+      kind?: CandidateRecord["kind"];
+      scope?: CandidateRecord["scope"];
+      reason: string;
+    },
     actor: string
   ): Promise<KnowledgeItem> {
     const candidate = await this.getCandidate(organisationId, candidateId);
@@ -624,7 +959,9 @@ export class InMemoryLoreStore implements LoreStore {
     };
     snapshot.candidates.splice(index, 1);
     snapshot.knowledge.unshift(approved);
-    const proposal = candidate.proposalId ? this.#proposals.find((item) => item.id === candidate.proposalId) : undefined;
+    const proposal = candidate.proposalId
+      ? this.#proposals.find((item) => item.id === candidate.proposalId)
+      : undefined;
     if (proposal) {
       proposal.status = "approved";
       proposal.reviewedAt = new Date().toISOString();
@@ -633,7 +970,12 @@ export class InMemoryLoreStore implements LoreStore {
     return structuredClone(approved);
   }
 
-  async rejectCandidate(organisationId: string, candidateId: string, reason: string, actor: string): Promise<void> {
+  async rejectCandidate(
+    organisationId: string,
+    candidateId: string,
+    reason: string,
+    actor: string
+  ): Promise<void> {
     void reason;
     this.#assertOrganisation(organisationId);
     const snapshot = this.#snapshotFor(organisationId);
@@ -641,7 +983,9 @@ export class InMemoryLoreStore implements LoreStore {
     if (index < 0) throw new NotFoundError("Knowledge candidate", candidateId);
     const candidate = snapshot.candidates[index]!;
     snapshot.candidates.splice(index, 1);
-    const proposal = candidate.proposalId ? this.#proposals.find((item) => item.id === candidate.proposalId) : undefined;
+    const proposal = candidate.proposalId
+      ? this.#proposals.find((item) => item.id === candidate.proposalId)
+      : undefined;
     if (proposal) {
       proposal.status = "rejected";
       proposal.reviewedAt = new Date().toISOString();
@@ -657,19 +1001,26 @@ export class InMemoryLoreStore implements LoreStore {
     actor: string
   ): Promise<KnowledgeItem> {
     void reason;
-    if (candidateId === targetId) throw new ConflictError("A candidate cannot be merged into itself");
+    if (candidateId === targetId)
+      throw new ConflictError("A candidate cannot be merged into itself");
     const source = await this.getCandidate(organisationId, candidateId);
     const snapshot = this.#snapshotFor(organisationId);
     const candidateTarget = snapshot.candidates.find((item) => item.id === targetId);
-    const target: KnowledgeItem | undefined = candidateTarget
-      ?? snapshot.knowledge.find((item) => item.id === targetId && item.status === "active");
+    const target: KnowledgeItem | undefined =
+      candidateTarget ??
+      snapshot.knowledge.find((item) => item.id === targetId && item.status === "active");
     if (!target) throw new NotFoundError("Merge target", targetId);
 
     target.evidenceIds = [...new Set([...target.evidenceIds, ...source.evidenceIds])];
     target.confidence = Math.max(target.confidence, source.confidence);
     target.updatedAt = new Date().toISOString();
     if (candidateTarget) {
-      candidateTarget.evidence = [...candidateTarget.evidence, ...source.evidence.filter((record) => !candidateTarget.evidence.some((item) => item.id === record.id))];
+      candidateTarget.evidence = [
+        ...candidateTarget.evidence,
+        ...source.evidence.filter(
+          (record) => !candidateTarget.evidence.some((item) => item.id === record.id)
+        )
+      ];
       candidateTarget.confidenceFactors.supportingObservations = Math.max(
         candidateTarget.confidenceFactors.supportingObservations,
         candidateTarget.evidenceIds.length
@@ -677,7 +1028,9 @@ export class InMemoryLoreStore implements LoreStore {
     }
     const sourceIndex = snapshot.candidates.findIndex((item) => item.id === candidateId);
     snapshot.candidates.splice(sourceIndex, 1);
-    const proposal = source.proposalId ? this.#proposals.find((item) => item.id === source.proposalId) : undefined;
+    const proposal = source.proposalId
+      ? this.#proposals.find((item) => item.id === source.proposalId)
+      : undefined;
     if (proposal) {
       proposal.status = "approved";
       proposal.reviewedAt = new Date().toISOString();
@@ -694,7 +1047,9 @@ export class InMemoryLoreStore implements LoreStore {
     void actor;
     await this.getRepository(organisationId, repositoryId);
     const repositoryEvidenceIds = new Set(
-      this.#evidence.filter((record) => record.repositoryId === repositoryId).map((record) => record.id)
+      this.#evidence
+        .filter((record) => record.repositoryId === repositoryId)
+        .map((record) => record.id)
     );
     const challengedKnowledgeIds: string[] = [];
     const snapshot = this.#snapshotFor(organisationId);
@@ -733,7 +1088,9 @@ export class InMemoryLoreStore implements LoreStore {
   ): Promise<RepositorySummary> {
     void actor;
     await this.getRepository(organisationId, repositoryId);
-    const repository = this.#snapshotFor(organisationId).repositories.find((item) => item.id === repositoryId)!;
+    const repository = this.#snapshotFor(organisationId).repositories.find(
+      (item) => item.id === repositoryId
+    )!;
     repository.retentionConfig = structuredClone(retentionConfig);
     return structuredClone(repository);
   }
@@ -748,7 +1105,9 @@ export class InMemoryLoreStore implements LoreStore {
     void reason;
     void actor;
     this.#assertOrganisation(organisationId);
-    const item = this.#snapshotFor(organisationId).knowledge.find((knowledge) => knowledge.id === knowledgeId);
+    const item = this.#snapshotFor(organisationId).knowledge.find(
+      (knowledge) => knowledge.id === knowledgeId
+    );
     if (!item) throw new NotFoundError("Knowledge item", knowledgeId);
     item.status = status;
     item.updatedAt = new Date().toISOString();
@@ -764,7 +1123,13 @@ export class InMemoryLoreStore implements LoreStore {
     void actor;
     this.#assertOrganisation(organisationId);
     const now = new Date().toISOString();
-    const policy: PolicyRecord = { ...input, id: this.createId("policy"), organisationId, createdAt: now, updatedAt: now };
+    const policy: PolicyRecord = {
+      ...input,
+      id: this.createId("policy"),
+      organisationId,
+      createdAt: now,
+      updatedAt: now
+    };
     this.#snapshotFor(organisationId).policies.unshift(policy);
     return structuredClone(policy);
   }
@@ -776,7 +1141,10 @@ export class InMemoryLoreStore implements LoreStore {
       throw new ConflictError("Session already exists", { sessionId: session.id });
     }
     snapshot.sessions.unshift(structuredClone(session));
-    this.#appendSessionEvent(session.id, "started", { status: session.status, agentType: session.agentType });
+    this.#appendSessionEvent(session.id, "started", {
+      status: session.status,
+      agentType: session.agentType
+    });
     return structuredClone(session);
   }
 
@@ -796,17 +1164,28 @@ export class InMemoryLoreStore implements LoreStore {
 
   async getSessionEvents(organisationId: string, sessionId: string): Promise<SessionEvent[]> {
     this.#assertOrganisation(organisationId);
-    if (!this.#snapshotFor(organisationId).sessions.some((item) => item.id === sessionId && item.organisationId === organisationId)) {
+    if (
+      !this.#snapshotFor(organisationId).sessions.some(
+        (item) => item.id === sessionId && item.organisationId === organisationId
+      )
+    ) {
       throw new NotFoundError("Agent session", sessionId);
     }
     return structuredClone(this.#sessionEvents.get(sessionId) ?? []);
   }
 
-  async abandonSession(organisationId: string, sessionId: string, reason: string): Promise<AgentSession> {
+  async abandonSession(
+    organisationId: string,
+    sessionId: string,
+    reason: string
+  ): Promise<AgentSession> {
     this.#assertOrganisation(organisationId);
-    const session = this.#snapshotFor(organisationId).sessions.find((item) => item.id === sessionId && item.organisationId === organisationId);
+    const session = this.#snapshotFor(organisationId).sessions.find(
+      (item) => item.id === sessionId && item.organisationId === organisationId
+    );
     if (!session) throw new NotFoundError("Agent session", sessionId);
-    if (["completed", "abandoned"].includes(session.status)) throw new ConflictError("Only an open session can be abandoned");
+    if (["completed", "abandoned"].includes(session.status))
+      throw new ConflictError("Only an open session can be abandoned");
     const previousStatus = session.status;
     session.status = "abandoned";
     session.completedAt = new Date().toISOString();
@@ -820,9 +1199,12 @@ export class InMemoryLoreStore implements LoreStore {
     context: ContextPackage
   ): Promise<ContextPackageRecord> {
     this.#assertOrganisation(organisationId);
-    const session = this.#snapshotFor(organisationId).sessions.find((item) => item.id === sessionId && item.organisationId === organisationId);
+    const session = this.#snapshotFor(organisationId).sessions.find(
+      (item) => item.id === sessionId && item.organisationId === organisationId
+    );
     if (!session) throw new NotFoundError("Agent session", sessionId);
-    if (session.repositoryId !== context.repository.id) throw new ForbiddenError("Context repository does not belong to the session");
+    if (session.repositoryId !== context.repository.id)
+      throw new ForbiddenError("Context repository does not belong to the session");
     const records = this.#contexts.get(sessionId) ?? [];
     const record: ContextPackageRecord = {
       id: context.id,
@@ -835,17 +1217,26 @@ export class InMemoryLoreStore implements LoreStore {
     this.#contexts.set(sessionId, records);
     session.status = "active";
     session.filesObserved = context.candidateFiles.map((file) => file.path);
-    this.#appendSessionEvent(sessionId, record.revision === 1 ? "context_prepared" : "context_refreshed", {
-      contextId: context.id,
-      revision: record.revision,
-      filesObserved: session.filesObserved.length
-    });
+    this.#appendSessionEvent(
+      sessionId,
+      record.revision === 1 ? "context_prepared" : "context_refreshed",
+      {
+        contextId: context.id,
+        revision: record.revision,
+        filesObserved: session.filesObserved.length
+      }
+    );
     return structuredClone(record);
   }
 
-  async getLatestContextPackage(organisationId: string, sessionId: string): Promise<ContextPackageRecord | undefined> {
+  async getLatestContextPackage(
+    organisationId: string,
+    sessionId: string
+  ): Promise<ContextPackageRecord | undefined> {
     this.#assertOrganisation(organisationId);
-    const session = this.#snapshotFor(organisationId).sessions.find((item) => item.id === sessionId && item.organisationId === organisationId);
+    const session = this.#snapshotFor(organisationId).sessions.find(
+      (item) => item.id === sessionId && item.organisationId === organisationId
+    );
     if (!session) throw new NotFoundError("Agent session", sessionId);
     return structuredClone(this.#contexts.get(sessionId)?.at(-1));
   }
@@ -859,12 +1250,21 @@ export class InMemoryLoreStore implements LoreStore {
     this.#assertOrganisation(organisationId);
     let linked = sessionId ? { ...report, sessionId } : report;
     if (sessionId) {
-      const session = this.#snapshotFor(organisationId).sessions.find((item) => item.id === sessionId && item.organisationId === organisationId);
+      const session = this.#snapshotFor(organisationId).sessions.find(
+        (item) => item.id === sessionId && item.organisationId === organisationId
+      );
       if (!session) throw new NotFoundError("Agent session", sessionId);
-      if (session.repositoryId !== report.repositoryId) throw new ForbiddenError("Report repository does not belong to the session");
-      if (!report.contextId || !contextRevision) throw new ConflictError("A persisted context revision is required before saving a session report");
-      const context = this.#contexts.get(sessionId)?.find((record) => record.id === report.contextId && record.revision === contextRevision);
-      if (!context) throw new ForbiddenError("Report context does not belong to the session revision");
+      if (session.repositoryId !== report.repositoryId)
+        throw new ForbiddenError("Report repository does not belong to the session");
+      if (!report.contextId || !contextRevision)
+        throw new ConflictError(
+          "A persisted context revision is required before saving a session report"
+        );
+      const context = this.#contexts
+        .get(sessionId)
+        ?.find((record) => record.id === report.contextId && record.revision === contextRevision);
+      if (!context)
+        throw new ForbiddenError("Report context does not belong to the session revision");
       const observation = createChangeObservation({
         organisationId,
         sessionId,
@@ -895,7 +1295,10 @@ export class InMemoryLoreStore implements LoreStore {
     return structuredClone(linked);
   }
 
-  async getChangeObservation(organisationId: string, observationId: string): Promise<ChangeObservation> {
+  async getChangeObservation(
+    organisationId: string,
+    observationId: string
+  ): Promise<ChangeObservation> {
     this.#assertOrganisation(organisationId);
     const observation = this.#observations.find(
       (item) => item.id === observationId && item.organisationId === organisationId
@@ -932,7 +1335,11 @@ export class InMemoryLoreStore implements LoreStore {
     return changed;
   }
 
-  async hasIngestionReceipt(organisationId: string, provider: string, externalId: string): Promise<boolean> {
+  async hasIngestionReceipt(
+    organisationId: string,
+    provider: string,
+    externalId: string
+  ): Promise<boolean> {
     this.#assertOrganisation(organisationId);
     return this.#receipts.has(`${organisationId}:${provider}:${externalId}`);
   }
@@ -954,17 +1361,28 @@ export class InMemoryLoreStore implements LoreStore {
   }
 
   #evidenceHash(record: EvidenceRecord): string {
-    return record.contentHash ?? createHash("sha256").update(JSON.stringify({
-      url: record.url ?? null,
-      title: record.title ?? null,
-      content: record.content,
-      author: record.author ?? null,
-      occurredAt: record.occurredAt,
-      metadata: record.metadata
-    })).digest("hex");
+    return (
+      record.contentHash ??
+      createHash("sha256")
+        .update(
+          JSON.stringify({
+            url: record.url ?? null,
+            title: record.title ?? null,
+            content: record.content,
+            author: record.author ?? null,
+            occurredAt: record.occurredAt,
+            metadata: record.metadata
+          })
+        )
+        .digest("hex")
+    );
   }
 
-  #revision(record: EvidenceRecord, version: number, createdAt = new Date().toISOString()): EvidenceRevisionRecord {
+  #revision(
+    record: EvidenceRecord,
+    version: number,
+    createdAt = new Date().toISOString()
+  ): EvidenceRevisionRecord {
     return {
       id: newUuid(),
       evidenceId: record.id,
@@ -993,9 +1411,20 @@ export class InMemoryLoreStore implements LoreStore {
     };
   }
 
-  #appendSessionEvent(sessionId: string, type: SessionEvent["type"], data: Record<string, unknown>): void {
+  #appendSessionEvent(
+    sessionId: string,
+    type: SessionEvent["type"],
+    data: Record<string, unknown>
+  ): void {
     const events = this.#sessionEvents.get(sessionId) ?? [];
-    events.push({ id: newUuid(), sessionId, sequence: events.length + 1, type, data, createdAt: new Date().toISOString() });
+    events.push({
+      id: newUuid(),
+      sessionId,
+      sequence: events.length + 1,
+      type,
+      data,
+      createdAt: new Date().toISOString()
+    });
     this.#sessionEvents.set(sessionId, events);
   }
 

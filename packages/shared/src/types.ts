@@ -287,6 +287,39 @@ export interface CodeRelationship {
   metadata: Record<string, unknown>;
 }
 
+export interface CodeGraphPage<T> {
+  items: T[];
+  count: number;
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}
+
+export interface CodeEntityListQuery {
+  search?: string;
+  type?: CodeEntity["type"];
+  page: number;
+  pageSize: number;
+}
+
+export type CodeEntityReference = Pick<
+  CodeEntity,
+  "id" | "type" | "name" | "qualifiedName" | "path" | "startLine" | "endLine" | "language"
+>;
+
+export interface CodeRelationshipView extends CodeRelationship {
+  sourceEntity: CodeEntityReference;
+  targetEntity: CodeEntityReference;
+}
+
+export interface CodeRelationshipListQuery {
+  search?: string;
+  entityId?: string;
+  page: number;
+  pageSize: number;
+}
+
 export interface RegressionRecord {
   id: string;
   repositoryId: string;

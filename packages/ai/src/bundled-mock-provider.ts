@@ -1,6 +1,21 @@
 import type { EvidenceRecord, KnowledgeKind } from "@lore/shared/types.js";
 import { MockAIProvider } from "./mock-provider.js";
 
+const emptyWireScope = {
+  organisation: null,
+  repository: null,
+  paths: null,
+  excludedPaths: null,
+  symbols: null,
+  subsystem: null,
+  language: null,
+  framework: null,
+  team: null,
+  reviewer: null,
+  integration: null,
+  ticketType: null
+};
+
 const signal = /\b(?:decision\s*:|rule\s*:|fact\s*:|warning\s*:|regression\s*:|we (?:decided|agreed)|must(?:\s+not)?|never|do not|should|need to|remember\s*:|prefer(?:s|red)?|broke|regression|risk\s*:)/i;
 
 const classify = (value: string): KnowledgeKind => {
@@ -53,7 +68,7 @@ export function createBundledMockAIProvider(): MockAIProvider {
             title: "Prefer repository interfaces at service boundaries",
             statement: "The observed reviewer tends to prefer repository interfaces at application service boundaries.",
             rationale: "The same explicit review request appears in independent evidence.",
-            proposedScope: { paths: ["src/**/Service/**"] },
+            proposedScope: { ...emptyWireScope, paths: ["src/**/Service/**"] },
             evidenceIds: ids.slice(0, 5),
             possibleContradictionIds: []
           }
@@ -75,7 +90,7 @@ export function createBundledMockAIProvider(): MockAIProvider {
               title: titleFor(statement),
               statement,
               rationale: `Extracted from the human-submitted communication “${record.title ?? record.externalId}”; verify wording, context, and scope before approval.`,
-              proposedScope: {},
+              proposedScope: emptyWireScope,
               evidenceIds: [record.id],
               possibleContradictionIds: []
             };

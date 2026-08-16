@@ -156,65 +156,66 @@ enum JobRunState {
 }
 
 model Organisation {
-  id               String            @id @default(uuid()) @db.Uuid
-  name             String
-  slug             String            @unique
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  settings         Json              @default("{}")
-  repositories     Repository[]
-  evidence         Evidence[]
-  knowledgeItems   KnowledgeItem[]
-  proposals        KnowledgeProposal[]
-  policies         Policy[]
-  reviewerProfiles ReviewerProfile[]
-  sessions         AgentSession[]
-  reports          ChangeSafetyReport[]
-  observations     ChangeObservation[]
-  auditEvents      AuditEvent[]
-  memberships      Membership[]
-  authSessions     AuthSession[]
-  invitations      OrganisationInvitation[]
+  id                String                   @id @default(uuid()) @db.Uuid
+  name              String
+  slug              String                   @unique
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  settings          Json                     @default("{}")
+  repositories      Repository[]
+  evidence          Evidence[]
+  knowledgeItems    KnowledgeItem[]
+  proposals         KnowledgeProposal[]
+  policies          Policy[]
+  reviewerProfiles  ReviewerProfile[]
+  sessions          AgentSession[]
+  reports           ChangeSafetyReport[]
+  observations      ChangeObservation[]
+  auditEvents       AuditEvent[]
+  memberships       Membership[]
+  authSessions      AuthSession[]
+  invitations       OrganisationInvitation[]
   ingestionReceipts IngestionReceipt[]
-  apiTokens        ApiToken[]
-  jobRuns          JobRun[]
+  apiTokens         ApiToken[]
+  jobRuns           JobRun[]
+  syncCheckpoints   SyncCheckpoint[]
 }
 
 model User {
-  id                 String       @id @default(uuid()) @db.Uuid
-  email              String       @unique
-  emailNormalized    String       @unique
-  name               String
-  avatarUrl          String?
-  githubLogin        String?
-  githubProfileUrl   String?
-  bio                String?
-  company            String?
-  jobTitle           String?
-  location           String?
-  websiteUrl         String?
-  timezone           String?
-  profileEditedAt    DateTime?
-  lastLoginAt        DateTime?
-  createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
-  preferences        Json         @default("{}")
-  memberships        Membership[]
-  identities         AuthIdentity[]
-  authSessions       AuthSession[]
-  invitationsSent    OrganisationInvitation[] @relation("invitationSender")
-  apiTokens           ApiToken[]
+  id               String                   @id @default(uuid()) @db.Uuid
+  email            String                   @unique
+  emailNormalized  String                   @unique
+  name             String
+  avatarUrl        String?
+  githubLogin      String?
+  githubProfileUrl String?
+  bio              String?
+  company          String?
+  jobTitle         String?
+  location         String?
+  websiteUrl       String?
+  timezone         String?
+  profileEditedAt  DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  preferences      Json                     @default("{}")
+  memberships      Membership[]
+  identities       AuthIdentity[]
+  authSessions     AuthSession[]
+  invitationsSent  OrganisationInvitation[] @relation("invitationSender")
+  apiTokens        ApiToken[]
 }
 
 model Membership {
-  id             String       @id @default(uuid()) @db.Uuid
-  organisationId String       @db.Uuid
-  userId         String       @db.Uuid
+  id             String           @id @default(uuid()) @db.Uuid
+  organisationId String           @db.Uuid
+  userId         String           @db.Uuid
   role           OrganisationRole
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organisation   Organisation     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([organisationId, userId])
   @@index([userId])
@@ -240,32 +241,32 @@ model AuthSession {
   activeOrganisationId String?       @db.Uuid
   tokenHash            String        @unique
   userAgentHash        String?
-  ipHash                String?
-  expiresAt             DateTime
-  lastSeenAt            DateTime      @default(now())
-  revokedAt             DateTime?
-  createdAt             DateTime      @default(now())
-  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  activeOrganisation    Organisation? @relation(fields: [activeOrganisationId], references: [id], onDelete: SetNull)
+  ipHash               String?
+  expiresAt            DateTime
+  lastSeenAt           DateTime      @default(now())
+  revokedAt            DateTime?
+  createdAt            DateTime      @default(now())
+  user                 User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeOrganisation   Organisation? @relation(fields: [activeOrganisationId], references: [id], onDelete: SetNull)
 
   @@index([userId, revokedAt, expiresAt])
   @@index([activeOrganisationId])
 }
 
 model ApiToken {
-  id             String        @id @default(uuid()) @db.Uuid
-  organisationId String        @db.Uuid
-  userId         String        @db.Uuid
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @db.Uuid
+  userId         String       @db.Uuid
   name           String
   prefix         String
-  tokenHash      String        @unique
+  tokenHash      String       @unique
   scopes         String[]
   expiresAt      DateTime?
   lastUsedAt     DateTime?
   revokedAt      DateTime?
-  createdAt      DateTime      @default(now())
-  organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, revokedAt, expiresAt])
   @@index([organisationId, revokedAt])
@@ -274,50 +275,51 @@ model ApiToken {
 model OrganisationInvitation {
   id              String           @id @default(uuid()) @db.Uuid
   organisationId  String           @db.Uuid
-  email            String
-  emailNormalized  String
-  role             OrganisationRole
-  invitedByUserId  String           @db.Uuid
-  expiresAt        DateTime
-  acceptedAt       DateTime?
-  revokedAt        DateTime?
-  createdAt        DateTime         @default(now())
-  organisation     Organisation     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  invitedBy        User             @relation("invitationSender", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+  email           String
+  emailNormalized String
+  role            OrganisationRole
+  invitedByUserId String           @db.Uuid
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime         @default(now())
+  organisation    Organisation     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  invitedBy       User             @relation("invitationSender", fields: [invitedByUserId], references: [id], onDelete: Restrict)
 
   @@index([organisationId, createdAt])
   @@index([emailNormalized, acceptedAt, revokedAt, expiresAt])
 }
 
 model Repository {
-  id                   String             @id @default(uuid()) @db.Uuid
-  organisationId       String             @db.Uuid
-  provider             RepositoryProvider
-  providerRepositoryId String?
+  id                     String               @id @default(uuid()) @db.Uuid
+  organisationId         String               @db.Uuid
+  provider               RepositoryProvider
+  providerRepositoryId   String?
   providerInstallationId String?
-  owner                String
-  name                 String
-  defaultBranch        String             @default("main")
-  cloneUrl             String?
-  localPath            String?
-  languageSummary      Json
-  lastIndexedCommit    String?
-  analysisVersion      String             @default("1")
-  retentionConfig      Json               @default("{}")
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
-  organisation         Organisation       @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  entities             CodeEntity[]
-  relationships        CodeRelationship[]
-  evidence             Evidence[]
-  knowledgeItems       KnowledgeItem[]
-  proposals            KnowledgeProposal[]
-  policies             Policy[]
-  regressions          RegressionRecord[]
-  sessions             AgentSession[]
-  reports              ChangeSafetyReport[]
-  observations         ChangeObservation[]
-  jobRuns              JobRun[]
+  owner                  String
+  name                   String
+  defaultBranch          String               @default("main")
+  cloneUrl               String?
+  localPath              String?
+  languageSummary        Json
+  lastIndexedCommit      String?
+  analysisVersion        String               @default("1")
+  retentionConfig        Json                 @default("{}")
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  organisation           Organisation         @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  entities               CodeEntity[]
+  relationships          CodeRelationship[]
+  evidence               Evidence[]
+  knowledgeItems         KnowledgeItem[]
+  proposals              KnowledgeProposal[]
+  policies               Policy[]
+  regressions            RegressionRecord[]
+  sessions               AgentSession[]
+  reports                ChangeSafetyReport[]
+  observations           ChangeObservation[]
+  jobRuns                JobRun[]
+  syncCheckpoints        SyncCheckpoint[]
 
   @@unique([organisationId, provider, owner, name])
   @@index([provider, providerInstallationId, providerRepositoryId])
@@ -325,29 +327,46 @@ model Repository {
 }
 
 model JobRun {
-  id               String       @id @default(uuid()) @db.Uuid
-  organisationId   String       @db.Uuid
-  repositoryId     String?      @db.Uuid
-  name             String
-  state            JobRunState  @default(queued)
-  idempotencyKey   String
-  externalJobId    String?
-  attempt          Int          @default(0)
-  maximumAttempts  Int          @default(3)
-  queuedAt         DateTime     @default(now())
-  startedAt        DateTime?
-  finishedAt       DateTime?
-  errorMessage     String?
-  resultSummary    Json?
-  updatedAt        DateTime     @updatedAt
-  organisation     Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  repository       Repository?  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  events           JobEvent[]
-  outbox            JobDispatchOutbox?
+  id              String             @id @default(uuid()) @db.Uuid
+  organisationId  String             @db.Uuid
+  repositoryId    String?            @db.Uuid
+  name            String
+  state           JobRunState        @default(queued)
+  idempotencyKey  String
+  externalJobId   String?
+  attempt         Int                @default(0)
+  maximumAttempts Int                @default(3)
+  queuedAt        DateTime           @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  errorMessage    String?
+  resultSummary   Json?
+  updatedAt       DateTime           @updatedAt
+  organisation    Organisation       @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository      Repository?        @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  events          JobEvent[]
+  outbox          JobDispatchOutbox?
 
   @@unique([organisationId, idempotencyKey])
   @@index([organisationId, state, queuedAt])
   @@index([externalJobId])
+}
+
+model SyncCheckpoint {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @db.Uuid
+  repositoryId   String       @db.Uuid
+  provider       String
+  stream         String
+  externalId     String
+  sourceVersion  String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository     Repository   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, repositoryId, provider, stream, externalId])
+  @@index([organisationId, repositoryId, provider, stream])
 }
 
 model JobEvent {
@@ -363,41 +382,41 @@ model JobEvent {
 }
 
 model JobDispatchOutbox {
-  id             String   @id @default(uuid()) @db.Uuid
-  jobRunId       String   @unique @db.Uuid
+  id             String    @id @default(uuid()) @db.Uuid
+  jobRunId       String    @unique @db.Uuid
   name           String
   payload        Json
   idempotencyKey String
-  dispatchTries  Int      @default(0)
+  dispatchTries  Int       @default(0)
   lastError      String?
-  nextAttemptAt  DateTime @default(now())
+  nextAttemptAt  DateTime  @default(now())
   dispatchedAt   DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  jobRun         JobRun   @relation(fields: [jobRunId], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  jobRun         JobRun    @relation(fields: [jobRunId], references: [id], onDelete: Cascade)
 
   @@index([dispatchedAt, nextAttemptAt])
 }
 
 model CodeEntity {
-  id             String         @id @default(uuid()) @db.Uuid
-  repositoryId   String         @db.Uuid
-  type           CodeEntityType
-  name           String
-  qualifiedName  String
-  path           String
-  startLine      Int?
-  endLine        Int?
-  language       String
-  metadata       Json           @default("{}")
-  fingerprint    String
-  contentHash    String?
-  analyzerVersion String        @default("1")
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  repository     Repository     @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  outgoing       CodeRelationship[] @relation("relationshipSource")
-  incoming       CodeRelationship[] @relation("relationshipTarget")
+  id              String             @id @default(uuid()) @db.Uuid
+  repositoryId    String             @db.Uuid
+  type            CodeEntityType
+  name            String
+  qualifiedName   String
+  path            String
+  startLine       Int?
+  endLine         Int?
+  language        String
+  metadata        Json               @default("{}")
+  fingerprint     String
+  contentHash     String?
+  analyzerVersion String             @default("1")
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  repository      Repository         @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  outgoing        CodeRelationship[] @relation("relationshipSource")
+  incoming        CodeRelationship[] @relation("relationshipTarget")
 
   @@unique([repositoryId, fingerprint])
   @@index([repositoryId, path])
@@ -425,9 +444,9 @@ model CodeRelationship {
 }
 
 model Evidence {
-  id             String        @id @default(uuid()) @db.Uuid
-  organisationId String        @db.Uuid
-  repositoryId   String?       @db.Uuid
+  id             String              @id @default(uuid()) @db.Uuid
+  organisationId String              @db.Uuid
+  repositoryId   String?             @db.Uuid
   type           EvidenceType
   provider       String
   externalId     String
@@ -436,12 +455,12 @@ model Evidence {
   content        String
   author         String?
   occurredAt     DateTime
-  metadata       Json          @default("{}")
+  metadata       Json                @default("{}")
   contentHash    String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  repository     Repository?   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  organisation   Organisation        @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository     Repository?         @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   knowledgeLinks KnowledgeEvidence[]
   revisions      EvidenceRevision[]
 
@@ -469,9 +488,9 @@ model EvidenceRevision {
 }
 
 model KnowledgeItem {
-  id              String          @id @default(uuid()) @db.Uuid
-  organisationId  String          @db.Uuid
-  repositoryId    String?         @db.Uuid
+  id              String               @id @default(uuid()) @db.Uuid
+  organisationId  String               @db.Uuid
+  repositoryId    String?              @db.Uuid
   kind            KnowledgeKind
   status          KnowledgeStatus
   title           String
@@ -480,16 +499,16 @@ model KnowledgeItem {
   confidence      Float
   severity        Severity
   scope           Json
-  metadata        Json            @default("{}")
+  metadata        Json                 @default("{}")
   createdBy       String
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
   lastConfirmedAt DateTime?
-  supersededById  String?         @db.Uuid
-  organisation    Organisation    @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  repository      Repository?     @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  supersededBy    KnowledgeItem?  @relation("supersession", fields: [supersededById], references: [id])
-  supersedes      KnowledgeItem[] @relation("supersession")
+  supersededById  String?              @db.Uuid
+  organisation    Organisation         @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository      Repository?          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  supersededBy    KnowledgeItem?       @relation("supersession", fields: [supersededById], references: [id])
+  supersedes      KnowledgeItem[]      @relation("supersession")
   evidenceLinks   KnowledgeEvidence[]
   challenges      KnowledgeChallenge[]
   revisions       KnowledgeRevision[]
@@ -524,19 +543,19 @@ model KnowledgeChallenge {
 }
 
 model KnowledgeProposal {
-  id             String            @id @default(uuid()) @db.Uuid
-  organisationId String            @db.Uuid
-  repositoryId   String?           @db.Uuid
-  operation      ProposalOperation
-  payload        Json
-  source         String
-  status         ProposalStatus    @default(pending)
-  validationErrors Json            @default("[]")
-  createdAt      DateTime          @default(now())
-  reviewedAt     DateTime?
-  reviewedBy     String?
-  organisation   Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  repository     Repository?       @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  id               String            @id @default(uuid()) @db.Uuid
+  organisationId   String            @db.Uuid
+  repositoryId     String?           @db.Uuid
+  operation        ProposalOperation
+  payload          Json
+  source           String
+  status           ProposalStatus    @default(pending)
+  validationErrors Json              @default("[]")
+  createdAt        DateTime          @default(now())
+  reviewedAt       DateTime?
+  reviewedBy       String?
+  organisation     Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository       Repository?       @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
 
   @@index([organisationId, repositoryId, status])
 }
@@ -579,8 +598,8 @@ model Policy {
 }
 
 model RegressionRecord {
-  id                 String      @id @default(uuid()) @db.Uuid
-  repositoryId       String      @db.Uuid
+  id                 String     @id @default(uuid()) @db.Uuid
+  repositoryId       String     @db.Uuid
   title              String
   description        String
   introducedByCommit String?
@@ -590,8 +609,8 @@ model RegressionRecord {
   affectedEntities   Json
   evidence           Json
   severity           Severity
-  createdAt          DateTime    @default(now())
-  repository         Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  createdAt          DateTime   @default(now())
+  repository         Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
 
   @@index([repositoryId, severity])
 }
@@ -609,25 +628,25 @@ model ReviewerProfile {
 }
 
 model AgentSession {
-  id              String              @id @default(uuid()) @db.Uuid
-  organisationId  String              @db.Uuid
-  repositoryId    String              @db.Uuid
-  task            String
-  status          SessionStatus
-  baseCommit      String?
-  currentCommit   String?
-  startedAt       DateTime            @default(now())
-  completedAt     DateTime?
-  agentType       String
-  metadata        Json                @default("{}")
-  filesObserved   Json                @default("[]")
-  filesChanged    Json                @default("[]")
-  organisation    Organisation        @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  repository      Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  contexts        ContextPackageRecord[]
-  reports         ChangeSafetyReport[]
-  events          SessionEvent[]
-  observations    ChangeObservation[]
+  id             String                 @id @default(uuid()) @db.Uuid
+  organisationId String                 @db.Uuid
+  repositoryId   String                 @db.Uuid
+  task           String
+  status         SessionStatus
+  baseCommit     String?
+  currentCommit  String?
+  startedAt      DateTime               @default(now())
+  completedAt    DateTime?
+  agentType      String
+  metadata       Json                   @default("{}")
+  filesObserved  Json                   @default("[]")
+  filesChanged   Json                   @default("[]")
+  organisation   Organisation           @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository     Repository             @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  contexts       ContextPackageRecord[]
+  reports        ChangeSafetyReport[]
+  events         SessionEvent[]
+  observations   ChangeObservation[]
 
   @@index([organisationId, repositoryId, status])
 }
@@ -646,12 +665,12 @@ model SessionEvent {
 }
 
 model ContextPackageRecord {
-  id        String       @id @default(uuid()) @db.Uuid
-  sessionId String       @db.Uuid
-  payload   Json
-  createdAt DateTime     @default(now())
-  session   AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  reports   ChangeSafetyReport[]
+  id           String               @id @default(uuid()) @db.Uuid
+  sessionId    String               @db.Uuid
+  payload      Json
+  createdAt    DateTime             @default(now())
+  session      AgentSession         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  reports      ChangeSafetyReport[]
   observations ChangeObservation[]
 
   @@index([sessionId, createdAt])
@@ -681,26 +700,26 @@ model ChangeObservation {
 }
 
 model ChangeSafetyReport {
-  id             String        @id @default(uuid()) @db.Uuid
-  organisationId String        @db.Uuid
-  repositoryId   String        @db.Uuid
-  sessionId      String?       @db.Uuid
-  contextPackageId String?     @db.Uuid
-  contextRevision Int?
-  observationId  String?       @unique @db.Uuid
-  baseCommit     String?
-  currentCommit  String?
-  task           String
-  risk           RiskLevel
-  payload        Json
-  blockers       Int           @default(0)
-  warnings       Int           @default(0)
-  createdAt      DateTime      @default(now())
-  organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  repository     Repository    @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  session        AgentSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
-  contextPackage ContextPackageRecord? @relation(fields: [contextPackageId], references: [id], onDelete: SetNull)
-  observation    ChangeObservation? @relation(fields: [observationId], references: [id], onDelete: SetNull)
+  id               String                @id @default(uuid()) @db.Uuid
+  organisationId   String                @db.Uuid
+  repositoryId     String                @db.Uuid
+  sessionId        String?               @db.Uuid
+  contextPackageId String?               @db.Uuid
+  contextRevision  Int?
+  observationId    String?               @unique @db.Uuid
+  baseCommit       String?
+  currentCommit    String?
+  task             String
+  risk             RiskLevel
+  payload          Json
+  blockers         Int                   @default(0)
+  warnings         Int                   @default(0)
+  createdAt        DateTime              @default(now())
+  organisation     Organisation          @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  repository       Repository            @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  session          AgentSession?         @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  contextPackage   ContextPackageRecord? @relation(fields: [contextPackageId], references: [id], onDelete: SetNull)
+  observation      ChangeObservation?    @relation(fields: [observationId], references: [id], onDelete: SetNull)
 
   @@index([organisationId, repositoryId, createdAt])
 }

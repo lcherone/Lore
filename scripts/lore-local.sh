@@ -197,7 +197,8 @@ wait_for_stack() {
   local ready=false
   for _attempt in $(seq 1 120); do
     if curl -fsS "$api_url/readyz" >/dev/null 2>&1 && \
-      curl -fsS "$app_url" 2>/dev/null | grep -q '<div id="root"></div>'; then
+      curl -fsS "$app_url/healthz" >/dev/null 2>&1 && \
+      curl -fsS "$app_url" 2>/dev/null | grep -q '<div id="root"'; then
       ready=true
       break
     fi
@@ -212,12 +213,14 @@ wait_for_stack() {
 
 check_stack() {
   require_command curl
-  local health readiness
+  local health readiness proxy_health
   health=$(curl -fsS "$api_url/healthz") || die "API health check failed at $api_url/healthz."
   readiness=$(curl -fsS "$api_url/readyz") || die "API readiness check failed at $api_url/readyz."
-  curl -fsS "$app_url" | grep -q '<div id="root"></div>' || die "built web application is not available at $app_url."
+  proxy_health=$(curl -fsS "$app_url/healthz") || die "Web-to-API proxy check failed at $app_url/healthz."
+  curl -fsS "$app_url" | grep -q '<div id="root"' || die "built web application is not available at $app_url."
   printf '✓ API health     %s\n' "$health"
   printf '✓ Dependencies   %s\n' "$readiness"
+  printf '✓ Web API proxy  %s\n' "$proxy_health"
   printf '✓ Built web app  %s\n' "$app_url"
   printf '✓ Runtime        persistent local-production mode\n'
 }
@@ -225,6 +228,8 @@ check_stack() {
 start_stack() {
   preflight
   printf '\nBuilding and starting Lore local production...\n'
+  printf 'Temporarily stopping existing containers to give the Docker builder enough memory...\n'
+  compose stop
   compose up --build --detach --remove-orphans
   wait_for_stack
   printf '\n'

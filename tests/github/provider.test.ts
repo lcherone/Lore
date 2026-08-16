@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { GitHubTokenSourceControlProvider } from "@lore/github/index.js";
+import { GitHubRequestPacer, GitHubTokenSourceControlProvider } from "@lore/github/index.js";
 import type { RepositorySummary } from "@lore/shared/types.js";
 
 const repository: RepositorySummary = {
@@ -17,11 +17,43 @@ const repository: RepositorySummary = {
 
 describe("GitHub pull request provider", () => {
   it("paginates all merged PRs and every evidence collection", async () => {
-    const listReviews = vi.fn();
-    const listReviewComments = vi.fn();
-    const listCommits = vi.fn();
-    const listFiles = vi.fn();
-    const listConversationComments = vi.fn();
+    const listReviews = vi.fn(async () => ({
+      data: [
+        {
+          id: 10,
+          user: { login: "reviewer" },
+          body: "Please keep the boundary explicit.",
+          html_url: "https://github.example/review/10",
+          submitted_at: "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    }));
+    const listReviewComments = vi.fn(async () => ({
+      data: [
+        {
+          id: 11,
+          user: { login: "reviewer" },
+          body: "Use the repository interface here.",
+          html_url: "https://github.example/comment/11",
+          created_at: "2026-01-01T01:00:00.000Z"
+        }
+      ]
+    }));
+    const listCommits = vi.fn(async () => ({ data: [{ sha: "abc123" }] }));
+    const listFiles = vi.fn(async () => ({
+      data: [{ filename: "src/service.ts", patch: "@@ -1 +1 @@\n-old\n+new" }]
+    }));
+    const listConversationComments = vi.fn(async () => ({
+      data: [
+        {
+          id: 12,
+          user: { login: "maintainer" },
+          body: "Confirmed after the deploy test.",
+          html_url: "https://github.example/conversation/12",
+          created_at: "2026-01-01T02:00:00.000Z"
+        }
+      ]
+    }));
     const pullList = vi.fn(async ({ page }: { page: number }) => ({
       data:
         page === 1
@@ -32,6 +64,7 @@ describe("GitHub pull request provider", () => {
                 body: "Why it changed",
                 user: { login: "author" },
                 merged_at: "2026-01-02T00:00:00.000Z",
+                updated_at: "2026-01-02T01:00:00.000Z",
                 html_url: "https://github.example/acme/commerce/pull/8"
               },
               ...Array.from({ length: 99 }, (_, index) => ({
@@ -40,6 +73,7 @@ describe("GitHub pull request provider", () => {
                 body: null,
                 user: null,
                 merged_at: null,
+                updated_at: "2026-01-01T00:00:00.000Z",
                 html_url: "https://github.example/closed"
               }))
             ]
@@ -50,50 +84,11 @@ describe("GitHub pull request provider", () => {
                 body: null,
                 user: null,
                 merged_at: "2025-12-01T00:00:00.000Z",
+                updated_at: "2025-12-01T01:00:00.000Z",
                 html_url: "https://github.example/acme/commerce/pull/7"
               }
             ]
     }));
-    const paginate = vi.fn(async (endpoint: unknown) => {
-      if (endpoint === listReviews) {
-        return [
-          {
-            id: 10,
-            user: { login: "reviewer" },
-            body: "Please keep the boundary explicit.",
-            html_url: "https://github.example/review/10",
-            submitted_at: "2026-01-01T00:00:00.000Z"
-          }
-        ];
-      }
-      if (endpoint === listReviewComments) {
-        return [
-          {
-            id: 11,
-            user: { login: "reviewer" },
-            body: "Use the repository interface here.",
-            html_url: "https://github.example/comment/11",
-            created_at: "2026-01-01T01:00:00.000Z"
-          }
-        ];
-      }
-      if (endpoint === listConversationComments) {
-        return [
-          {
-            id: 12,
-            user: { login: "maintainer" },
-            body: "Confirmed after the deploy test.",
-            html_url: "https://github.example/conversation/12",
-            created_at: "2026-01-01T02:00:00.000Z"
-          }
-        ];
-      }
-      if (endpoint === listCommits) return [{ sha: "abc123" }];
-      if (endpoint === listFiles) {
-        return [{ filename: "src/service.ts", patch: "@@ -1 +1 @@\n-old\n+new" }];
-      }
-      throw new Error("Unexpected endpoint");
-    });
     const fakeOctokit = {
       rest: {
         pulls: {
@@ -104,13 +99,23 @@ describe("GitHub pull request provider", () => {
           listFiles
         },
         issues: { listComments: listConversationComments }
-      },
-      paginate
+      }
     };
+
+    let now = 0;
+    const waits: number[] = [];
+    const pacer = new GitHubRequestPacer({
+      now: () => now,
+      sleep: async (delayMs) => {
+        waits.push(delayMs);
+        now += delayMs;
+      }
+    });
 
     const provider = new GitHubTokenSourceControlProvider(
       "github_pat_test_12345678901234567890",
-      fakeOctokit as never
+      fakeOctokit as never,
+      pacer
     );
     const imported = await provider.listMergedPullRequests(repository, "all");
 
@@ -127,6 +132,24 @@ describe("GitHub pull request provider", () => {
       "conversation-12"
     ]);
     expect(imported[0]!.rawDiff).toContain("diff --git a/src/service.ts b/src/service.ts");
-    expect(paginate).toHaveBeenCalledTimes(10);
+    expect(listReviews).toHaveBeenCalledTimes(2);
+    expect(listReviewComments).toHaveBeenCalledTimes(2);
+    expect(listConversationComments).toHaveBeenCalledTimes(2);
+    expect(listCommits).toHaveBeenCalledTimes(2);
+    expect(listFiles).toHaveBeenCalledTimes(2);
+    expect(waits).toEqual(Array.from({ length: 11 }, () => 3_600));
+
+    const unchanged = await provider.listMergedPullRequests(repository, "all", {
+      knownSourceVersions: {
+        "8": "2026-01-02T01:00:00.000Z",
+        "7": "2025-12-01T01:00:00.000Z"
+      }
+    });
+    expect(unchanged).toEqual([]);
+    expect(listReviews).toHaveBeenCalledTimes(2);
+    expect(listReviewComments).toHaveBeenCalledTimes(2);
+    expect(listConversationComments).toHaveBeenCalledTimes(2);
+    expect(listCommits).toHaveBeenCalledTimes(2);
+    expect(listFiles).toHaveBeenCalledTimes(2);
   });
 });

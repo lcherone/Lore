@@ -274,8 +274,13 @@ export function OrganisationsPage({ session, onRefresh }: { session: AccountSess
   };
   const switchOrganisation = async (organisation: OrganisationAccess) => {
     if (organisation.id === active?.id) return;
-    await loreApi.switchOrganisation(organisation.id);
-    await onRefresh();
+    setError(undefined);
+    try {
+      await loreApi.switchOrganisation(organisation.id);
+      await onRefresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Organisation could not be switched");
+    }
   };
   const pending = session.pendingInvitations;
   const roleDescription = useMemo(() => ({

@@ -1,6 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
-import type { ApiTokenRecord, AuthSessionRecord, LoreStore, ManualKnowledgeInput, RepositoryAnalysisOutput, UserProfileUpdate } from "@lore/core/index.js";
+import type {
+  ApiTokenRecord,
+  AuthSessionRecord,
+  LoreStore,
+  ManualKnowledgeInput,
+  RepositoryAnalysisOutput,
+  UserProfileUpdate
+} from "@lore/core/index.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "@lore/core/index.js";
 import { createChangeObservation } from "./change-observation.js";
 import type {
@@ -9,7 +16,11 @@ import type {
   CandidateRecord,
   ChangeObservation,
   CodeEntity,
+  CodeEntityListQuery,
+  CodeGraphPage,
   CodeRelationship,
+  CodeRelationshipListQuery,
+  CodeRelationshipView,
   ContextPackage,
   ContextPackageRecord,
   DashboardSnapshot,
@@ -45,6 +56,9 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
+const ANALYSIS_WRITE_BATCH_SIZE = 5_000;
+const ANALYSIS_TRANSACTION_TIMEOUT_MS = 120_000;
+
 interface EvidenceRow {
   id: string;
   organisationId: string;
@@ -61,15 +75,25 @@ interface EvidenceRow {
   contentHash?: string | null;
 }
 
-const evidenceHash = (record: Pick<EvidenceRecord, "url" | "title" | "content" | "author" | "occurredAt" | "metadata" | "contentHash">): string =>
-  record.contentHash ?? createHash("sha256").update(JSON.stringify({
-    url: record.url ?? null,
-    title: record.title ?? null,
-    content: record.content,
-    author: record.author ?? null,
-    occurredAt: record.occurredAt,
-    metadata: record.metadata
-  })).digest("hex");
+const evidenceHash = (
+  record: Pick<
+    EvidenceRecord,
+    "url" | "title" | "content" | "author" | "occurredAt" | "metadata" | "contentHash"
+  >
+): string =>
+  record.contentHash ??
+  createHash("sha256")
+    .update(
+      JSON.stringify({
+        url: record.url ?? null,
+        title: record.title ?? null,
+        content: record.content,
+        author: record.author ?? null,
+        occurredAt: record.occurredAt,
+        metadata: record.metadata
+      })
+    )
+    .digest("hex");
 
 interface UserRow {
   id: string;
@@ -156,8 +180,11 @@ export class PrismaLoreStore implements LoreStore {
   }
 
   async validateMembership(organisationId: string, userId: string): Promise<void> {
-    const membership = await this.prisma.membership.findFirst({ where: { organisationId, userId } });
-    if (!membership) throw new ForbiddenError("The current user is not an active organisation member");
+    const membership = await this.prisma.membership.findFirst({
+      where: { organisationId, userId }
+    });
+    if (!membership)
+      throw new ForbiddenError("The current user is not an active organisation member");
   }
 
   async getMembershipRole(organisationId: string, userId: string): Promise<OrganisationRole> {
@@ -165,7 +192,8 @@ export class PrismaLoreStore implements LoreStore {
       where: { organisationId_userId: { organisationId, userId } },
       select: { role: true }
     });
-    if (!membership) throw new ForbiddenError("The current user is not an active organisation member");
+    if (!membership)
+      throw new ForbiddenError("The current user is not an active organisation member");
     return membership.role;
   }
 
@@ -174,7 +202,9 @@ export class PrismaLoreStore implements LoreStore {
     const now = new Date();
     const user = await this.prisma.$transaction(async (transaction) => {
       const existingIdentity = await transaction.authIdentity.findUnique({
-        where: { provider_providerUserId: { provider: "github", providerUserId: identity.providerUserId } },
+        where: {
+          provider_providerUserId: { provider: "github", providerUserId: identity.providerUserId }
+        },
         include: { user: true }
       });
       const emailUser = await transaction.user.findUnique({ where: { emailNormalized } });
@@ -200,13 +230,68 @@ export class PrismaLoreStore implements LoreStore {
         ? await transaction.user.update({ where: { id: existingUser.id }, data: profileData })
         : await transaction.user.create({ data: profileData });
       await transaction.authIdentity.upsert({
-        where: { provider_providerUserId: { provider: "github", providerUserId: identity.providerUserId } },
-        create: { userId: savedUser.id, provider: "github", providerUserId: identity.providerUserId, providerLogin: identity.login },
+        where: {
+          provider_providerUserId: { provider: "github", providerUserId: identity.providerUserId }
+        },
+        create: {
+          userId: savedUser.id,
+          provider: "github",
+          providerUserId: identity.providerUserId,
+          providerLogin: identity.login
+        },
         update: { providerLogin: identity.login }
       });
       return savedUser;
     });
     return this.#mapUser(user);
+  }
+
+  async getLocalGitHubUser(credentialFingerprint: string): Promise<UserProfile | undefined> {
+    const identity = await this.prisma.authIdentity.findUnique({
+      where: {
+        provider_providerUserId: {
+          provider: "github-local-token",
+          providerUserId: credentialFingerprint
+        }
+      },
+      include: { user: true }
+    });
+    return identity ? this.#mapUser(identity.user) : undefined;
+  }
+
+  async getSoleGitHubUser(): Promise<UserProfile | undefined> {
+    const identities = await this.prisma.authIdentity.findMany({
+      where: { provider: "github" },
+      distinct: ["userId"],
+      take: 2,
+      include: { user: true },
+      orderBy: { createdAt: "asc" }
+    });
+    return identities.length === 1 ? this.#mapUser(identities[0]!.user) : undefined;
+  }
+
+  async linkLocalGitHubCredential(userId: string, credentialFingerprint: string): Promise<void> {
+    const existing = await this.prisma.authIdentity.findUnique({
+      where: {
+        provider_providerUserId: {
+          provider: "github-local-token",
+          providerUserId: credentialFingerprint
+        }
+      }
+    });
+    if (existing && existing.userId !== userId) {
+      throw new ConflictError("This local GitHub credential is linked to another Lore account");
+    }
+    if (existing) return;
+    const user = await this.getUserProfile(userId);
+    await this.prisma.authIdentity.create({
+      data: {
+        userId,
+        provider: "github-local-token",
+        providerUserId: credentialFingerprint,
+        providerLogin: user.githubLogin ?? user.name
+      }
+    });
   }
 
   async getUserProfile(userId: string): Promise<UserProfile> {
@@ -217,12 +302,18 @@ export class PrismaLoreStore implements LoreStore {
 
   async updateUserProfile(userId: string, input: UserProfileUpdate): Promise<UserProfile> {
     await this.getUserProfile(userId);
-    const user = await this.prisma.user.update({ where: { id: userId }, data: { ...input, profileEditedAt: new Date() } });
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { ...input, profileEditedAt: new Date() }
+    });
     return this.#mapUser(user);
   }
 
   async getUserSettings(userId: string): Promise<UserSettings> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { preferences: true } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { preferences: true }
+    });
     if (!user) throw new NotFoundError("User", userId);
     return userSettingsSchema.parse({ ...DEFAULT_USER_SETTINGS, ...asRecord(user.preferences) });
   }
@@ -244,7 +335,8 @@ export class PrismaLoreStore implements LoreStore {
     userAgentHash?: string;
     ipHash?: string;
   }): Promise<AuthSessionRecord> {
-    if (input.activeOrganisationId) await this.validateMembership(input.activeOrganisationId, input.userId);
+    if (input.activeOrganisationId)
+      await this.validateMembership(input.activeOrganisationId, input.userId);
     const session = await this.prisma.authSession.create({
       data: {
         userId: input.userId,
@@ -264,11 +356,17 @@ export class PrismaLoreStore implements LoreStore {
   }
 
   async touchAuthSession(sessionId: string, seenAt: string): Promise<void> {
-    await this.prisma.authSession.updateMany({ where: { id: sessionId, revokedAt: null }, data: { lastSeenAt: new Date(seenAt) } });
+    await this.prisma.authSession.updateMany({
+      where: { id: sessionId, revokedAt: null },
+      data: { lastSeenAt: new Date(seenAt) }
+    });
   }
 
   async revokeAuthSession(sessionId: string, userId: string): Promise<void> {
-    await this.prisma.authSession.updateMany({ where: { id: sessionId, userId, revokedAt: null }, data: { revokedAt: new Date() } });
+    await this.prisma.authSession.updateMany({
+      where: { id: sessionId, userId, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
   }
 
   async revokeOtherAuthSessions(userId: string, currentSessionId: string): Promise<number> {
@@ -311,7 +409,10 @@ export class PrismaLoreStore implements LoreStore {
   }
 
   async getOrganisationSettings(organisationId: string): Promise<OrganisationSettings> {
-    const organisation = await this.prisma.organisation.findUnique({ where: { id: organisationId }, select: { settings: true } });
+    const organisation = await this.prisma.organisation.findUnique({
+      where: { id: organisationId },
+      select: { settings: true }
+    });
     if (!organisation) throw new ForbiddenError();
     const configured = asRecord(organisation.settings);
     return organisationSettingsSchema.parse({
@@ -330,7 +431,8 @@ export class PrismaLoreStore implements LoreStore {
     actorUserId: string
   ): Promise<OrganisationSettings> {
     const role = await this.getMembershipRole(organisationId, actorUserId);
-    if (role !== "owner" && role !== "admin") throw new ForbiddenError("Owner or admin access is required");
+    if (role !== "owner" && role !== "admin")
+      throw new ForbiddenError("Owner or admin access is required");
     const settings = organisationSettingsSchema.parse(input);
     await this.prisma.$transaction([
       this.prisma.organisation.update({
@@ -377,8 +479,12 @@ export class PrismaLoreStore implements LoreStore {
 
   async getApiToken(tokenHash: string): Promise<ApiTokenRecord | undefined> {
     const token = await this.prisma.apiToken.findUnique({ where: { tokenHash } });
-    if (!token || token.revokedAt || (token.expiresAt && token.expiresAt <= new Date())) return undefined;
-    await this.prisma.apiToken.update({ where: { id: token.id }, data: { lastUsedAt: new Date() } });
+    if (!token || token.revokedAt || (token.expiresAt && token.expiresAt <= new Date()))
+      return undefined;
+    await this.prisma.apiToken.update({
+      where: { id: token.id },
+      data: { lastUsedAt: new Date() }
+    });
     return {
       ...this.#mapApiToken({ ...token, lastUsedAt: new Date() }),
       userId: token.userId,
@@ -403,29 +509,55 @@ export class PrismaLoreStore implements LoreStore {
     if (result.count === 0) throw new NotFoundError("API token", tokenId);
   }
 
-  async createOrganisation(userId: string, input: { name: string; slug: string }): Promise<OrganisationAccess> {
+  async createOrganisation(
+    userId: string,
+    input: { name: string; slug: string }
+  ): Promise<OrganisationAccess> {
     const duplicate = await this.prisma.organisation.findUnique({ where: { slug: input.slug } });
     if (duplicate) throw new ConflictError("That organisation URL is already in use");
     const organisation = await this.prisma.organisation.create({
-      data: { name: input.name, slug: input.slug, memberships: { create: { userId, role: "owner" } } }
+      data: {
+        name: input.name,
+        slug: input.slug,
+        memberships: { create: { userId, role: "owner" } }
+      }
     });
-    return { id: organisation.id, name: organisation.name, slug: organisation.slug, role: "owner", memberCount: 1, createdAt: organisation.createdAt.toISOString() };
+    return {
+      id: organisation.id,
+      name: organisation.name,
+      slug: organisation.slug,
+      role: "owner",
+      memberCount: 1,
+      createdAt: organisation.createdAt.toISOString()
+    };
   }
 
-  async updateOrganisation(organisationId: string, input: { name?: string; slug?: string }, actorUserId: string): Promise<OrganisationAccess> {
+  async updateOrganisation(
+    organisationId: string,
+    input: { name?: string; slug?: string },
+    actorUserId: string
+  ): Promise<OrganisationAccess> {
     const role = await this.getMembershipRole(organisationId, actorUserId);
-    if (role !== "owner" && role !== "admin") throw new ForbiddenError("Owner or admin access is required");
+    if (role !== "owner" && role !== "admin")
+      throw new ForbiddenError("Owner or admin access is required");
     try {
       await this.prisma.organisation.update({ where: { id: organisationId }, data: input });
     } catch (error) {
-      if (String(error).includes("Unique constraint")) throw new ConflictError("That organisation URL is already in use");
+      if (String(error).includes("Unique constraint"))
+        throw new ConflictError("That organisation URL is already in use");
       throw error;
     }
-    return (await this.listOrganisationAccess(actorUserId)).find((item) => item.id === organisationId)!;
+    return (await this.listOrganisationAccess(actorUserId)).find(
+      (item) => item.id === organisationId
+    )!;
   }
 
   async listOrganisationMembers(organisationId: string): Promise<OrganisationMember[]> {
-    const memberships = await this.prisma.membership.findMany({ where: { organisationId }, include: { user: true }, orderBy: { createdAt: "asc" } });
+    const memberships = await this.prisma.membership.findMany({
+      where: { organisationId },
+      include: { user: true },
+      orderBy: { createdAt: "asc" }
+    });
     return memberships.map((membership) => ({
       membershipId: membership.id,
       userId: membership.user.id,
@@ -450,7 +582,12 @@ export class PrismaLoreStore implements LoreStore {
   async listPendingInvitations(userId: string): Promise<OrganisationInvitation[]> {
     const user = await this.getUserProfile(userId);
     const rows = await this.prisma.organisationInvitation.findMany({
-      where: { emailNormalized: user.email.toLowerCase(), acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
+      where: {
+        emailNormalized: user.email.toLowerCase(),
+        acceptedAt: null,
+        revokedAt: null,
+        expiresAt: { gt: new Date() }
+      },
       include: { organisation: true, invitedBy: true },
       orderBy: { createdAt: "desc" }
     });
@@ -469,11 +606,24 @@ export class PrismaLoreStore implements LoreStore {
     });
     if (member) throw new ConflictError("This person is already an organisation member");
     const existing = await this.prisma.organisationInvitation.findFirst({
-      where: { organisationId, emailNormalized, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }
+      where: {
+        organisationId,
+        emailNormalized,
+        acceptedAt: null,
+        revokedAt: null,
+        expiresAt: { gt: new Date() }
+      }
     });
     if (existing) throw new ConflictError("A pending invitation already exists for this email");
     const row = await this.prisma.organisationInvitation.create({
-      data: { organisationId, email: emailNormalized, emailNormalized, role: input.role, invitedByUserId, expiresAt: new Date(input.expiresAt) },
+      data: {
+        organisationId,
+        email: emailNormalized,
+        emailNormalized,
+        role: input.role,
+        invitedByUserId,
+        expiresAt: new Date(input.expiresAt)
+      },
       include: { organisation: true, invitedBy: true }
     });
     return this.#mapInvitation(row);
@@ -481,15 +631,25 @@ export class PrismaLoreStore implements LoreStore {
 
   async revokeOrganisationInvitation(organisationId: string, invitationId: string): Promise<void> {
     const result = await this.prisma.organisationInvitation.updateMany({
-      where: { id: invitationId, organisationId, acceptedAt: null, revokedAt: null }, data: { revokedAt: new Date() }
+      where: { id: invitationId, organisationId, acceptedAt: null, revokedAt: null },
+      data: { revokedAt: new Date() }
     });
     if (result.count === 0) throw new NotFoundError("Invitation", invitationId);
   }
 
-  async acceptOrganisationInvitation(invitationId: string, userId: string): Promise<OrganisationAccess> {
+  async acceptOrganisationInvitation(
+    invitationId: string,
+    userId: string
+  ): Promise<OrganisationAccess> {
     const user = await this.getUserProfile(userId);
     const invitation = await this.prisma.organisationInvitation.findFirst({
-      where: { id: invitationId, emailNormalized: user.email.toLowerCase(), acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }
+      where: {
+        id: invitationId,
+        emailNormalized: user.email.toLowerCase(),
+        acceptedAt: null,
+        revokedAt: null,
+        expiresAt: { gt: new Date() }
+      }
     });
     if (!invitation) throw new NotFoundError("Invitation", invitationId);
     await this.prisma.$transaction([
@@ -498,42 +658,73 @@ export class PrismaLoreStore implements LoreStore {
         create: { organisationId: invitation.organisationId, userId, role: invitation.role },
         update: {}
       }),
-      this.prisma.organisationInvitation.update({ where: { id: invitation.id }, data: { acceptedAt: new Date() } })
+      this.prisma.organisationInvitation.update({
+        where: { id: invitation.id },
+        data: { acceptedAt: new Date() }
+      })
     ]);
-    return (await this.listOrganisationAccess(userId)).find((item) => item.id === invitation.organisationId)!;
+    return (await this.listOrganisationAccess(userId)).find(
+      (item) => item.id === invitation.organisationId
+    )!;
   }
 
-  async updateOrganisationMemberRole(organisationId: string, memberUserId: string, role: Exclude<OrganisationRole, "owner">): Promise<OrganisationMember> {
-    const membership = await this.prisma.membership.findUnique({ where: { organisationId_userId: { organisationId, userId: memberUserId } } });
+  async updateOrganisationMemberRole(
+    organisationId: string,
+    memberUserId: string,
+    role: Exclude<OrganisationRole, "owner">
+  ): Promise<OrganisationMember> {
+    const membership = await this.prisma.membership.findUnique({
+      where: { organisationId_userId: { organisationId, userId: memberUserId } }
+    });
     if (!membership) throw new NotFoundError("Organisation member", memberUserId);
-    if (membership.role === "owner") throw new ConflictError("The organisation owner role cannot be changed here");
+    if (membership.role === "owner")
+      throw new ConflictError("The organisation owner role cannot be changed here");
     await this.prisma.membership.update({ where: { id: membership.id }, data: { role } });
-    return (await this.listOrganisationMembers(organisationId)).find((item) => item.userId === memberUserId)!;
+    return (await this.listOrganisationMembers(organisationId)).find(
+      (item) => item.userId === memberUserId
+    )!;
   }
 
   async removeOrganisationMember(organisationId: string, memberUserId: string): Promise<void> {
-    const membership = await this.prisma.membership.findUnique({ where: { organisationId_userId: { organisationId, userId: memberUserId } } });
+    const membership = await this.prisma.membership.findUnique({
+      where: { organisationId_userId: { organisationId, userId: memberUserId } }
+    });
     if (!membership) throw new NotFoundError("Organisation member", memberUserId);
-    if (membership.role === "owner") throw new ConflictError("The organisation owner cannot be removed");
+    if (membership.role === "owner")
+      throw new ConflictError("The organisation owner cannot be removed");
     await this.prisma.membership.delete({ where: { id: membership.id } });
   }
 
   async getSnapshot(organisationId: string): Promise<DashboardSnapshot> {
-    const organisation = await this.prisma.organisation.findUnique({ where: { id: organisationId } });
+    const organisation = await this.prisma.organisation.findUnique({
+      where: { id: organisationId }
+    });
     if (!organisation) throw new ForbiddenError();
 
-    const [repositoryRows, knowledgeRows, policyRows, reportRows, reviewerRows, sessionRows] = await Promise.all([
-      this.prisma.repository.findMany({ where: { organisationId }, include: { _count: { select: { entities: true, relationships: true } } } }),
-      this.prisma.knowledgeItem.findMany({
-        where: { organisationId, status: { notIn: ["rejected", "archived", "superseded"] } },
-        include: { evidenceLinks: { include: { evidence: true } }, challenges: true },
-        orderBy: { updatedAt: "desc" }
-      }),
-      this.prisma.policy.findMany({ where: { organisationId }, orderBy: { updatedAt: "desc" } }),
-      this.prisma.changeSafetyReport.findMany({ where: { organisationId }, orderBy: { createdAt: "desc" }, take: 50 }),
-      this.prisma.reviewerProfile.findMany({ where: { organisationId } }),
-      this.prisma.agentSession.findMany({ where: { organisationId }, orderBy: { startedAt: "desc" }, take: 50 })
-    ]);
+    const [repositoryRows, knowledgeRows, policyRows, reportRows, reviewerRows, sessionRows] =
+      await Promise.all([
+        this.prisma.repository.findMany({
+          where: { organisationId },
+          include: { _count: { select: { entities: true, relationships: true } } }
+        }),
+        this.prisma.knowledgeItem.findMany({
+          where: { organisationId, status: { notIn: ["rejected", "archived", "superseded"] } },
+          include: { evidenceLinks: { include: { evidence: true } }, challenges: true },
+          orderBy: { updatedAt: "desc" }
+        }),
+        this.prisma.policy.findMany({ where: { organisationId }, orderBy: { updatedAt: "desc" } }),
+        this.prisma.changeSafetyReport.findMany({
+          where: { organisationId },
+          orderBy: { createdAt: "desc" },
+          take: 50
+        }),
+        this.prisma.reviewerProfile.findMany({ where: { organisationId } }),
+        this.prisma.agentSession.findMany({
+          where: { organisationId },
+          orderBy: { startedAt: "desc" },
+          take: 50
+        })
+      ]);
 
     const repositories: RepositorySummary[] = repositoryRows.map((row) => ({
       id: row.id,
@@ -589,7 +780,8 @@ export class PrismaLoreStore implements LoreStore {
         ...optional(row.email, "email"),
         preferenceCount: Number(metadata.preferenceCount ?? 0),
         reinforcedCount: Number(metadata.reinforcedCount ?? 0),
-        lastObservedAt: typeof metadata.lastObservedAt === "string" ? metadata.lastObservedAt : row.id
+        lastObservedAt:
+          typeof metadata.lastObservedAt === "string" ? metadata.lastObservedAt : row.id
       } as ReviewerProfile;
     });
 
@@ -623,11 +815,17 @@ export class PrismaLoreStore implements LoreStore {
 
   async getEvidence(organisationId: string): Promise<EvidenceRecord[]> {
     await this.#assertOrganisation(organisationId);
-    const rows = await this.prisma.evidence.findMany({ where: { organisationId }, orderBy: { occurredAt: "desc" } });
+    const rows = await this.prisma.evidence.findMany({
+      where: { organisationId },
+      orderBy: { occurredAt: "desc" }
+    });
     return rows.map((row) => this.#mapEvidence(row));
   }
 
-  async getEvidenceRevisions(organisationId: string, evidenceId: string): Promise<EvidenceRevisionRecord[]> {
+  async getEvidenceRevisions(
+    organisationId: string,
+    evidenceId: string
+  ): Promise<EvidenceRevisionRecord[]> {
     await this.#assertOrganisation(organisationId);
     const evidence = await this.prisma.evidence.findFirst({
       where: { id: evidenceId, organisationId },
@@ -653,6 +851,46 @@ export class PrismaLoreStore implements LoreStore {
     }));
   }
 
+  async getSyncSourceVersions(
+    organisationId: string,
+    repositoryId: string,
+    provider: string,
+    stream: string
+  ): Promise<Record<string, string>> {
+    await this.getRepository(organisationId, repositoryId);
+    const checkpoints = await this.prisma.syncCheckpoint.findMany({
+      where: { organisationId, repositoryId, provider, stream },
+      select: { externalId: true, sourceVersion: true }
+    });
+    return Object.fromEntries(
+      checkpoints.map((checkpoint) => [checkpoint.externalId, checkpoint.sourceVersion])
+    );
+  }
+
+  async saveSyncCheckpoint(input: {
+    organisationId: string;
+    repositoryId: string;
+    provider: string;
+    stream: string;
+    externalId: string;
+    sourceVersion: string;
+  }): Promise<void> {
+    await this.getRepository(input.organisationId, input.repositoryId);
+    await this.prisma.syncCheckpoint.upsert({
+      where: {
+        organisationId_repositoryId_provider_stream_externalId: {
+          organisationId: input.organisationId,
+          repositoryId: input.repositoryId,
+          provider: input.provider,
+          stream: input.stream,
+          externalId: input.externalId
+        }
+      },
+      create: input,
+      update: { sourceVersion: input.sourceVersion }
+    });
+  }
+
   async getRepository(organisationId: string, repositoryId: string): Promise<RepositorySummary> {
     const snapshot = await this.getSnapshot(organisationId);
     const repository = snapshot.repositories.find((item) => item.id === repositoryId);
@@ -673,7 +911,10 @@ export class PrismaLoreStore implements LoreStore {
         providerInstallationId,
         OR: [
           { providerRepositoryId },
-          { owner: { equals: owner, mode: "insensitive" }, name: { equals: name, mode: "insensitive" } }
+          {
+            owner: { equals: owner, mode: "insensitive" },
+            name: { equals: name, mode: "insensitive" }
+          }
         ]
       },
       include: { _count: { select: { entities: true, relationships: true } } }
@@ -699,7 +940,10 @@ export class PrismaLoreStore implements LoreStore {
     } as RepositorySummary;
   }
 
-  async getCodeGraph(organisationId: string, repositoryId: string): Promise<{ entities: CodeEntity[]; relationships: CodeRelationship[] }> {
+  async getCodeGraph(
+    organisationId: string,
+    repositoryId: string
+  ): Promise<{ entities: CodeEntity[]; relationships: CodeRelationship[] }> {
     await this.getRepository(organisationId, repositoryId);
     const [entityRows, relationshipRows] = await Promise.all([
       this.prisma.codeEntity.findMany({ where: { repositoryId } }),
@@ -732,9 +976,153 @@ export class PrismaLoreStore implements LoreStore {
     };
   }
 
+  async listCodeEntities(
+    organisationId: string,
+    repositoryId: string,
+    query: CodeEntityListQuery
+  ): Promise<CodeGraphPage<CodeEntity>> {
+    await this.getRepository(organisationId, repositoryId);
+    const search = query.search?.trim();
+    const where = {
+      repositoryId,
+      ...(query.type ? { type: query.type } : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: "insensitive" as const } },
+              { qualifiedName: { contains: search, mode: "insensitive" as const } },
+              { path: { contains: search, mode: "insensitive" as const } }
+            ]
+          }
+        : {})
+    };
+    const [total, rows] = await Promise.all([
+      this.prisma.codeEntity.count({ where }),
+      this.prisma.codeEntity.findMany({
+        where,
+        orderBy: [{ path: "asc" }, { startLine: "asc" }, { qualifiedName: "asc" }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize
+      })
+    ]);
+    const items = rows.map((row) => ({
+      id: row.id,
+      repositoryId: row.repositoryId,
+      type: row.type,
+      name: row.name,
+      qualifiedName: row.qualifiedName,
+      path: row.path,
+      ...optional(row.startLine, "startLine"),
+      ...optional(row.endLine, "endLine"),
+      language: row.language,
+      fingerprint: row.fingerprint,
+      metadata: asRecord(row.metadata)
+    })) as CodeEntity[];
+    return {
+      items,
+      count: items.length,
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+      hasMore: query.page * query.pageSize < total
+    };
+  }
+
+  async listCodeRelationships(
+    organisationId: string,
+    repositoryId: string,
+    query: CodeRelationshipListQuery
+  ): Promise<CodeGraphPage<CodeRelationshipView>> {
+    await this.getRepository(organisationId, repositoryId);
+    const search = query.search?.trim();
+    const entitySearch = search
+      ? {
+          OR: [
+            { qualifiedName: { contains: search, mode: "insensitive" as const } },
+            { name: { contains: search, mode: "insensitive" as const } },
+            { path: { contains: search, mode: "insensitive" as const } }
+          ]
+        }
+      : undefined;
+    const where = {
+      repositoryId,
+      ...(query.entityId
+        ? {
+            OR: [{ sourceEntityId: query.entityId }, { targetEntityId: query.entityId }]
+          }
+        : search
+          ? {
+              OR: [
+                { relationshipType: { contains: search, mode: "insensitive" as const } },
+                { sourceEntity: { is: entitySearch } },
+                { targetEntity: { is: entitySearch } }
+              ]
+            }
+          : {})
+    };
+    const entitySelect = {
+      id: true,
+      type: true,
+      name: true,
+      qualifiedName: true,
+      path: true,
+      startLine: true,
+      endLine: true,
+      language: true
+    } as const;
+    const [total, rows] = await Promise.all([
+      this.prisma.codeRelationship.count({ where }),
+      this.prisma.codeRelationship.findMany({
+        where,
+        include: {
+          sourceEntity: { select: entitySelect },
+          targetEntity: { select: entitySelect }
+        },
+        orderBy: [{ relationshipType: "asc" }, { id: "asc" }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize
+      })
+    ]);
+    const toEntityReference = (
+      entity: (typeof rows)[number]["sourceEntity"]
+    ): CodeRelationshipView["sourceEntity"] => ({
+      id: entity.id,
+      type: entity.type,
+      name: entity.name,
+      qualifiedName: entity.qualifiedName,
+      path: entity.path,
+      ...optional(entity.startLine, "startLine"),
+      ...optional(entity.endLine, "endLine"),
+      language: entity.language
+    });
+    const items = rows.map((row) => ({
+      id: row.id,
+      repositoryId: row.repositoryId,
+      sourceEntityId: row.sourceEntityId,
+      targetEntityId: row.targetEntityId,
+      relationshipType: row.relationshipType,
+      confidence: row.confidence,
+      source: row.source,
+      metadata: asRecord(row.metadata),
+      sourceEntity: toEntityReference(row.sourceEntity),
+      targetEntity: toEntityReference(row.targetEntity)
+    }));
+    return {
+      items,
+      count: items.length,
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+      hasMore: query.page * query.pageSize < total
+    };
+  }
+
   async getRegressions(organisationId: string, repositoryId: string): Promise<RegressionRecord[]> {
     await this.getRepository(organisationId, repositoryId);
-    const rows = await this.prisma.regressionRecord.findMany({ where: { repositoryId }, orderBy: { createdAt: "desc" } });
+    const rows = await this.prisma.regressionRecord.findMany({
+      where: { repositoryId },
+      orderBy: { createdAt: "desc" }
+    });
     return rows.map((row) => ({
       id: row.id,
       repositoryId: row.repositoryId,
@@ -753,51 +1141,71 @@ export class PrismaLoreStore implements LoreStore {
 
   async saveAnalysis(organisationId: string, output: RepositoryAnalysisOutput): Promise<void> {
     await this.getRepository(organisationId, output.repository.id);
-    await this.prisma.$transaction(async (transaction) => {
-      await transaction.codeRelationship.deleteMany({ where: { repositoryId: output.repository.id } });
-      await transaction.codeEntity.deleteMany({ where: { repositoryId: output.repository.id } });
-      if (output.entities.length > 0) {
-        await transaction.codeEntity.createMany({
-          data: output.entities.map((entity) => ({
-            id: entity.id,
-            repositoryId: entity.repositoryId,
-            type: entity.type,
-            name: entity.name,
-            qualifiedName: entity.qualifiedName,
-            path: entity.path,
-            startLine: entity.startLine,
-            endLine: entity.endLine,
-            language: entity.language,
-            metadata: entity.metadata as Prisma.InputJsonValue,
-            fingerprint: entity.fingerprint,
-            contentHash: typeof entity.metadata.contentHash === "string" ? entity.metadata.contentHash : null,
-            analyzerVersion: typeof entity.metadata.analyzerVersion === "string" ? entity.metadata.analyzerVersion : "1"
-          }))
+    await this.prisma.$transaction(
+      async (transaction) => {
+        await transaction.codeRelationship.deleteMany({
+          where: { repositoryId: output.repository.id }
         });
-      }
-      if (output.relationships.length > 0) {
-        await transaction.codeRelationship.createMany({
-          data: output.relationships.map((relationship) => ({
-            id: relationship.id,
-            repositoryId: relationship.repositoryId,
-            sourceEntityId: relationship.sourceEntityId,
-            targetEntityId: relationship.targetEntityId,
-            relationshipType: relationship.relationshipType,
-            confidence: relationship.confidence,
-            source: relationship.source,
-            metadata: relationship.metadata as Prisma.InputJsonValue
-          }))
-        });
-      }
-      await transaction.repository.update({
-        where: { id: output.repository.id },
-        data: {
-          languageSummary: output.repository.languageSummary as Prisma.InputJsonValue,
-          lastIndexedCommit: output.repository.lastIndexedCommit,
-          analysisVersion: "1"
+        await transaction.codeEntity.deleteMany({ where: { repositoryId: output.repository.id } });
+        for (let offset = 0; offset < output.entities.length; offset += ANALYSIS_WRITE_BATCH_SIZE) {
+          const entities = output.entities.slice(offset, offset + ANALYSIS_WRITE_BATCH_SIZE);
+          await transaction.codeEntity.createMany({
+            data: entities.map((entity) => ({
+              id: entity.id,
+              repositoryId: entity.repositoryId,
+              type: entity.type,
+              name: entity.name,
+              qualifiedName: entity.qualifiedName,
+              path: entity.path,
+              startLine: entity.startLine,
+              endLine: entity.endLine,
+              language: entity.language,
+              metadata: entity.metadata as Prisma.InputJsonValue,
+              fingerprint: entity.fingerprint,
+              contentHash:
+                typeof entity.metadata.contentHash === "string"
+                  ? entity.metadata.contentHash
+                  : null,
+              analyzerVersion:
+                typeof entity.metadata.analyzerVersion === "string"
+                  ? entity.metadata.analyzerVersion
+                  : "1"
+            }))
+          });
         }
-      });
-    });
+        for (
+          let offset = 0;
+          offset < output.relationships.length;
+          offset += ANALYSIS_WRITE_BATCH_SIZE
+        ) {
+          const relationships = output.relationships.slice(
+            offset,
+            offset + ANALYSIS_WRITE_BATCH_SIZE
+          );
+          await transaction.codeRelationship.createMany({
+            data: relationships.map((relationship) => ({
+              id: relationship.id,
+              repositoryId: relationship.repositoryId,
+              sourceEntityId: relationship.sourceEntityId,
+              targetEntityId: relationship.targetEntityId,
+              relationshipType: relationship.relationshipType,
+              confidence: relationship.confidence,
+              source: relationship.source,
+              metadata: relationship.metadata as Prisma.InputJsonValue
+            }))
+          });
+        }
+        await transaction.repository.update({
+          where: { id: output.repository.id },
+          data: {
+            languageSummary: output.repository.languageSummary as Prisma.InputJsonValue,
+            lastIndexedCommit: output.repository.lastIndexedCommit,
+            analysisVersion: "1"
+          }
+        });
+      },
+      { maxWait: 10_000, timeout: ANALYSIS_TRANSACTION_TIMEOUT_MS }
+    );
   }
 
   async saveKnowledgeProposal(
@@ -833,7 +1241,10 @@ export class PrismaLoreStore implements LoreStore {
     } as KnowledgeProposalRecord;
   }
 
-  async createKnowledgeCandidate(organisationId: string, candidate: CandidateRecord): Promise<CandidateRecord> {
+  async createKnowledgeCandidate(
+    organisationId: string,
+    candidate: CandidateRecord
+  ): Promise<CandidateRecord> {
     await this.#assertOrganisation(organisationId);
     const existing = await this.prisma.knowledgeItem.findFirst({
       where: {
@@ -847,7 +1258,9 @@ export class PrismaLoreStore implements LoreStore {
     });
     if (existing) {
       const linked = new Set(existing.evidenceLinks.map((link) => link.evidenceId));
-      const missingEvidenceIds = candidate.evidenceIds.filter((evidenceId) => !linked.has(evidenceId));
+      const missingEvidenceIds = candidate.evidenceIds.filter(
+        (evidenceId) => !linked.has(evidenceId)
+      );
       if (missingEvidenceIds.length > 0) {
         await this.prisma.knowledgeEvidence.createMany({
           data: missingEvidenceIds.map((evidenceId) => ({
@@ -925,7 +1338,10 @@ export class PrismaLoreStore implements LoreStore {
 
   async addRepository(
     organisationId: string,
-    input: Omit<RepositorySummary, "id" | "organisationId" | "entityCount" | "relationshipCount" | "status">,
+    input: Omit<
+      RepositorySummary,
+      "id" | "organisationId" | "entityCount" | "relationshipCount" | "status"
+    >,
     actor = "system"
   ): Promise<RepositorySummary> {
     await this.#assertOrganisation(organisationId);
@@ -942,7 +1358,9 @@ export class PrismaLoreStore implements LoreStore {
           cloneUrl: input.cloneUrl,
           localPath: input.localPath,
           languageSummary: input.languageSummary as Prisma.InputJsonValue,
-          ...(input.retentionConfig ? { retentionConfig: input.retentionConfig as unknown as Prisma.InputJsonValue } : {}),
+          ...(input.retentionConfig
+            ? { retentionConfig: input.retentionConfig as unknown as Prisma.InputJsonValue }
+            : {}),
           lastIndexedCommit: input.lastIndexedCommit
         }
       });
@@ -1000,7 +1418,10 @@ export class PrismaLoreStore implements LoreStore {
           content: `${input.statement}\n\nRationale: ${input.rationale}`,
           author: actor,
           occurredAt: now,
-          metadata: { humanConfirmed: true, ...(input.sourceName ? { sourceName: input.sourceName } : {}) }
+          metadata: {
+            humanConfirmed: true,
+            ...(input.sourceName ? { sourceName: input.sourceName } : {})
+          }
         }
       });
       const knowledge = await transaction.knowledgeItem.create({
@@ -1018,7 +1439,9 @@ export class PrismaLoreStore implements LoreStore {
           metadata: { humanConfirmed: true },
           createdBy: actor,
           lastConfirmedAt: now,
-          evidenceLinks: { create: { evidenceId: evidence.id, relationship: "confirmed_by", weight: 1 } },
+          evidenceLinks: {
+            create: { evidenceId: evidence.id, relationship: "confirmed_by", weight: 1 }
+          },
           revisions: {
             create: {
               version: 1,
@@ -1041,7 +1464,11 @@ export class PrismaLoreStore implements LoreStore {
           action: "knowledge.created",
           targetType: "KnowledgeItem",
           targetId: knowledge.id,
-          after: { kind: input.kind, title: input.title, scope: input.scope } as unknown as Prisma.InputJsonValue
+          after: {
+            kind: input.kind,
+            title: input.title,
+            scope: input.scope
+          } as unknown as Prisma.InputJsonValue
         }
       });
       return knowledge;
@@ -1052,12 +1479,19 @@ export class PrismaLoreStore implements LoreStore {
   async approveCandidate(
     organisationId: string,
     candidateId: string,
-    input: { statement?: string; kind?: CandidateRecord["kind"]; scope?: CandidateRecord["scope"]; reason: string },
+    input: {
+      statement?: string;
+      kind?: CandidateRecord["kind"];
+      scope?: CandidateRecord["scope"];
+      reason: string;
+    },
     actor: string
   ): Promise<KnowledgeItem> {
     const candidate = await this.getCandidate(organisationId, candidateId);
     await this.prisma.$transaction(async (transaction) => {
-      const version = (await transaction.knowledgeRevision.count({ where: { knowledgeItemId: candidateId } })) + 1;
+      const version =
+        (await transaction.knowledgeRevision.count({ where: { knowledgeItemId: candidateId } })) +
+        1;
       await transaction.knowledgeItem.update({
         where: { id: candidateId },
         data: {
@@ -1108,10 +1542,18 @@ export class PrismaLoreStore implements LoreStore {
     return this.#mapKnowledge(row);
   }
 
-  async rejectCandidate(organisationId: string, candidateId: string, reason: string, actor: string): Promise<void> {
+  async rejectCandidate(
+    organisationId: string,
+    candidateId: string,
+    reason: string,
+    actor: string
+  ): Promise<void> {
     const candidate = await this.getCandidate(organisationId, candidateId);
     await this.prisma.$transaction(async (transaction) => {
-      await transaction.knowledgeItem.update({ where: { id: candidateId }, data: { status: "rejected" } });
+      await transaction.knowledgeItem.update({
+        where: { id: candidateId },
+        data: { status: "rejected" }
+      });
       await transaction.auditEvent.create({
         data: {
           organisationId,
@@ -1162,7 +1604,8 @@ export class PrismaLoreStore implements LoreStore {
         })),
         skipDuplicates: true
       });
-      const version = (await transaction.knowledgeRevision.count({ where: { knowledgeItemId: targetId } })) + 1;
+      const version =
+        (await transaction.knowledgeRevision.count({ where: { knowledgeItemId: targetId } })) + 1;
       await transaction.knowledgeItem.update({
         where: { id: targetId },
         data: {
@@ -1221,9 +1664,7 @@ export class PrismaLoreStore implements LoreStore {
       where: { id: targetId },
       include: { evidenceLinks: { include: { evidence: true } }, challenges: true }
     });
-    return merged.status === "candidate"
-      ? this.#mapCandidate(merged)
-      : this.#mapKnowledge(merged);
+    return merged.status === "candidate" ? this.#mapCandidate(merged) : this.#mapKnowledge(merged);
   }
 
   async deleteRepository(
@@ -1245,7 +1686,10 @@ export class PrismaLoreStore implements LoreStore {
 
     await this.prisma.$transaction(async (transaction) => {
       for (const item of affectedOrganisationKnowledge) {
-        await transaction.knowledgeItem.update({ where: { id: item.id }, data: { status: "challenged" } });
+        await transaction.knowledgeItem.update({
+          where: { id: item.id },
+          data: { status: "challenged" }
+        });
         await transaction.knowledgeChallenge.create({
           data: {
             knowledgeItemId: item.id,
@@ -1303,12 +1747,16 @@ export class PrismaLoreStore implements LoreStore {
     actor: string
   ): Promise<KnowledgeItem> {
     await this.#assertOrganisation(organisationId);
-    const existing = await this.prisma.knowledgeItem.findFirst({ where: { id: knowledgeId, organisationId } });
+    const existing = await this.prisma.knowledgeItem.findFirst({
+      where: { id: knowledgeId, organisationId }
+    });
     if (!existing) throw new NotFoundError("Knowledge item", knowledgeId);
     await this.prisma.$transaction(async (transaction) => {
       await transaction.knowledgeItem.update({ where: { id: knowledgeId }, data: { status } });
       if (status === "challenged") {
-        await transaction.knowledgeChallenge.create({ data: { knowledgeItemId: knowledgeId, reason } });
+        await transaction.knowledgeChallenge.create({
+          data: { knowledgeItemId: knowledgeId, reason }
+        });
       }
       await transaction.auditEvent.create({
         data: {
@@ -1400,7 +1848,13 @@ export class PrismaLoreStore implements LoreStore {
         }
       });
       await transaction.sessionEvent.create({
-        data: { id: randomUUID(), sessionId: session.id, sequence: 1, type: "started", data: { status: session.status, agentType: session.agentType } }
+        data: {
+          id: randomUUID(),
+          sessionId: session.id,
+          sequence: 1,
+          type: "started",
+          data: { status: session.status, agentType: session.agentType }
+        }
       });
     });
     return session;
@@ -1408,7 +1862,9 @@ export class PrismaLoreStore implements LoreStore {
 
   async updateSession(organisationId: string, session: AgentSession): Promise<AgentSession> {
     await this.#assertOrganisation(organisationId);
-    const existing = await this.prisma.agentSession.findFirst({ where: { id: session.id, organisationId } });
+    const existing = await this.prisma.agentSession.findFirst({
+      where: { id: session.id, organisationId }
+    });
     if (!existing) throw new NotFoundError("Agent session", session.id);
     await this.prisma.$transaction(async (transaction) => {
       await transaction.agentSession.update({
@@ -1423,9 +1879,16 @@ export class PrismaLoreStore implements LoreStore {
         }
       });
       if (existing.status !== session.status && session.status === "abandoned") {
-        const sequence = (await transaction.sessionEvent.count({ where: { sessionId: session.id } })) + 1;
+        const sequence =
+          (await transaction.sessionEvent.count({ where: { sessionId: session.id } })) + 1;
         await transaction.sessionEvent.create({
-          data: { id: randomUUID(), sessionId: session.id, sequence, type: "abandoned", data: { previousStatus: existing.status } }
+          data: {
+            id: randomUUID(),
+            sessionId: session.id,
+            sequence,
+            type: "abandoned",
+            data: { previousStatus: existing.status }
+          }
         });
       }
     });
@@ -1434,9 +1897,14 @@ export class PrismaLoreStore implements LoreStore {
 
   async getSessionEvents(organisationId: string, sessionId: string): Promise<SessionEvent[]> {
     await this.#assertOrganisation(organisationId);
-    const session = await this.prisma.agentSession.findFirst({ where: { id: sessionId, organisationId } });
+    const session = await this.prisma.agentSession.findFirst({
+      where: { id: sessionId, organisationId }
+    });
     if (!session) throw new NotFoundError("Agent session", sessionId);
-    const rows = await this.prisma.sessionEvent.findMany({ where: { sessionId }, orderBy: { sequence: "asc" } });
+    const rows = await this.prisma.sessionEvent.findMany({
+      where: { sessionId },
+      orderBy: { sequence: "asc" }
+    });
     return rows.map((row) => ({
       id: row.id,
       sessionId: row.sessionId,
@@ -1447,16 +1915,32 @@ export class PrismaLoreStore implements LoreStore {
     }));
   }
 
-  async abandonSession(organisationId: string, sessionId: string, reason: string): Promise<AgentSession> {
+  async abandonSession(
+    organisationId: string,
+    sessionId: string,
+    reason: string
+  ): Promise<AgentSession> {
     await this.#assertOrganisation(organisationId);
-    const existing = await this.prisma.agentSession.findFirst({ where: { id: sessionId, organisationId } });
+    const existing = await this.prisma.agentSession.findFirst({
+      where: { id: sessionId, organisationId }
+    });
     if (!existing) throw new NotFoundError("Agent session", sessionId);
-    if (["completed", "abandoned"].includes(existing.status)) throw new ConflictError("Only an open session can be abandoned");
+    if (["completed", "abandoned"].includes(existing.status))
+      throw new ConflictError("Only an open session can be abandoned");
     await this.prisma.$transaction(async (transaction) => {
-      await transaction.agentSession.update({ where: { id: sessionId }, data: { status: "abandoned", completedAt: new Date() } });
+      await transaction.agentSession.update({
+        where: { id: sessionId },
+        data: { status: "abandoned", completedAt: new Date() }
+      });
       const sequence = (await transaction.sessionEvent.count({ where: { sessionId } })) + 1;
       await transaction.sessionEvent.create({
-        data: { id: randomUUID(), sessionId, sequence, type: "abandoned", data: { previousStatus: existing.status, reason } }
+        data: {
+          id: randomUUID(),
+          sessionId,
+          sequence,
+          type: "abandoned",
+          data: { previousStatus: existing.status, reason }
+        }
       });
     });
     const snapshot = await this.getSnapshot(organisationId);
@@ -1471,13 +1955,20 @@ export class PrismaLoreStore implements LoreStore {
     context: ContextPackage
   ): Promise<ContextPackageRecord> {
     await this.#assertOrganisation(organisationId);
-    const session = await this.prisma.agentSession.findFirst({ where: { id: sessionId, organisationId } });
+    const session = await this.prisma.agentSession.findFirst({
+      where: { id: sessionId, organisationId }
+    });
     if (!session) throw new NotFoundError("Agent session", sessionId);
-    if (session.repositoryId !== context.repository.id) throw new ForbiddenError("Context repository does not belong to the session");
+    if (session.repositoryId !== context.repository.id)
+      throw new ForbiddenError("Context repository does not belong to the session");
     const record = await this.prisma.$transaction(async (transaction) => {
       const revision = (await transaction.contextPackageRecord.count({ where: { sessionId } })) + 1;
       const created = await transaction.contextPackageRecord.create({
-        data: { id: context.id, sessionId, payload: { ...context, revision } as unknown as Prisma.InputJsonValue }
+        data: {
+          id: context.id,
+          sessionId,
+          payload: { ...context, revision } as unknown as Prisma.InputJsonValue
+        }
       });
       await transaction.agentSession.update({
         where: { id: sessionId },
@@ -1515,12 +2006,20 @@ export class PrismaLoreStore implements LoreStore {
     };
   }
 
-  async getLatestContextPackage(organisationId: string, sessionId: string): Promise<ContextPackageRecord | undefined> {
+  async getLatestContextPackage(
+    organisationId: string,
+    sessionId: string
+  ): Promise<ContextPackageRecord | undefined> {
     await this.#assertOrganisation(organisationId);
-    const session = await this.prisma.agentSession.findFirst({ where: { id: sessionId, organisationId } });
+    const session = await this.prisma.agentSession.findFirst({
+      where: { id: sessionId, organisationId }
+    });
     if (!session) throw new NotFoundError("Agent session", sessionId);
     const [row, count] = await Promise.all([
-      this.prisma.contextPackageRecord.findFirst({ where: { sessionId }, orderBy: { createdAt: "desc" } }),
+      this.prisma.contextPackageRecord.findFirst({
+        where: { sessionId },
+        orderBy: { createdAt: "desc" }
+      }),
       this.prisma.contextPackageRecord.count({ where: { sessionId } })
     ]);
     if (!row) return undefined;
@@ -1544,17 +2043,31 @@ export class PrismaLoreStore implements LoreStore {
       ? await this.prisma.agentSession.findFirst({ where: { id: sessionId, organisationId } })
       : undefined;
     if (sessionId && !session) throw new NotFoundError("Agent session", sessionId);
-    if (session && session.repositoryId !== report.repositoryId) throw new ForbiddenError("Report repository does not belong to the session");
+    if (session && session.repositoryId !== report.repositoryId)
+      throw new ForbiddenError("Report repository does not belong to the session");
     if (sessionId && (!report.contextId || !contextRevision)) {
-      throw new ConflictError("A persisted context revision is required before saving a session report");
+      throw new ConflictError(
+        "A persisted context revision is required before saving a session report"
+      );
     }
-    const context = sessionId && report.contextId
-      ? await this.prisma.contextPackageRecord.findFirst({ where: { id: report.contextId, sessionId } })
-      : undefined;
-    if (sessionId && !context) throw new ForbiddenError("Report context does not belong to the session");
-    const observation = sessionId && report.contextId && contextRevision
-      ? createChangeObservation({ organisationId, sessionId, contextId: report.contextId, contextRevision, report })
-      : undefined;
+    const context =
+      sessionId && report.contextId
+        ? await this.prisma.contextPackageRecord.findFirst({
+            where: { id: report.contextId, sessionId }
+          })
+        : undefined;
+    if (sessionId && !context)
+      throw new ForbiddenError("Report context does not belong to the session");
+    const observation =
+      sessionId && report.contextId && contextRevision
+        ? createChangeObservation({
+            organisationId,
+            sessionId,
+            contextId: report.contextId,
+            contextRevision,
+            report
+          })
+        : undefined;
     const linked = observation
       ? { ...report, sessionId, contextRevision, observationId: observation.id }
       : sessionId
@@ -1600,9 +2113,27 @@ export class PrismaLoreStore implements LoreStore {
         const sequence = (await transaction.sessionEvent.count({ where: { sessionId } })) + 1;
         await transaction.sessionEvent.createMany({
           data: [
-            { id: randomUUID(), sessionId, sequence, type: "verification_started", data: { contextId: report.contextId, contextRevision, observationId: observation?.id } },
-            { id: randomUUID(), sessionId, sequence: sequence + 1, type: "verification_finished", data: { reportId: report.id, observationId: observation?.id, risk: report.risk } },
-            { id: randomUUID(), sessionId, sequence: sequence + 2, type: "completed", data: { reportId: report.id } }
+            {
+              id: randomUUID(),
+              sessionId,
+              sequence,
+              type: "verification_started",
+              data: { contextId: report.contextId, contextRevision, observationId: observation?.id }
+            },
+            {
+              id: randomUUID(),
+              sessionId,
+              sequence: sequence + 1,
+              type: "verification_finished",
+              data: { reportId: report.id, observationId: observation?.id, risk: report.risk }
+            },
+            {
+              id: randomUUID(),
+              sessionId,
+              sequence: sequence + 2,
+              type: "completed",
+              data: { reportId: report.id }
+            }
           ]
         });
         await transaction.agentSession.update({
@@ -1620,7 +2151,10 @@ export class PrismaLoreStore implements LoreStore {
     return linked;
   }
 
-  async getChangeObservation(organisationId: string, observationId: string): Promise<ChangeObservation> {
+  async getChangeObservation(
+    organisationId: string,
+    observationId: string
+  ): Promise<ChangeObservation> {
     await this.#assertOrganisation(organisationId);
     const observation = await this.prisma.changeObservation.findFirst({
       where: { id: observationId, organisationId }
@@ -1732,9 +2266,15 @@ export class PrismaLoreStore implements LoreStore {
     });
   }
 
-  async hasIngestionReceipt(organisationId: string, provider: string, externalId: string): Promise<boolean> {
+  async hasIngestionReceipt(
+    organisationId: string,
+    provider: string,
+    externalId: string
+  ): Promise<boolean> {
     await this.#assertOrganisation(organisationId);
-    const count = await this.prisma.ingestionReceipt.count({ where: { organisationId, provider, externalId } });
+    const count = await this.prisma.ingestionReceipt.count({
+      where: { organisationId, provider, externalId }
+    });
     return count > 0;
   }
 
@@ -1772,7 +2312,9 @@ export class PrismaLoreStore implements LoreStore {
       organisationId: row.organisationId,
       name: row.name,
       prefix: row.prefix,
-      scopes: row.scopes.filter((scope): scope is "read" | "write" => scope === "read" || scope === "write"),
+      scopes: row.scopes.filter(
+        (scope): scope is "read" | "write" => scope === "read" || scope === "write"
+      ),
       ...(row.expiresAt ? { expiresAt: row.expiresAt.toISOString() } : {}),
       ...(row.lastUsedAt ? { lastUsedAt: row.lastUsedAt.toISOString() } : {}),
       createdAt: row.createdAt.toISOString()
@@ -1877,12 +2419,16 @@ export class PrismaLoreStore implements LoreStore {
       status: "candidate",
       evidence: row.evidenceLinks.map((link) => this.#mapEvidence(link.evidence)),
       contradictionSummaries: asStringArray(metadata.contradictionSummaries),
-      confidenceFactors: asRecord(metadata.confidenceFactors) as unknown as CandidateRecord["confidenceFactors"],
+      confidenceFactors: asRecord(
+        metadata.confidenceFactors
+      ) as unknown as CandidateRecord["confidenceFactors"],
       ...(Object.keys(asRecord(metadata.comparison)).length
         ? { comparison: asRecord(metadata.comparison) as unknown as CandidateRecord["comparison"] }
         : {}),
       ...(typeof metadata.proposalId === "string" ? { proposalId: metadata.proposalId } : {}),
-      ...(typeof metadata.proposedExclusion === "string" ? { proposedExclusion: metadata.proposedExclusion } : {})
+      ...(typeof metadata.proposedExclusion === "string"
+        ? { proposedExclusion: metadata.proposedExclusion }
+        : {})
     };
   }
 }

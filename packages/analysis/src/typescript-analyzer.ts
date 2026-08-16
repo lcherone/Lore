@@ -169,13 +169,18 @@ export class TypeScriptAnalyzer implements LanguageAnalyzer {
     for (const call of source.getDescendantsOfKind(SyntaxKind.CallExpression)) {
       const expression = call.getExpression().getText().slice(0, 160);
       if (!expression || expression === "require") continue;
+      const callName = expression
+        .split(".")
+        .map((segment) => segment.trim())
+        .filter(Boolean)
+        .at(-1) ?? "anonymous-call";
       const caller = [...callers.entries()]
         .filter(([line]) => line <= call.getStartLineNumber())
         .sort(([left], [right]) => right - left)[0]?.[1] ?? fileEntity;
       const target = createEntity({
         repositoryId: file.repositoryId,
         type: "function",
-        name: expression.split(".").at(-1) ?? expression,
+        name: callName,
         qualifiedName: expression,
         path: `[symbol]/${expression}`,
         language: file.language,

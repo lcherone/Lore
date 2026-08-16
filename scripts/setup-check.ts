@@ -10,6 +10,18 @@ const warnings: string[] = [];
 const ok: string[] = [];
 const present = (name: string): boolean => Boolean(process.env[name]?.trim());
 
+const githubRequestsPerHour = process.env.GITHUB_REQUESTS_PER_HOUR?.trim();
+if (githubRequestsPerHour) {
+  const parsed = Number(githubRequestsPerHour);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 15_000) {
+    errors.push("GITHUB_REQUESTS_PER_HOUR must be an integer between 1 and 15000.");
+  } else {
+    ok.push(`GitHub crawler: capped at ${parsed.toLocaleString("en-GB")} requests/hour before header-based slowdown.`);
+  }
+} else {
+  ok.push("GitHub crawler: safe default of 1,000 requests/hour plus header-based slowdown.");
+}
+
 if (demo) {
   ok.push("Runtime: seeded demo; credentials and persistent services are optional.");
 } else {

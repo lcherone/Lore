@@ -125,9 +125,39 @@ For each merged PR, Lore gathers:
 - all changed file paths;
 - bounded patch text only when raw-diff retention is enabled.
 
-Evidence IDs are deterministic. Repeated imports update nothing when the evidence is unchanged. If a retained PR body or review comment changes upstream, Lore appends an immutable evidence revision, updates the current snapshot, and sends that evidence back through AI extraction. Only new or changed evidence IDs are analysed. A manual import always creates a fresh worker job; it is not silently suppressed by an old completed job ID.
+Evidence IDs are deterministic. Lore persists each completed pull request immediately instead of holding the whole crawl in memory. New or changed evidence is queued for bounded AI extraction as soon as that PR is durable, so **Candidates** can populate while a long import is still running. Repeated imports update nothing when the evidence is unchanged. If a retained PR body or review comment changes upstream, Lore appends an immutable evidence revision, updates the current snapshot, and sends that evidence back through AI extraction. Only new or changed evidence IDs are analysed. A manual import creates a fresh worker job after the previous import finishes; while one is genuinely active, Lore returns that job instead of starting a duplicate crawl.
 
 The initial import and recurring scheduler live in Redis; PostgreSQL holds the resulting evidence and knowledge candidates. Both use persistent Docker volumes in local mode.
+
+## Rate-limit safety and automatic continuation
+
+Lore deliberately crawls more slowly than GitHub permits. A PAT normally shares the authenticated user's 5,000-request hourly REST allowance with other PAT, OAuth, and GitHub App user requests. The separate 1,000-request figure applies to the repository-scoped `GITHUB_TOKEN` supplied inside GitHub Actions—not a normal local PAT.
+
+The worker therefore defaults to a **1,000-request-per-hour safety budget**: one request every 3.6 seconds. This leaves substantial headroom for your terminal, IDE, and other tools. The limit is shared by all GitHub import jobs in the worker process, and PR detail collections are fetched serially rather than as bursts.
+
+After every response, Lore uses GitHub's `x-ratelimit-limit`, `x-ratelimit-remaining`, and `x-ratelimit-reset` headers. It slows further when the remaining allowance requires it and reserves the final 10% of the reported quota for other activity. Lore does not make a separate `/rate_limit` request for every decision.
+
+If GitHub returns a primary limit response, Lore waits until `x-ratelimit-reset` plus a small clock-skew buffer, then retries the same API request and continues the import. For a secondary limit it honours `retry-after`; otherwise it starts at a one-minute delay and backs off exponentially. The worker emits a safe `github.rate_limit.wait` event and writes the reason and resume time to **Activity**, without logging credentials or response content. Keep the worker running; the local Docker service has `restart: unless-stopped`.
+
+Only one import may crawl a given repository at a time. This includes hourly syncs, automatic first imports, and manual full-history imports. If the hourly sync becomes due during a full crawl, its job exits safely as already covered instead of duplicating every GitHub request.
+
+You do not need another setting. To choose a different deliberate ceiling, add this optional value to `.env` and restart Lore:
+
+```dotenv
+# 1000/hour = one request every 3.6 seconds
+GITHUB_REQUESTS_PER_HOUR=1000
+```
+
+```bash
+npm run local:up
+npm run local:logs
+```
+
+`local:up` recreates the containers with the changed environment. `local:start` only starts the already-created containers and therefore cannot apply a new `.env` value.
+
+Use an integer from 1 to 15,000. Increasing the value does not override GitHub's response headers or secondary limits. For a local PAT, values above 5,000 provide no primary-limit benefit. See GitHub's current [REST API rate-limit documentation](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api?apiVersion=2026-03-10).
+
+Each imported PR stores GitHub's source update version alongside its evidence. If the worker is restarted, BullMQ retries the import, Lore re-reads the inexpensive PR-list pages, and skips the five detail collections for PRs whose stored source version is unchanged. This gives the crawl a durable per-PR checkpoint while preserving edited-evidence detection. A continuously running worker resumes the exact request after a rate reset. A configurable stalled-job allowance also tolerates ordinary local restarts, and worker startup reconciles BullMQ terminal state back into PostgreSQL so Activity cannot remain falsely `running`.
 
 ## Retention and sensitive repositories
 
@@ -180,6 +210,18 @@ npm run local:logs
 
 Confirm both Redis and the worker are healthy. A worker failure includes the GitHub status and safe hint, never the credential.
 
+If Activity was left `running` by a forced machine/container shutdown, restart the current worker once. Startup compares every active PostgreSQL job with BullMQ and records a terminal dead-letter or recovered completion. You can then queue the import again; already-persisted unchanged PRs are skipped by their source version.
+
 ### “All” takes a long time
 
-A mature repository can require several paginated API requests per PR. Leave the worker running. Evidence is idempotent, so retrying is safe; change the organisation’s initial-import default if you prefer a bounded first pass.
+A mature repository can require at least five paginated detail collections per PR. At Lore's safe default, 1,000 calls take at least one hour and a large history can take several hours. Leave the worker running; slow progress is expected. Evidence is idempotent, so retrying is safe; change the organisation’s initial-import default if you prefer a bounded first pass.
+
+### Import shows dead-letter after an older rate-limit failure
+
+Jobs created by versions without reset-aware pacing retried within seconds and may already be terminal. After updating and restarting Lore, open the repository and run **Import history** once. The new job will wait and continue automatically. A dead-lettered historical job is not silently replayed because that could repeat a deliberately cancelled or invalid operation.
+
+### Evidence exists but Knowledge is empty
+
+GitHub evidence first becomes an AI **candidate**, not approved Knowledge. Open **Repositories**, choose **Extract evidence** for the repository, then watch **Activity**. The action reuses the evidence already stored in PostgreSQL and does not call GitHub again. When extraction succeeds, open **Candidates**, correct the statement and scope if needed, and approve it. Only approved candidates appear under **Knowledge**.
+
+If an older **AI candidate extraction** job shows the Structured Outputs `.optional()` error, leave the historical job as an audit record and use **Extract evidence** once after updating Lore. Current extraction uses required nullable wire fields and bounded batches.

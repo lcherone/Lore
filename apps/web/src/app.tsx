@@ -177,6 +177,30 @@ export function App() {
   useEffect(() => { void loadApplication(); }, [loadApplication]);
 
   useEffect(() => {
+    if (!account?.authenticated || !account.activeOrganisation) return;
+    let active = true;
+    const refreshSnapshot = async (): Promise<void> => {
+      try {
+        const snapshot = await loreApi.bootstrap();
+        if (active) setData(snapshot);
+      } catch {
+        // The primary connection state owns visible errors. A background refresh
+        // keeps the last proven snapshot until the next successful interval.
+      }
+    };
+    const timer = window.setInterval(() => void refreshSnapshot(), 10_000);
+    const refreshWhenVisible = (): void => {
+      if (document.visibilityState === "visible") void refreshSnapshot();
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [account?.activeOrganisation?.id, account?.authenticated]);
+
+  useEffect(() => {
     if (!account?.authenticated || window.location.pathname.replace(/\/+$/, "") !== "/signin") return;
     window.history.replaceState(null, "", `/${window.location.search}${window.location.hash}`);
   }, [account?.authenticated]);
@@ -421,10 +445,24 @@ export function App() {
       notify(
         result.simulated
           ? `Demo import of ${limit} pull requests recorded without a worker`
+          : result.alreadyRunning
+            ? "This repository already has an active GitHub import; Lore will continue it without starting a duplicate"
           : `Import of ${limit} merged pull requests queued`
       );
     } catch (error) {
       notify(error instanceof Error ? error.message : "Historical import could not start", "error");
+      throw error;
+    }
+  };
+
+  const extractRepositoryEvidence = async (repository: RepositorySummary): Promise<void> => {
+    try {
+      const result = await loreApi.extractRepositoryEvidence(repository.id);
+      notify(result.evidenceQueued > 0
+        ? `${result.evidenceQueued} stored evidence records queued in ${result.batchesQueued} AI batches`
+        : "All stored evidence is already linked to candidates or knowledge");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Stored evidence extraction failed", "error");
       throw error;
     }
   };
@@ -510,10 +548,15 @@ export function App() {
 
   const switchOrganisation = async (organisationId: string): Promise<void> => {
     if (organisationId === account?.activeOrganisation?.id) return;
-    await loreApi.switchOrganisation(organisationId);
-    setOrganisationMenuOpen(false);
-    setLoading(true);
-    await loadApplication();
+    try {
+      await loreApi.switchOrganisation(organisationId);
+      setOrganisationMenuOpen(false);
+      setLoading(true);
+      await loadApplication();
+      notify("Organisation switched");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Organisation could not be switched", "error");
+    }
   };
 
   const pageContent = (() => {
@@ -530,6 +573,7 @@ export function App() {
             onConnect={connectRepositories}
             onIndex={indexRepository}
             onImport={importHistory}
+            onExtract={extractRepositoryEvidence}
             onDelete={deleteRepository}
             onRetention={updateRepositoryRetention}
             defaultImportLimit={userSettings?.defaultImportLimit ?? 100}
@@ -543,6 +587,7 @@ export function App() {
             repositories={data.repositories}
             onCreate={createKnowledge}
             onStatusChange={changeKnowledgeStatus}
+            onReviewCandidates={() => navigate("candidates")}
           />
         );
       case "evidence":
@@ -615,7 +660,15 @@ export function App() {
         <button className="button button--primary" onClick={() => window.location.reload()}>
           Retry connection
         </button>
-        <code>npm run dev</code>
+        {import.meta.env.DEV ? (
+          <code>npm run dev</code>
+        ) : (
+          <>
+            <p>Check the local production stack, then start its existing containers if needed.</p>
+            <code>npm run local:check</code>
+            <code>npm run local:start</code>
+          </>
+        )}
       </main>
     );
   }

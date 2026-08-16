@@ -4,11 +4,15 @@ import { InMemoryJobDispatcher, InMemoryLoreStore } from "@lore/database/index.j
 import type { GitHubRepositoryOption } from "@lore/github/index.js";
 import type { RepositorySummary } from "@lore/shared/types.js";
 
-function responseCookies(response: { headers: Record<string, string | string[] | number | undefined> }): string[] {
+function responseCookies(response: {
+  headers: Record<string, string | string[] | number | undefined>;
+}): string[] {
   const values = Array.isArray(response.headers["set-cookie"])
     ? response.headers["set-cookie"]
     : [response.headers["set-cookie"]];
-  return values.flatMap((value) => typeof value === "string" ? value.split(/,(?=\s*[^;,]+=)/) : []);
+  return values.flatMap((value) =>
+    typeof value === "string" ? value.split(/,(?=\s*[^;,]+=)/) : []
+  );
 }
 
 function requestCookie(setCookie: string): string {
@@ -51,51 +55,60 @@ describe("single-token local product mode", () => {
     const githubFetch = vi.fn(async (input: string | URL | Request) => {
       const url = input instanceof Request ? input.url : String(input);
       if (url.includes("/user/emails")) {
-        return new Response(JSON.stringify([{ email: "casey@acme.example", primary: true, verified: true }]), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
+        return new Response(
+          JSON.stringify([{ email: "casey@acme.example", primary: true, verified: true }]),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
       }
       if (url.includes("/user/repos")) {
-        return new Response(JSON.stringify([
-          {
-            id: 73421010,
-            name: "soho-home",
-            full_name: "D3R/soho-home",
-            private: true,
-            archived: false,
-            default_branch: "master",
-            description: "Organisation repository",
-            clone_url: "https://github.com/D3R/soho-home.git",
-            html_url: "https://github.com/D3R/soho-home",
-            owner: { login: "D3R" }
-          },
-          {
-            id: 22,
-            name: "personal-repository",
-            full_name: "casey-hall/personal-repository",
-            private: false,
-            archived: false,
-            default_branch: "main",
-            clone_url: "https://github.com/casey-hall/personal-repository.git",
-            html_url: "https://github.com/casey-hall/personal-repository",
-            owner: { login: "casey-hall" }
-          }
-        ]), { status: 200, headers: { "content-type": "application/json" } });
+        return new Response(
+          JSON.stringify([
+            {
+              id: 73421010,
+              name: "soho-home",
+              full_name: "D3R/soho-home",
+              private: true,
+              archived: false,
+              default_branch: "master",
+              description: "Organisation repository",
+              clone_url: "https://github.com/D3R/soho-home.git",
+              html_url: "https://github.com/D3R/soho-home",
+              owner: { login: "D3R" }
+            },
+            {
+              id: 22,
+              name: "personal-repository",
+              full_name: "casey-hall/personal-repository",
+              private: false,
+              archived: false,
+              default_branch: "main",
+              clone_url: "https://github.com/casey-hall/personal-repository.git",
+              html_url: "https://github.com/casey-hall/personal-repository",
+              owner: { login: "casey-hall" }
+            }
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
       }
       if (url.endsWith("/user")) {
-        return new Response(JSON.stringify({
-          id: 1,
-          login: "casey-hall",
-          name: "Casey Hall",
-          email: "casey@acme.example",
-          html_url: "https://github.com/casey-hall",
-          avatar_url: "https://avatars.example/casey.png",
-          bio: "Engineering lead",
-          company: "Acme",
-          location: "London",
-          blog: "https://example.test"
-        }), { status: 200, headers: { "content-type": "application/json" } });
+        return new Response(
+          JSON.stringify({
+            id: 1,
+            login: "casey-hall",
+            name: "Casey Hall",
+            email: "casey@acme.example",
+            html_url: "https://github.com/casey-hall",
+            avatar_url: "https://avatars.example/casey.png",
+            bio: "Engineering lead",
+            company: "Acme",
+            location: "London",
+            blog: "https://example.test"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
       }
       throw new Error(`Unexpected GitHub request: ${url}`);
     });
@@ -123,7 +136,7 @@ describe("single-token local product mode", () => {
     ]);
     expect(repositoryOptions.items[0]).toMatchObject({ private: true, defaultBranch: "master" });
     const repositoryRequest = githubFetch.mock.calls
-      .map(([input]) => input instanceof Request ? input.url : String(input))
+      .map(([input]) => (input instanceof Request ? input.url : String(input)))
       .find((url) => url.includes("/user/repos"));
     expect(repositoryRequest).toBeDefined();
     const repositoryQuery = new URL(repositoryRequest!).searchParams;
@@ -137,9 +150,11 @@ describe("single-token local product mode", () => {
       payload: { name: "Personal Experiments", slug: "personal-experiments" }
     });
     expect(createdOrganisation.statusCode).toBe(201);
+    const createdOrganisationId = createdOrganisation.json<{ id: string }>().id;
     expect(String(createdOrganisation.headers["set-cookie"])).not.toContain("Secure");
-    const sessionCookie = responseCookies(createdOrganisation)
-      .find((value) => value.trim().startsWith("lore_session="));
+    const sessionCookie = responseCookies(createdOrganisation).find((value) =>
+      value.trim().startsWith("lore_session=")
+    );
     expect(sessionCookie).toBeDefined();
 
     const missingOrigin = await app.inject({
@@ -169,11 +184,17 @@ describe("single-token local product mode", () => {
       headers: { cookie: requestCookie(sessionCookie!) }
     });
     const csrfBody = csrf.json<{ enabled: boolean; token?: string }>();
-    const csrfCookie = responseCookies(csrf)
-      .find((value) => !value.trim().startsWith("lore_session="));
+    const csrfCookie = responseCookies(csrf).find((value) => value.trim().startsWith("lore_csrf="));
     expect(csrfBody.enabled).toBe(true);
     expect(csrfBody.token).toBeTruthy();
     expect(csrfCookie).toBeDefined();
+    expect(csrfCookie).toContain("Path=/;");
+    expect(responseCookies(csrf)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("_csrf=;"),
+        expect.stringContaining("Path=/api/auth/")
+      ])
+    );
 
     const protectedMutation = await app.inject({
       method: "PATCH",
@@ -187,6 +208,28 @@ describe("single-token local product mode", () => {
     });
     expect(protectedMutation.statusCode).toBe(200);
     expect(protectedMutation.json()).toMatchObject({ name: "Casey With CSRF" });
+
+    const switchedOrganisation = await app.inject({
+      method: "POST",
+      url: "/api/organisations/org_acme/switch",
+      headers: {
+        cookie: `${requestCookie(sessionCookie!)}; ${requestCookie(csrfCookie!)}`,
+        origin: "http://localhost:5173",
+        "csrf-token": csrfBody.token!
+      }
+    });
+    expect(switchedOrganisation.statusCode).toBe(200);
+    expect(switchedOrganisation.json()).toEqual({ activeOrganisationId: "org_acme" });
+    const switchedSessionCookie = responseCookies(switchedOrganisation).find((value) =>
+      value.trim().startsWith("lore_session=")
+    );
+    expect(switchedSessionCookie).toBeDefined();
+    const switchedSession = await app.inject({
+      method: "GET",
+      url: "/api/auth/session",
+      headers: { cookie: requestCookie(switchedSessionCookie!) }
+    });
+    expect(switchedSession.json()).toMatchObject({ activeOrganisation: { id: "org_acme" } });
 
     const connected = await app.inject({
       method: "POST",
@@ -223,30 +266,40 @@ describe("single-token local product mode", () => {
       initialImportsQueued: 2,
       skipped: [{ fullName: "D3R/soho-home", reason: "duplicate_request" }]
     });
-    expect(connected.json<{ items: RepositorySummary[] }>().items.map((repository) => `${repository.owner}/${repository.name}`)).toEqual([
-      "D3R/soho-home",
-      "casey-hall/personal-repository"
-    ]);
-    expect(jobs.jobs.filter((job) =>
-      job.name === "github.import" && job.payload.limit === "all" && job.payload.authMode === "token"
-    )).toHaveLength(2);
+    expect(
+      connected
+        .json<{ items: RepositorySummary[] }>()
+        .items.map((repository) => `${repository.owner}/${repository.name}`)
+    ).toEqual(["D3R/soho-home", "casey-hall/personal-repository"]);
+    expect(
+      jobs.jobs.filter(
+        (job) =>
+          job.name === "github.import" &&
+          job.payload.limit === "all" &&
+          job.payload.authMode === "token"
+      )
+    ).toHaveLength(2);
     expect(jobs.schedulers).toHaveLength(2);
-    expect(jobs.schedulers).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "github.import", everyMs: 3_600_000 })
-    ]));
+    expect(jobs.schedulers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "github.import", everyMs: 3_600_000 })
+      ])
+    );
     expect(jobs.schedulers.every((scheduler) => scheduler.payload.limit === 100)).toBe(true);
 
     const repeated = await app.inject({
       method: "POST",
       url: "/api/repositories/batch",
       payload: {
-        repositories: [{
-          provider: "github",
-          providerRepositoryId: "73421010",
-          owner: "D3R",
-          name: "soho-home",
-          defaultBranch: "master"
-        }]
+        repositories: [
+          {
+            provider: "github",
+            providerRepositoryId: "73421010",
+            owner: "D3R",
+            name: "soho-home",
+            defaultBranch: "master"
+          }
+        ]
       }
     });
     expect(repeated.statusCode).toBe(201);
@@ -256,5 +309,46 @@ describe("single-token local product mode", () => {
       skipped: [{ fullName: "D3R/soho-home", reason: "already_connected" }]
     });
     await app.close();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("GitHub should not be required after the local identity is persisted");
+      })
+    );
+    const restarted = await createApp({
+      demoMode: false,
+      logger: false,
+      dependencies: { store, jobs: new InMemoryJobDispatcher() }
+    });
+    const bootstrapAfterRestart = await restarted.inject({ method: "GET", url: "/api/bootstrap" });
+    const bootstrapBody = bootstrapAfterRestart.json<{
+      organisation: { id: string };
+      repositories: RepositorySummary[];
+    }>();
+    expect(bootstrapAfterRestart.statusCode).toBe(200);
+    expect(bootstrapBody).toMatchObject({
+      organisation: { id: "org_acme" }
+    });
+    expect(bootstrapBody.repositories).toEqual(
+      expect.arrayContaining([expect.objectContaining({ owner: "D3R", name: "soho-home" })])
+    );
+    const selectedOrganisation = await restarted.inject({
+      method: "GET",
+      url: "/api/bootstrap",
+      headers: { "x-lore-organisation-id": createdOrganisationId }
+    });
+    expect(selectedOrganisation.statusCode).toBe(200);
+    expect(selectedOrganisation.json()).toMatchObject({
+      organisation: { id: createdOrganisationId, name: "Personal Experiments" },
+      repositories: []
+    });
+    const foreignOrganisation = await restarted.inject({
+      method: "GET",
+      url: "/api/bootstrap",
+      headers: { "x-lore-organisation-id": "org-not-a-membership" }
+    });
+    expect(foreignOrganisation.statusCode).toBe(403);
+    await restarted.close();
   });
 });

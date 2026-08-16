@@ -168,6 +168,8 @@ The worker intentionally refuses an in-memory production path. Set `DATABASE_URL
 
 Run `npm run local:status`, `npm run local:logs`, and `npm run github:check -- OWNER/REPOSITORY`. Confirm PAT reach, Pull requests/Issues read permissions, organisation approval, and SAML access. Inspect structured `job.failed` output without printing any credential.
 
+Local authentication is persisted after the first successful identity lookup, so a GitHub rate limit or temporary outage does not block indexing, MCP, search, or other local-only operations after restart. GitHub imports are serialised at a conservative 1,000 requests/hour by default and automatically wait for the provider's reset headers before continuing. See [GitHub rate-limit safety](github.md#rate-limit-safety-and-automatic-continuation).
+
 ### A candidate remains weak
 
 One comment is an observation, not an organisation-wide rule. Import more independent PRs, narrow the scope, or explicitly confirm the item as human knowledge.

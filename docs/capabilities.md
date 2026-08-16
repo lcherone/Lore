@@ -73,10 +73,11 @@ Every native API mode defaults to `127.0.0.1`. In full production, the API enfor
 | `POST /api/repositories/:id/index`         | Queue trusted-root server indexing or return a truthful demo result |
 | `PUT /api/repositories/:id/analysis`       | Accept a bounded, tenant-checked local graph upload                 |
 | `POST /api/repositories/:id/github-import` | Queue bounded or complete merged-PR history import                  |
+| `POST /api/repositories/:id/knowledge-extraction` | Replay stored repository evidence through bounded AI extraction batches |
 | `DELETE /api/repositories/:id`             | Confirmed repository deletion and dependent-knowledge challenge     |
 | `PATCH /api/repositories/:id/retention`    | Update evidence-retention controls                                  |
-| `GET /api/repositories/:id/entities`       | Read the repository entity graph                                    |
-| `GET /api/repositories/:id/relationships`  | Read the repository relationship graph                              |
+| `GET /api/repositories/:id/entities`       | Search and page through the repository entity graph                 |
+| `GET /api/repositories/:id/relationships`  | Search and page through enriched source-to-target relationships     |
 
 ### Context, sessions, and verification
 
@@ -131,11 +132,11 @@ Every native API mode defaults to `127.0.0.1`. In full production, the API enfor
 | Job                 | Current executor                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------ |
 | `repository.index`  | Validates a configured trusted root, indexes AST/Git history, and persists the graph |
-| `github.import`     | Resolves PAT/App credentials, imports paginated evidence, versions edits, and queues new/changed evidence for extraction |
+| `github.import`     | Resolves PAT/App credentials, incrementally persists paginated evidence, skips unchanged per-PR checkpoints, versions edits, and immediately queues new/changed evidence for extraction |
 | `knowledge.extract` | Runs the configured mock or real OpenAI structured-output provider and creates review candidates |
 | `knowledge.health`  | Recalculates current knowledge health signals                                        |
 
-BullMQ supplies transport retries and recurring job schedulers. Repository connect queues a fresh initial job and upserts the organisation-configured sync schedule. PostgreSQL stores each API dispatch intent, its outbox state, append-only lifecycle events, attempts, errors, and terminal result summary. A 30-second API reconciler replays due outbox entries after transport recovery; scheduled jobs are registered when a worker starts them. Cancellation, operator replay controls, progress percentages, and atomic business-event-plus-outbox writes remain planned.
+BullMQ supplies transport retries and recurring job schedulers. Repository connect queues a fresh initial job and upserts the organisation-configured sync schedule. PostgreSQL stores each API dispatch intent, its outbox state, append-only lifecycle events, attempts, errors, and terminal result summary. A 30-second API reconciler replays due outbox entries after transport recovery. Worker startup reconciles completed, failed, stalled, or missing BullMQ jobs so PostgreSQL cannot remain falsely active, and scheduled retries reuse one durable run. Cancellation, operator replay controls, progress percentages, and atomic business-event-plus-outbox writes remain planned.
 
 ## Human control surface
 

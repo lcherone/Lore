@@ -37,6 +37,8 @@ node /Users/dev/Lore/dist/cli.js index
 
 `connect` discovers the active organisation and repository IDs from the local service. It writes private, mode-600 files under `.lore/` and adds `.lore/` to the checkout’s local Git exclude. Nothing needs to be copied into `.env`.
 
+Every subsequent CLI/MCP request sends the organisation recorded in that checkout's config. Local Lore validates that your GitHub-backed account is still a member before using it, so different checkouts can safely target different local organisations without depending on whichever organisation is open in the browser.
+
 Verify the real MCP protocol end to end:
 
 ```bash
@@ -44,7 +46,7 @@ cd /Users/dev/Lore
 npm run mcp:check -- /absolute/path/to/soho-home
 ```
 
-The check launches the built stdio server through the official MCP client SDK, lists its tools, calls `lore_search`, and confirms that the result came from persistent service authority.
+The check launches the built stdio server through the official MCP client SDK, lists its tools, calls `lore_search`, confirms that the result came from persistent service authority, and verifies that `lore_find_history` returns object-backed structured content.
 
 ## Client configuration
 
@@ -116,7 +118,7 @@ context when Lore reports an unknown or service error.
 | `lore_get_context` | Read the latest prepared context with priority and provenance preserved. |
 | `lore_search` | Search active knowledge, evidence, and indexed symbols. |
 | `lore_lookup_symbol` | Resolve files and symbols from the deterministic local graph. |
-| `lore_find_history` | Read bounded local Git history without shell interpolation. |
+| `lore_find_history` | Read bounded local Git history without shell interpolation. Structured results contain `path`, `count`, and `commits`. |
 | `lore_get_rules` | Return active rules and explicit policies separately from preferences. |
 | `lore_get_decisions` | Return evidence-backed decisions and their scope. |
 | `lore_get_impact` | Traverse bounded downstream relationships with confidence and depth limits. |
@@ -144,6 +146,7 @@ The token is bound to its user and organisation, can be revoked in Settings, and
 - `not connected`: start Lore with `npm run local:start`, then run `connect` again from the target checkout.
 - `repository is not connected`: add it through the browser’s token-backed picker first.
 - `MCP tool error`: run `npm run local:check`, then inspect `npm run local:logs`.
+- `structuredContent returned an array instead of an object`: rebuild with `npm run build`, restart the MCP client so it launches the new server bundle, then run `npm run mcp:check -- /absolute/path/to/checkout`.
 - `service-backed structured content` check fails: rebuild with `npm run build` and confirm `.lore/config.json` says `"mode": "service"`.
 - empty symbol results: run `node /Users/dev/Lore/dist/cli.js index` from the checkout.
 - GitHub history is empty: the PAT may not have repository access, organisation approval, or SAML SSO authorisation; run `npm run github:check -- OWNER/REPOSITORY`.

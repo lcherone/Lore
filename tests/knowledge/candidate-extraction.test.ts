@@ -27,7 +27,20 @@ async function dispositionFor(statement: string): Promise<EvidenceComparisonDisp
       title: "Extracted comparison candidate",
       statement,
       rationale: "Explicitly supplied for deterministic comparison testing.",
-      proposedScope: {},
+      proposedScope: {
+        organisation: null,
+        repository: null,
+        paths: null,
+        excludedPaths: null,
+        symbols: null,
+        subsystem: null,
+        language: null,
+        framework: null,
+        team: null,
+        reviewer: null,
+        integration: null,
+        ticketType: null
+      },
       evidenceIds: [id],
       possibleContradictionIds: []
     }]

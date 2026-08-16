@@ -4,7 +4,11 @@ import type {
   ChangeObservation,
   ChangedFile,
   CodeEntity,
+  CodeEntityListQuery,
+  CodeGraphPage,
   CodeRelationship,
+  CodeRelationshipListQuery,
+  CodeRelationshipView,
   ContextPackage,
   ContextPackageRecord,
   DashboardSnapshot,
@@ -62,12 +66,19 @@ export interface UserProfileUpdate {
 
 export interface PullRequestImport {
   externalId: string;
+  sourceVersion?: string;
   number: number;
   title: string;
   body: string;
   author: string;
   reviewers: string[];
-  reviewComments: Array<{ externalId: string; author: string; body: string; url?: string; occurredAt: string }>;
+  reviewComments: Array<{
+    externalId: string;
+    author: string;
+    body: string;
+    url?: string;
+    occurredAt: string;
+  }>;
   commits: string[];
   changedFiles: string[];
   rawDiff?: string;
@@ -75,10 +86,16 @@ export interface PullRequestImport {
   url: string;
 }
 
+export interface PullRequestImportOptions {
+  knownSourceVersions?: Readonly<Record<string, string>>;
+  onPullRequest?: (pullRequest: PullRequestImport) => Promise<void>;
+}
+
 export interface SourceControlProvider {
   listMergedPullRequests(
     repository: RepositorySummary,
-    limit: PullRequestImportLimit
+    limit: PullRequestImportLimit,
+    options?: PullRequestImportOptions
   ): Promise<PullRequestImport[]>;
 }
 
@@ -113,7 +130,8 @@ export interface StructuredAIRequest<T> {
   systemInstructions: string;
   applicationInstructions: string;
   untrustedSourceContent: string;
-  schema: ZodType<T>;
+  /** Provider wire schema. `parse` may normalise nullable wire fields into domain optionals. */
+  schema: ZodType<unknown>;
   parse: (value: unknown) => T;
   promptVersion: string;
 }
@@ -147,6 +165,9 @@ export interface LoreStore {
   validateMembership(organisationId: string, userId: string): Promise<void>;
   getMembershipRole(organisationId: string, userId: string): Promise<OrganisationRole>;
   signInWithGitHub(identity: GitHubUserIdentity): Promise<UserProfile>;
+  getLocalGitHubUser(credentialFingerprint: string): Promise<UserProfile | undefined>;
+  getSoleGitHubUser(): Promise<UserProfile | undefined>;
+  linkLocalGitHubCredential(userId: string, credentialFingerprint: string): Promise<void>;
   getUserProfile(userId: string): Promise<UserProfile>;
   updateUserProfile(userId: string, input: UserProfileUpdate): Promise<UserProfile>;
   getUserSettings(userId: string): Promise<UserSettings>;
@@ -166,7 +187,11 @@ export interface LoreStore {
   listAuthSessions(userId: string, currentSessionId: string): Promise<AuthSessionSummary[]>;
   listOrganisationAccess(userId: string): Promise<OrganisationAccess[]>;
   getOrganisationSettings(organisationId: string): Promise<OrganisationSettings>;
-  updateOrganisationSettings(organisationId: string, input: OrganisationSettings, actorUserId: string): Promise<OrganisationSettings>;
+  updateOrganisationSettings(
+    organisationId: string,
+    input: OrganisationSettings,
+    actorUserId: string
+  ): Promise<OrganisationSettings>;
   createApiToken(input: {
     organisationId: string;
     userId: string;
@@ -179,7 +204,10 @@ export interface LoreStore {
   getApiToken(tokenHash: string): Promise<ApiTokenRecord | undefined>;
   listApiTokens(userId: string, organisationId: string): Promise<ApiTokenSummary[]>;
   revokeApiToken(tokenId: string, userId: string, organisationId: string): Promise<void>;
-  createOrganisation(userId: string, input: { name: string; slug: string }): Promise<OrganisationAccess>;
+  createOrganisation(
+    userId: string,
+    input: { name: string; slug: string }
+  ): Promise<OrganisationAccess>;
   updateOrganisation(
     organisationId: string,
     input: { name?: string; slug?: string },
@@ -203,7 +231,24 @@ export interface LoreStore {
   removeOrganisationMember(organisationId: string, memberUserId: string): Promise<void>;
   getSnapshot(organisationId: string): Promise<DashboardSnapshot>;
   getEvidence(organisationId: string): Promise<EvidenceRecord[]>;
-  getEvidenceRevisions(organisationId: string, evidenceId: string): Promise<EvidenceRevisionRecord[]>;
+  getEvidenceRevisions(
+    organisationId: string,
+    evidenceId: string
+  ): Promise<EvidenceRevisionRecord[]>;
+  getSyncSourceVersions(
+    organisationId: string,
+    repositoryId: string,
+    provider: string,
+    stream: string
+  ): Promise<Record<string, string>>;
+  saveSyncCheckpoint(input: {
+    organisationId: string;
+    repositoryId: string;
+    provider: string;
+    stream: string;
+    externalId: string;
+    sourceVersion: string;
+  }): Promise<void>;
   getRepository(organisationId: string, repositoryId: string): Promise<RepositorySummary>;
   resolveProviderRepository(
     provider: RepositorySummary["provider"],
@@ -216,27 +261,57 @@ export interface LoreStore {
     organisationId: string,
     repositoryId: string
   ): Promise<{ entities: CodeEntity[]; relationships: CodeRelationship[] }>;
+  listCodeEntities(
+    organisationId: string,
+    repositoryId: string,
+    query: CodeEntityListQuery
+  ): Promise<CodeGraphPage<CodeEntity>>;
+  listCodeRelationships(
+    organisationId: string,
+    repositoryId: string,
+    query: CodeRelationshipListQuery
+  ): Promise<CodeGraphPage<CodeRelationshipView>>;
   getRegressions(organisationId: string, repositoryId: string): Promise<RegressionRecord[]>;
   saveAnalysis(organisationId: string, output: RepositoryAnalysisOutput): Promise<void>;
   saveKnowledgeProposal(
     organisationId: string,
     proposal: Omit<KnowledgeProposalRecord, "id" | "organisationId" | "createdAt">
   ): Promise<KnowledgeProposalRecord>;
-  createKnowledgeCandidate(organisationId: string, candidate: CandidateRecord): Promise<CandidateRecord>;
+  createKnowledgeCandidate(
+    organisationId: string,
+    candidate: CandidateRecord
+  ): Promise<CandidateRecord>;
   getCandidate(organisationId: string, candidateId: string): Promise<CandidateRecord>;
   addRepository(
     organisationId: string,
-    input: Omit<RepositorySummary, "id" | "organisationId" | "entityCount" | "relationshipCount" | "status">,
+    input: Omit<
+      RepositorySummary,
+      "id" | "organisationId" | "entityCount" | "relationshipCount" | "status"
+    >,
     actor?: string
   ): Promise<RepositorySummary>;
-  createManualKnowledge(organisationId: string, input: ManualKnowledgeInput, actor: string): Promise<KnowledgeItem>;
+  createManualKnowledge(
+    organisationId: string,
+    input: ManualKnowledgeInput,
+    actor: string
+  ): Promise<KnowledgeItem>;
   approveCandidate(
     organisationId: string,
     candidateId: string,
-    input: { statement?: string; kind?: CandidateRecord["kind"]; scope?: CandidateRecord["scope"]; reason: string },
+    input: {
+      statement?: string;
+      kind?: CandidateRecord["kind"];
+      scope?: CandidateRecord["scope"];
+      reason: string;
+    },
     actor: string
   ): Promise<KnowledgeItem>;
-  rejectCandidate(organisationId: string, candidateId: string, reason: string, actor: string): Promise<void>;
+  rejectCandidate(
+    organisationId: string,
+    candidateId: string,
+    reason: string,
+    actor: string
+  ): Promise<void>;
   mergeCandidate(
     organisationId: string,
     candidateId: string,
@@ -271,8 +346,15 @@ export interface LoreStore {
   updateSession(organisationId: string, session: AgentSession): Promise<AgentSession>;
   abandonSession(organisationId: string, sessionId: string, reason: string): Promise<AgentSession>;
   getSessionEvents(organisationId: string, sessionId: string): Promise<SessionEvent[]>;
-  saveContextPackage(organisationId: string, sessionId: string, context: ContextPackage): Promise<ContextPackageRecord>;
-  getLatestContextPackage(organisationId: string, sessionId: string): Promise<ContextPackageRecord | undefined>;
+  saveContextPackage(
+    organisationId: string,
+    sessionId: string,
+    context: ContextPackage
+  ): Promise<ContextPackageRecord>;
+  getLatestContextPackage(
+    organisationId: string,
+    sessionId: string
+  ): Promise<ContextPackageRecord | undefined>;
   saveReport(
     organisationId: string,
     report: SafetyReport,
@@ -282,8 +364,17 @@ export interface LoreStore {
   getChangeObservation(organisationId: string, observationId: string): Promise<ChangeObservation>;
   /** Creates new evidence or appends an immutable revision when its content hash changes. */
   ingestEvidence(records: EvidenceRecord[]): Promise<number>;
-  hasIngestionReceipt(organisationId: string, provider: string, externalId: string): Promise<boolean>;
-  saveIngestionReceipt(organisationId: string, provider: string, externalId: string, eventType: string): Promise<void>;
+  hasIngestionReceipt(
+    organisationId: string,
+    provider: string,
+    externalId: string
+  ): Promise<boolean>;
+  saveIngestionReceipt(
+    organisationId: string,
+    provider: string,
+    externalId: string,
+    eventType: string
+  ): Promise<void>;
 }
 
 export interface GitChangeReader {

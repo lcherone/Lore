@@ -53,6 +53,8 @@ curl -b /tmp/lore-demo.cookies http://127.0.0.1:3001/api/auth/session
 
 In local mode, no login call is needed: the first request reads the GitHub identity through the configured PAT and creates the user/workspace when necessary. In SaaS mode, GitHub login is a browser redirect; Lore validates state and PKCE, reads the verified identity server-side, discards the OAuth token, sets the Lore cookie, and redirects to the UI.
 
+A trusted local CLI/MCP client sends `x-lore-organisation-id` from `.lore/config.json`. Lore honours it only when falling back to the loopback local identity and revalidates that identity's current membership. Browser sessions and SaaS API tokens keep using their opaque session/token organisation and cannot be overridden by this header.
+
 Create an organisation after login:
 
 ```bash
@@ -87,10 +89,11 @@ POST /api/repositories/batch
 POST /api/repositories/:id/index
 PUT  /api/repositories/:id/analysis
 POST /api/repositories/:id/github-import
+POST /api/repositories/:id/knowledge-extraction
 PATCH /api/repositories/:id/retention
 DELETE /api/repositories/:id?confirm=OWNER%2FNAME
-GET  /api/repositories/:id/entities
-GET  /api/repositories/:id/relationships
+GET  /api/repositories/:id/entities?search=QUERY&type=TYPE&page=1&pageSize=50
+GET  /api/repositories/:id/relationships?search=QUERY&entityId=ENTITY_ID&page=1&pageSize=50
 GET  /api/github/install
 GET  /api/github/status
 GET  /api/github/callback
@@ -98,6 +101,10 @@ POST /api/github/webhook
 ```
 
 Worker-backed index and import requests return `202` with a job ID. Demo mode labels these responses `simulated`; it never claims an in-memory job was executed. The trusted local CLI uses `PUT /analysis` to upload a bounded sanitised graph, while browser requests cannot register filesystem paths.
+
+`POST /api/repositories/:id/knowledge-extraction` queues AI extraction from evidence already stored in PostgreSQL, so correcting an AI configuration or schema failure does not require another GitHub crawl. By default, evidence already linked to a candidate or approved knowledge item is skipped. Send `{ "includeProcessed": true }` only for an intentional full re-evaluation. Evidence is divided into bounded batches before jobs are queued.
+
+The graph routes are paginated and return `{ items, count, total, page, pageSize, hasMore }`. Relationship items include bounded source and target entity summaries. The product UI exposes the same search, type filter, related-entity focus, and paging controls through **Repositories → Browse graph**.
 
 ## Knowledge
 
@@ -156,9 +163,9 @@ Exact resubmissions reuse the same stable evidence identity and return `evidence
 
 Filter retained evidence with `GET /api/evidence?type=communication&repositoryId=REPOSITORY_ID&limit=50`. Supported filters are `type`, `provider`, `repositoryId`, and `limit` (1–1,000); results are newest first and include `total` plus `truncated`.
 
-`GET /api/evidence/:id/revisions` returns every immutable snapshot for that evidence item in version order. GitHub imports append a revision and re-run extraction when an upstream PR body or retained review comment changes; an unchanged re-import creates neither a revision nor AI work.
+`GET /api/evidence/:id/revisions` returns every immutable snapshot for that evidence item in version order. GitHub imports commit each completed PR and queue its new/changed evidence for extraction immediately. The retained GitHub update version lets a restarted crawl skip unchanged PR detail collections. Upstream edits append a revision and re-run extraction; an unchanged re-import creates neither a revision nor AI work.
 
-`GET /api/jobs` returns organisation-scoped durable job runs newest first. Each run includes its name, queued/dispatched/running/retrying/succeeded/dead-letter state, attempts, bounded error/result summary, and ordered lifecycle events. It never returns GitHub/OpenAI credentials or the outbox payload. When Redis is unavailable, enqueue responses use `status: "dispatch_pending"`; PostgreSQL retains the intent and the API reconciles it after transport recovery.
+`GET /api/jobs` returns organisation-scoped durable job runs newest first. Each run includes its name, queued/dispatched/running/retrying/succeeded/dead-letter state, attempts, bounded error/result summary, and ordered lifecycle events. It never returns GitHub/OpenAI credentials or the outbox payload. When Redis is unavailable, enqueue responses use `status: "dispatch_pending"`; PostgreSQL retains the intent and the API reconciles it after transport recovery. Worker startup also reconciles active PostgreSQL rows against BullMQ, closing terminal, stalled, completed, or missing transport jobs instead of leaving false `running` state.
 
 Retention settings are applied before GitHub evidence is written. Summary-only mode cannot also retain raw diffs or snippets. Repository deletion requires the exact `owner/name`; repository-scoped rows cascade, while organisation-wide knowledge backed by removed evidence is challenged for reconfirmation.
 

@@ -10,9 +10,15 @@ import { CliRuntime } from "../../cli/src/runtime.js";
 const runtime = new CliRuntime(process.env.LORE_REPOSITORY_PATH ?? process.cwd());
 const server = new McpServer({ name: "lore", version: "0.1.0" });
 
+const toStructuredContent = (value: unknown): Record<string, unknown> => {
+  if (Array.isArray(value)) return { items: value };
+  if (value && typeof value === "object") return value as Record<string, unknown>;
+  return { value };
+};
+
 const result = (value: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
-  structuredContent: value && typeof value === "object" ? (value as Record<string, unknown>) : { value }
+  structuredContent: toStructuredContent(value)
 });
 
 server.registerTool(
@@ -76,9 +82,24 @@ server.registerTool(
   {
     title: "Find Git history",
     description: "Return bounded local Git history for a repository path without shell interpolation.",
-    inputSchema: z.object({ path: z.string().optional(), limit: z.number().int().min(1).max(500).default(50) })
+    inputSchema: z.object({ path: z.string().optional(), limit: z.number().int().min(1).max(500).default(50) }),
+    outputSchema: z.object({
+      path: z.string().nullable(),
+      count: z.number().int().nonnegative(),
+      commits: z.array(
+        z.object({
+          sha: z.string(),
+          occurredAt: z.string(),
+          subject: z.string(),
+          paths: z.array(z.string())
+        })
+      )
+    })
   },
-  async ({ path, limit }) => result(await runtime.git.history(runtime.project.root, path, limit))
+  async ({ path, limit }) => {
+    const commits = await runtime.git.history(runtime.project.root, path, limit);
+    return result({ path: path ?? null, count: commits.length, commits });
+  }
 );
 
 server.registerTool(

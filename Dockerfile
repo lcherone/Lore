@@ -6,9 +6,11 @@ RUN apt-get update \
 COPY package.json package-lock.json* ./
 RUN npm ci
 COPY . .
-# Prisma's generated types plus the strict monorepo check can exceed Node's
-# architecture-dependent default heap in otherwise adequately sized builders.
-RUN NODE_OPTIONS=--max-old-space-size=2048 npm run build
+# Keep the compiler below the standard 2 GiB Colima VM ceiling so BuildKit and
+# the guest OS retain working memory while still avoiding Node's smaller
+# architecture-dependent default heap. The local rebuild command stops the
+# containers first so this bounded heap fits inside a 2 GiB Colima VM.
+RUN NODE_OPTIONS=--max-old-space-size=1024 npm run build
 
 FROM builder AS tools
 

@@ -32,6 +32,9 @@ import {
 } from "lucide-react";
 import type {
   CandidateRecord,
+  CodeEntity,
+  CodeGraphPage,
+  CodeRelationshipView,
   CommunicationEvidenceAnalysis,
   CommunicationEvidenceInput,
   CommunicationSourceType,
@@ -68,6 +71,150 @@ import {
 } from "./api.js";
 
 const MAX_REPOSITORIES_PER_BATCH = 500;
+const CODE_ENTITY_TYPES: CodeEntity["type"][] = [
+  "file", "class", "interface", "trait", "function", "method", "constant", "event",
+  "listener", "service", "repository", "controller", "route", "database_table",
+  "configuration_key", "external_api", "test"
+];
+
+function RepositoryGraphModal({
+  repository,
+  onClose
+}: {
+  repository: RepositorySummary;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"entities" | "relationships">("entities");
+  const [search, setSearch] = useState("");
+  const [entityType, setEntityType] = useState<CodeEntity["type"] | "all">("all");
+  const [page, setPage] = useState(1);
+  const [entities, setEntities] = useState<CodeGraphPage<CodeEntity>>();
+  const [relationships, setRelationships] = useState<CodeGraphPage<CodeRelationshipView>>();
+  const [focusedEntity, setFocusedEntity] = useState<CodeEntity>();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(undefined);
+    const timer = window.setTimeout(() => {
+      const request = tab === "entities"
+        ? loreApi.repositoryEntities(repository.id, {
+            search: search.trim() || undefined,
+            type: entityType === "all" ? undefined : entityType,
+            page,
+            pageSize: 50
+          }).then((result) => { if (active) setEntities(result); })
+        : loreApi.repositoryRelationships(repository.id, {
+            search: search.trim() || undefined,
+            entityId: focusedEntity?.id,
+            page,
+            pageSize: 50
+          }).then((result) => { if (active) setRelationships(result); });
+      void request.catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Code graph could not be loaded");
+      }).finally(() => {
+        if (active) setLoading(false);
+      });
+    }, 200);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [entityType, focusedEntity?.id, page, repository.id, search, tab]);
+
+  const changeTab = (next: "entities" | "relationships"): void => {
+    setTab(next);
+    setPage(1);
+    setSearch("");
+    if (next === "entities") setFocusedEntity(undefined);
+  };
+  const inspectRelationships = (entity: CodeEntity): void => {
+    setFocusedEntity(entity);
+    setTab("relationships");
+    setSearch("");
+    setPage(1);
+  };
+  const result = tab === "entities" ? entities : relationships;
+  const first = result?.total ? (result.page - 1) * result.pageSize + 1 : 0;
+  const last = result ? (result.page - 1) * result.pageSize + result.count : 0;
+
+  return (
+    <Modal
+      title={`${repository.owner}/${repository.name} code graph`}
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <span className="modal-note">
+            {result ? `${first.toLocaleString()}–${last.toLocaleString()} of ${result.total.toLocaleString()}` : "Loading graph…"}
+          </span>
+          <Button variant="secondary" disabled={!result || result.page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</Button>
+          <Button variant="secondary" disabled={!result?.hasMore || loading} onClick={() => setPage((value) => value + 1)}>Next</Button>
+          <Button variant="primary" onClick={onClose}>Close</Button>
+        </>
+      }
+    >
+      <div className="graph-browser">
+        <div className="graph-browser__summary">
+          <div><Braces size={18} /><span><strong>{repository.entityCount.toLocaleString()}</strong> entities</span></div>
+          <div><Link2 size={18} /><span><strong>{repository.relationshipCount.toLocaleString()}</strong> relationships</span></div>
+          <small>Indexed at {repository.lastIndexedCommit?.slice(0, 10) ?? "unknown commit"}</small>
+        </div>
+        <div className="graph-browser__tabs" role="tablist" aria-label="Code graph data">
+          <button className={tab === "entities" ? "is-active" : ""} role="tab" aria-selected={tab === "entities"} onClick={() => changeTab("entities")}>Entities</button>
+          <button className={tab === "relationships" ? "is-active" : ""} role="tab" aria-selected={tab === "relationships"} onClick={() => changeTab("relationships")}>Relationships</button>
+        </div>
+        <div className="graph-browser__toolbar">
+          <label>
+            <Search size={15} />
+            <input
+              aria-label={`Search ${tab}`}
+              placeholder={tab === "entities" ? "Search name, symbol, or path…" : "Search relationship, source, or target…"}
+              value={search}
+              onChange={(event) => { setSearch(event.target.value); setPage(1); }}
+            />
+          </label>
+          {tab === "entities" && (
+            <select aria-label="Entity type" value={entityType} onChange={(event) => { setEntityType(event.target.value as CodeEntity["type"] | "all"); setPage(1); }}>
+              <option value="all">All entity types</option>
+              {CODE_ENTITY_TYPES.map((type) => <option value={type} key={type}>{type.replaceAll("_", " ")}</option>)}
+            </select>
+          )}
+          {tab === "relationships" && focusedEntity && (
+            <button className="graph-browser__focus" onClick={() => { setFocusedEntity(undefined); setPage(1); }}>
+              Related to {focusedEntity.name} <span aria-hidden="true">×</span>
+            </button>
+          )}
+        </div>
+        {error ? <div className="form-error">{error}</div> : loading && !result ? <div className="loading-line" /> : null}
+        {tab === "entities" && entities && (
+          <div className="graph-list graph-list--entities">
+            {entities.items.map((entity) => (
+              <button key={entity.id} onClick={() => inspectRelationships(entity)}>
+                <span className="graph-kind">{entity.type.replaceAll("_", " ")}</span>
+                <span><strong>{entity.qualifiedName}</strong><small>{entity.path}{entity.startLine ? `:${entity.startLine}` : ""} · {entity.language}</small></span>
+                <span>View links <ChevronRight size={15} /></span>
+              </button>
+            ))}
+            {!loading && entities.items.length === 0 && <EmptyState title="No entities found" body="Try a different name, path, symbol, or entity type." />}
+          </div>
+        )}
+        {tab === "relationships" && relationships && (
+          <div className="graph-list graph-list--relationships">
+            {relationships.items.map((relationship) => (
+              <article key={relationship.id}>
+                <span><strong>{relationship.sourceEntity.qualifiedName}</strong><small>{relationship.sourceEntity.path}</small></span>
+                <span className="graph-link-type"><ArrowRight size={15} /><em>{relationship.relationshipType.replaceAll("_", " ")}</em></span>
+                <span><strong>{relationship.targetEntity.qualifiedName}</strong><small>{relationship.targetEntity.path}</small></span>
+                <small>{Math.round(relationship.confidence * 100)}% · {relationship.source.replaceAll("_", " ")}</small>
+              </article>
+            ))}
+            {!loading && relationships.items.length === 0 && <EmptyState title="No relationships found" body="Try a different source, target, relationship type, or entity." />}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
 
 const formatDate = (value: string): string =>
   new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(
@@ -1110,7 +1257,8 @@ export function KnowledgePage({
   items,
   repositories,
   onCreate,
-  onStatusChange
+  onStatusChange,
+  onReviewCandidates
 }: {
   items: KnowledgeItem[];
   repositories: RepositorySummary[];
@@ -1120,6 +1268,7 @@ export function KnowledgePage({
     status: "challenged" | "archived",
     reason: string
   ) => Promise<void>;
+  onReviewCandidates: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState("all");
@@ -1259,6 +1408,15 @@ export function KnowledgePage({
             </span>
           </button>
         ))}
+        {!filtered.length && (
+          <EmptyState
+            title={items.length ? "No knowledge matches" : "No approved knowledge yet"}
+            body={items.length
+              ? "Try a different search or classification."
+              : "AI extraction creates evidence-backed candidates first. Review and approve them before they become trusted knowledge."}
+            action={!items.length ? <Button variant="secondary" onClick={onReviewCandidates}>Review candidates</Button> : undefined}
+          />
+        )}
       </div>
       {selected && !action && (
         <Modal
@@ -1451,6 +1609,7 @@ export function RepositoriesPage({
   onConnect,
   onIndex,
   onImport,
+  onExtract,
   onDelete,
   onRetention,
   defaultImportLimit = 100,
@@ -1468,6 +1627,7 @@ export function RepositoriesPage({
   onConnect: (inputs: Array<Record<string, unknown>>) => Promise<RepositoryBatchConnectionResult>;
   onIndex: (repository: RepositorySummary) => Promise<void>;
   onImport: (repository: RepositorySummary, limit: PullRequestImportLimit) => Promise<void>;
+  onExtract: (repository: RepositorySummary) => Promise<void>;
   onDelete: (repository: RepositorySummary, confirmation: string) => Promise<void>;
   onRetention: (
     repository: RepositorySummary,
@@ -1478,6 +1638,7 @@ export function RepositoriesPage({
 }) {
   const [connectOpen, setConnectOpen] = useState(false);
   const [importRepository, setImportRepository] = useState<RepositorySummary>();
+  const [graphRepository, setGraphRepository] = useState<RepositorySummary>();
   const [installationId, setInstallationId] = useState(initialInstallationId ?? "");
   const [importLimit, setImportLimit] = useState<PullRequestImportLimit>(defaultImportLimit);
   const [repositoryReference, setRepositoryReference] = useState("");
@@ -1692,6 +1853,13 @@ export function RepositoriesPage({
               </div>
             </dl>
             <div className="repo-actions">
+              <Button
+                variant="quiet"
+                onClick={() => setGraphRepository(repository)}
+                icon={<Braces size={15} />}
+              >
+                Browse graph
+              </Button>
               {repository.provider === "github" && (
                 <Button
                   variant="quiet"
@@ -1701,6 +1869,13 @@ export function RepositoriesPage({
                   Import history
                 </Button>
               )}
+              <Button
+                variant="quiet"
+                onClick={() => void onExtract(repository)}
+                icon={<Sparkles size={15} />}
+              >
+                Extract evidence
+              </Button>
               <Button
                 variant="secondary"
                 onClick={() => void onIndex(repository)}
@@ -1736,10 +1911,13 @@ export function RepositoriesPage({
                 Delete
               </Button>
             </div>
-            <ChevronRight size={18} />
+            <button className="repo-open" aria-label={`Browse ${repository.owner}/${repository.name} code graph`} onClick={() => setGraphRepository(repository)}>
+              <ChevronRight size={18} />
+            </button>
           </article>
         ))}
       </div>
+      {graphRepository && <RepositoryGraphModal repository={graphRepository} onClose={() => setGraphRepository(undefined)} />}
       {connectOpen && (
         <Modal
           title="Connect GitHub repositories"
@@ -2343,6 +2521,9 @@ const jobName = (value: JobRunRecord["name"]): string => ({
   "knowledge.health": "Knowledge health review"
 })[value];
 
+const jobProgressMessage = (job: JobRunRecord): string | undefined =>
+  job.events?.toReversed().find((event) => event.message?.startsWith("GitHub "))?.message;
+
 export function JobsPage() {
   const [jobs, setJobs] = useState<JobRunRecord[]>([]);
   const [error, setError] = useState<string>();
@@ -2387,6 +2568,7 @@ export function JobsPage() {
                 <h2>{jobName(job.name)}</h2>
                 <p>{job.state.replace("_", " ")} · queued {relativeTime(job.queuedAt)}</p>
                 {job.errorMessage && <small>{job.errorMessage}</small>}
+                {!job.errorMessage && jobProgressMessage(job) && <small className="job-progress">{jobProgressMessage(job)}</small>}
               </div>
               <div><span>Attempt</span><strong>{job.attempt}/{job.maximumAttempts}</strong></div>
               <div><span>Events</span><strong>{job.events?.length ?? 0}</strong></div>
