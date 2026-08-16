@@ -122,6 +122,18 @@ It stays quiet when nothing applies and specific when something does.
 
 The [complete feature guide](docs/features.md) includes a screenshot, usage commands, data flow, and limitations for every feature.
 
+### Install the `lore` command once
+
+The local application and the terminal command are separate processes. Starting Docker builds and runs the application, but your shell needs a one-time global link before commands such as `lore prepare` are available:
+
+```bash
+cd /Users/dev/Lore
+npm run cli:install
+npm run cli:check
+```
+
+This links `lore` to the current checkout for the active Node.js installation, so rebuilding Lore updates the command without copying another installation. If `nvm` switches to a different Node version, rerun `npm run cli:install` because each Node version has its own global package directory. No `sudo` is required with the documented `nvm` setup.
+
 ## Prepare context before code changes
 
 <p align="center">
@@ -191,11 +203,10 @@ stateDiagram-v2
 
 ## Use Lore in a local repository
 
-Build and link the CLI once:
+Install the CLI globally once:
 
 ```bash
-npm run build
-npm link
+npm run cli:install
 ```
 
 Then, from a target Git repository:
@@ -210,6 +221,8 @@ lore verify
 ```
 
 `lore init` creates owner-only `.lore/config.json`, an agent instruction file, and a local Git exclusion. `lore index` stores a local graph under `.lore/`; it never stores credentials there. In service mode it uploads only a sanitised, bounded graph envelope rather than the source checkout.
+
+Remove only the global command with `npm run cli:uninstall`. This does not stop Lore or remove its PostgreSQL, Redis, evidence, knowledge, or checkout data.
 
 For automation, put `--json` before the command:
 

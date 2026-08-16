@@ -48,9 +48,11 @@ Lore never falls back between these modes.
 From the Lore repository:
 
 ```bash
-npm run build
-npm link
+npm run cli:install
+npm run cli:check
 ```
+
+This performs a production build and uses npm's global link for the active Node.js installation. It is a one-time step. If `nvm` changes Node versions, rerun it. The command intentionally links back to this Lore checkout, so future `npm run build` executions update the installed CLI. Use `npm run cli:uninstall` to remove only the command without deleting application data.
 
 From the target Git repository:
 

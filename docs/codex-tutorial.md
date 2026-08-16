@@ -13,6 +13,13 @@
 
 This tutorial starts after Lore is running, the target checkout is connected and indexed, and the Lore MCP server has been added to Codex. It explains what “connected” means, how Codex decides to use Lore, the normal task workflow, and how to make that workflow a durable project rule.
 
+Examples using the short `lore` terminal command assume the one-time installation below. MCP itself still runs `node /Users/dev/Lore/dist/mcp.js` and does not depend on the global CLI command.
+
+```bash
+cd /Users/dev/Lore
+npm run cli:install
+```
+
 Lore does not replace Codex. Codex reads and changes the checkout; Lore supplies governed context, code-graph relationships, Git history, approved engineering knowledge, and an independent final-change check.
 
 ## The workflow in one minute
@@ -236,7 +243,7 @@ Use MCP for everyday flexibility. Use the wrapper when you want Lore to own the 
 
 ```bash
 cd /absolute/path/to/checkout
-node /Users/dev/Lore/dist/cli.js agent codex \
+lore agent codex \
   "SS-6777 investigate and fix the performance regression"
 ```
 
@@ -269,7 +276,7 @@ Reconnect from the intended checkout:
 
 ```bash
 cd /absolute/path/to/checkout
-node /Users/dev/Lore/dist/cli.js connect OWNER/REPOSITORY
+lore connect OWNER/REPOSITORY
 ```
 
 The resulting `.lore/config.json` is the authority used by both CLI and MCP requests.

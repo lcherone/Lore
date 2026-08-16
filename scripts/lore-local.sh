@@ -30,6 +30,9 @@ Usage:
   npm run local:backup  Save a timestamped PostgreSQL backup under backups/
   npm run local:install Install a macOS login service so Lore starts on boot
   npm run local:uninstall Remove the macOS login service (data is preserved)
+  npm run cli:install   Build and globally link the lore terminal command
+  npm run cli:check     Verify which lore command is on PATH
+  npm run cli:uninstall Remove only the global terminal command
 
 The stack is bound only to localhost. It runs production-built web assets,
 PostgreSQL, Redis, migrations, the API, and the background worker. GitHub user

@@ -111,14 +111,25 @@ Use **Settings → Organisation defaults** to change the initial limit, interval
 
 ## 5. Connect the local checkout and MCP
 
+Install the short global command once:
+
+```bash
+cd /Users/dev/Lore
+npm run cli:install
+```
+
+Then use it from any Git checkout:
+
 ```bash
 cd /absolute/path/to/repository
-node /Users/dev/Lore/dist/cli.js connect OWNER/REPOSITORY
-node /Users/dev/Lore/dist/cli.js index
+lore connect OWNER/REPOSITORY
+lore index
 
 cd /Users/dev/Lore
 npm run mcp:check -- /absolute/path/to/repository
 ```
+
+If you deliberately do not want a global command, `node /Users/dev/Lore/dist/cli.js ...` remains the equivalent explicit form.
 
 No extra Lore API token is needed locally. See [MCP setup](mcp.md) for Codex, Claude Desktop, Cursor, the copyable agent prompt, and remote/SaaS token setup.
 

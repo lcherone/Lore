@@ -48,8 +48,8 @@ npm run worker
 ## CLI and MCP development
 
 ```bash
-npm run build
-npm link
+npm run cli:install
+npm run cli:check
 ```
 
 From a target Git checkout:
