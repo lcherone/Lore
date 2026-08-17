@@ -14,13 +14,13 @@ describe("trusted local analysis upload", () => {
     const entityId = randomUUID();
     const response = await app.inject({
       method: "PUT",
-      url: "/api/repositories/repo_soho_ecom/analysis",
+      url: "/api/repositories/repo_example_commerce/analysis",
       payload: {
-        repositoryId: "repo_soho_ecom",
+        repositoryId: "repo_example_commerce",
         indexedAt: new Date().toISOString(),
         entities: [{
           id: entityId,
-          repositoryId: "repo_soho_ecom",
+          repositoryId: "repo_example_commerce",
           type: "file",
           name: "large-index.ts",
           qualifiedName: "large-index.ts",
@@ -36,11 +36,11 @@ describe("trusted local analysis upload", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       status: "indexed",
-      repositoryId: "repo_soho_ecom",
+      repositoryId: "repo_example_commerce",
       entities: 1,
       relationships: 0
     });
-    expect((await store.getRepository("org_acme", "repo_soho_ecom")).entityCount).toBe(1);
+    expect((await store.getRepository("org_acme", "repo_example_commerce")).entityCount).toBe(1);
     await app.close();
   });
 });

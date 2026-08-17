@@ -21,7 +21,10 @@ describe("GitHub pull request provider", () => {
       data: [
         {
           id: 10,
-          user: { login: "reviewer" },
+          user: {
+            login: "reviewer",
+            avatar_url: "https://avatars.githubusercontent.com/u/101?v=4"
+          },
           body: "Please keep the boundary explicit.",
           html_url: "https://github.example/review/10",
           submitted_at: "2026-01-01T00:00:00.000Z"
@@ -32,7 +35,10 @@ describe("GitHub pull request provider", () => {
       data: [
         {
           id: 11,
-          user: { login: "reviewer" },
+          user: {
+            login: "reviewer",
+            avatar_url: "https://avatars.githubusercontent.com/u/101?v=4"
+          },
           body: "Use the repository interface here.",
           html_url: "https://github.example/comment/11",
           created_at: "2026-01-01T01:00:00.000Z"
@@ -47,7 +53,10 @@ describe("GitHub pull request provider", () => {
       data: [
         {
           id: 12,
-          user: { login: "maintainer" },
+          user: {
+            login: "maintainer",
+            avatar_url: "https://avatars.githubusercontent.com/u/202?v=4"
+          },
           body: "Confirmed after the deploy test.",
           html_url: "https://github.example/conversation/12",
           created_at: "2026-01-01T02:00:00.000Z"
@@ -123,6 +132,9 @@ describe("GitHub pull request provider", () => {
     expect(imported.map((pullRequest) => pullRequest.number)).toEqual([8, 7]);
     expect(imported[0]).toMatchObject({
       reviewers: ["reviewer"],
+      reviewerAvatars: {
+        reviewer: "https://avatars.githubusercontent.com/u/101?v=4"
+      },
       commits: ["abc123"],
       changedFiles: ["src/service.ts"]
     });
@@ -130,6 +142,11 @@ describe("GitHub pull request provider", () => {
       "review-10",
       "11",
       "conversation-12"
+    ]);
+    expect(imported[0]!.reviewComments.map((comment) => comment.avatarUrl)).toEqual([
+      "https://avatars.githubusercontent.com/u/101?v=4",
+      "https://avatars.githubusercontent.com/u/101?v=4",
+      "https://avatars.githubusercontent.com/u/202?v=4"
     ]);
     expect(imported[0]!.rawDiff).toContain("diff --git a/src/service.ts b/src/service.ts");
     expect(listReviews).toHaveBeenCalledTimes(2);

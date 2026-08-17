@@ -62,7 +62,7 @@ describe("candidate triage service", () => {
   it("invalidates a recommendation when linked evidence content changes", async () => {
     const snapshot = await new InMemoryLoreStore().getSnapshot(DEMO_ORGANISATION_ID);
     const candidate = structuredClone(
-      snapshot.candidates.find((item) => item.id === "candidate_avalara")!
+      snapshot.candidates.find((item) => item.id === "candidate_tax_codes")!
     );
     const fingerprint = candidateTriageFingerprint(candidate);
     candidate.triage = {

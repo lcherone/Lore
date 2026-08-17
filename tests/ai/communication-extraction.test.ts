@@ -5,7 +5,7 @@ import type { EvidenceRecord } from "@lore/shared/types.js";
 const transcript = (content: string): EvidenceRecord => ({
   id: "02b93816-355f-5bb1-97fa-02c7a966979b",
   organisationId: "org_acme",
-  repositoryId: "repo_soho_ecom",
+  repositoryId: "repo_example_commerce",
   type: "communication",
   provider: "human-communication",
   externalId: "communication:standup:test",

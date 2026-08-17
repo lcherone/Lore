@@ -19,7 +19,7 @@ describe("working API vertical slice", () => {
     const jobLedger = new InMemoryJobLedger();
     const run = await jobLedger.enqueue({
       organisationId: "org_acme",
-      repositoryId: "repo_soho_ecom",
+      repositoryId: "repo_example_commerce",
       name: "github.import",
       payload: {},
       idempotencyKey: "existing-import"
@@ -27,7 +27,7 @@ describe("working API vertical slice", () => {
     await jobLedger.markRunning({
       runId: run.id,
       organisationId: "org_acme",
-      repositoryId: "repo_soho_ecom",
+      repositoryId: "repo_example_commerce",
       name: "github.import",
       externalJobId: "existing-import",
       attempt: 1,
@@ -41,7 +41,7 @@ describe("working API vertical slice", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/repositories/repo_soho_ecom/github-import",
+      url: "/api/repositories/repo_example_commerce/github-import",
       payload: { limit: "all" }
     });
 
@@ -63,8 +63,8 @@ describe("working API vertical slice", () => {
       method: "POST",
       url: "/api/tasks/prepare",
       payload: {
-        repositoryId: "repo_soho_ecom",
-        task: "SS-6160 Update Avalara ShipFrom and ShipTo addresses"
+        repositoryId: "repo_example_commerce",
+        task: "Separate origin and destination tax address codes"
       }
     });
     expect(context.statusCode).toBe(200);
@@ -87,13 +87,13 @@ describe("working API vertical slice", () => {
       method: "POST",
       url: "/api/knowledge-candidates/candidate_refund_tests/merge",
       payload: {
-        targetId: "candidate_avalara",
+        targetId: "candidate_tax_codes",
         reason: "Same reviewed rule with supporting evidence"
       }
     });
     expect(merged.statusCode).toBe(200);
     expect(merged.json<{ evidenceIds: string[] }>().evidenceIds).toEqual(
-      expect.arrayContaining(["ev6160", "ev782"])
+      expect.arrayContaining(["evAddressRoles", "ev782"])
     );
     expect(
       (await store.getSnapshot("org_acme")).candidates.some(
@@ -105,7 +105,7 @@ describe("working API vertical slice", () => {
       method: "POST",
       url: "/api/sessions",
       payload: {
-        repositoryId: "repo_soho_ecom",
+        repositoryId: "repo_example_commerce",
         task: "Update address code mapping",
         agentType: "codex"
       }
@@ -123,7 +123,7 @@ describe("working API vertical slice", () => {
       payload: {
         changedFiles: [
           {
-            path: "src/Tax/Avalara/AddressCode.php",
+            path: "src/Tax/Provider/AddressRoleCode.php",
             status: "modified",
             additions: 3,
             deletions: 1,
@@ -151,7 +151,7 @@ describe("working API vertical slice", () => {
       sessionId,
       contextId: persistedContext.json<{ id: string }>().id,
       contextRevision: 1,
-      files: [{ path: "src/Tax/Avalara/AddressCode.php", status: "modified" }]
+      files: [{ path: "src/Tax/Provider/AddressRoleCode.php", status: "modified" }]
     });
     expect(JSON.stringify(observation.json())).not.toContain("return $role");
     expect(
@@ -183,7 +183,7 @@ describe("working API vertical slice", () => {
     const abandonedSession = await app.inject({
       method: "POST",
       url: "/api/sessions",
-      payload: { repositoryId: "repo_soho_ecom", task: "Interrupted agent run", agentType: "codex" }
+      payload: { repositoryId: "repo_example_commerce", task: "Interrupted agent run", agentType: "codex" }
     });
     const abandonedId = abandonedSession.json<{ id: string }>().id;
     expect(
@@ -202,7 +202,7 @@ describe("working API vertical slice", () => {
 
     const queued = await app.inject({
       method: "POST",
-      url: "/api/repositories/repo_soho_ecom/github-import",
+      url: "/api/repositories/repo_example_commerce/github-import",
       payload: { installationId: 123, limit: 250 }
     });
     expect(queued.statusCode).toBe(202);
@@ -228,7 +228,7 @@ describe("working API vertical slice", () => {
 
     const entityPage = await app.inject({
       method: "GET",
-      url: "/api/repositories/repo_soho_ecom/entities?page=1&pageSize=1"
+      url: "/api/repositories/repo_example_commerce/entities?page=1&pageSize=1"
     });
     expect(entityPage.statusCode).toBe(200);
     expect(entityPage.json()).toMatchObject({ page: 1, pageSize: 1, count: 1, hasMore: true });
@@ -236,7 +236,7 @@ describe("working API vertical slice", () => {
 
     const relationshipPage = await app.inject({
       method: "GET",
-      url: "/api/repositories/repo_soho_ecom/relationships?page=1&pageSize=1"
+      url: "/api/repositories/repo_example_commerce/relationships?page=1&pageSize=1"
     });
     expect(relationshipPage.statusCode).toBe(200);
     const relationshipBody = relationshipPage.json<CodeGraphPage<CodeRelationshipView>>();
@@ -251,7 +251,7 @@ describe("working API vertical slice", () => {
     const extractionJobsBefore = jobs.jobs.filter((job) => job.name === "knowledge.extract").length;
     const replay = await app.inject({
       method: "POST",
-      url: "/api/repositories/repo_soho_ecom/knowledge-extraction",
+      url: "/api/repositories/repo_example_commerce/knowledge-extraction",
       payload: { includeProcessed: true }
     });
     expect(replay.statusCode).toBe(202);
@@ -268,7 +268,7 @@ describe("working API vertical slice", () => {
 
     const retention = await app.inject({
       method: "PATCH",
-      url: "/api/repositories/repo_soho_ecom/retention",
+      url: "/api/repositories/repo_example_commerce/retention",
       payload: {
         retainRawPullRequestDiff: false,
         retainSummariesOnly: true,
@@ -287,7 +287,7 @@ describe("working API vertical slice", () => {
       payload: {
         format: "markdown",
         sourceName: "CONTRIBUTING.md",
-        repositoryId: "repo_soho_ecom",
+        repositoryId: "repo_example_commerce",
         content:
           "# Deployment convention\n\nNever deploy without recording the release verification result."
       }
@@ -295,21 +295,21 @@ describe("working API vertical slice", () => {
     expect(importedMarkdown.statusCode).toBe(201);
     expect(importedMarkdown.json()).toMatchObject({
       imported: 1,
-      items: [{ kind: "rule", scope: { repository: "soho/ecom" } }]
+      items: [{ kind: "rule", scope: { repository: "example-org/commerce-platform" } }]
     });
 
     const rejectedDeletion = await app.inject({
       method: "DELETE",
-      url: "/api/repositories/repo_soho_ecom?confirm=wrong"
+      url: "/api/repositories/repo_example_commerce?confirm=wrong"
     });
     expect(rejectedDeletion.statusCode).toBe(400);
 
     const deleted = await app.inject({
       method: "DELETE",
-      url: "/api/repositories/repo_soho_ecom?confirm=soho%2Fecom"
+      url: "/api/repositories/repo_example_commerce?confirm=example-org%2Fcommerce-platform"
     });
     expect(deleted.statusCode).toBe(200);
-    expect(deleted.json()).toMatchObject({ deletedId: "repo_soho_ecom" });
+    expect(deleted.json()).toMatchObject({ deletedId: "repo_example_commerce" });
     expect((await store.getSnapshot("org_acme")).repositories).toHaveLength(0);
     await app.close();
   });

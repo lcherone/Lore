@@ -511,6 +511,7 @@ export interface ReviewerProfile {
   id: string;
   name: string;
   providerIdentity: string;
+  avatarUrl?: string;
   email?: string;
   preferenceCount: number;
   reinforcedCount: number;

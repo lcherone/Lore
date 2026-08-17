@@ -5,7 +5,7 @@ describe("knowledge evidence view", () => {
   it("keeps the authored PR summary while removing template sections and the raw diff", () => {
     const view = createKnowledgeEvidenceView({
       type: "pull_request",
-      content: `# Change Summary\n\nJira: https://jira.example.test/SS-1234\n\n*[ What have you changed and why? ]*\n\nThe importer rolls back unless live mode is explicitly confirmed.\n\n## Staging\nhttps://staging.example.test\n\n## Checks\n### Functional\n- [x] Pages load\n\n## SOX\n- [ ] Jira ticket must be ready to go live\n\n**NB:** Update the deployment changelog.\n\n## Links\n- [Code review process](https://example.test)\n\ndiff --git a/import.php b/import.php\n+runImporter();`
+      content: `# Change Summary\n\nJira: https://jira.example.test/PROJECT-1234\n\n*[ What have you changed and why? ]*\n\nThe importer rolls back unless live mode is explicitly confirmed.\n\n## Staging\nhttps://staging.example.test\n\n## Checks\n### Functional\n- [x] Pages load\n\n## SOX\n- [ ] Jira ticket must be ready to go live\n\n**NB:** Update the deployment changelog.\n\n## Links\n- [Code review process](https://example.test)\n\ndiff --git a/import.php b/import.php\n+runImporter();`
     });
 
     expect(view.text).toContain("importer rolls back unless live mode");

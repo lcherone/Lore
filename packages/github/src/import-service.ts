@@ -96,6 +96,9 @@ export class GitHubImportService {
           metadata: {
             number: pullRequest.number,
             reviewers: pullRequest.reviewers,
+            ...(pullRequest.reviewerAvatars
+              ? { reviewerAvatars: pullRequest.reviewerAvatars }
+              : {}),
             commits: pullRequest.commits,
             changedFiles: pullRequest.changedFiles,
             merged: true,
@@ -123,7 +126,10 @@ export class GitHubImportService {
               content: comment.body,
               author: comment.author,
               occurredAt: comment.occurredAt,
-              metadata: { pullRequest: pullRequest.number }
+              metadata: {
+                pullRequest: pullRequest.number,
+                ...(comment.avatarUrl ? { avatarUrl: comment.avatarUrl } : {})
+              }
             })
           );
         }

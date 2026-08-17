@@ -180,8 +180,8 @@ lore index
 
 ```bash
 lore index
-lore impact AddressCode::fromRole
-lore explain AddressCode::fromRole
+lore impact AddressRoleCode::fromRole
+lore explain AddressRoleCode::fromRole
 ```
 
 The local graph is stored under owner-only `.lore/` state and excluded from verification. In service mode, only its bounded graph envelope is uploaded.

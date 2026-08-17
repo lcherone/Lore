@@ -3,14 +3,14 @@ import { parseGitHubRepositoryReference } from "../../apps/web/src/github-reposi
 
 describe("GitHub repository references", () => {
   it.each([
-    ["D3R/soho-home", { owner: "D3R", name: "soho-home" }],
-    ["https://github.com/D3R/soho-home", { owner: "D3R", name: "soho-home" }],
-    ["https://github.com/D3R/soho-home.git/", { owner: "D3R", name: "soho-home" }]
+    ["example-org/commerce-platform", { owner: "example-org", name: "commerce-platform" }],
+    ["https://github.com/example-org/commerce-platform", { owner: "example-org", name: "commerce-platform" }],
+    ["https://github.com/example-org/commerce-platform.git/", { owner: "example-org", name: "commerce-platform" }]
   ])("parses %s", (value, expected) => {
     expect(parseGitHubRepositoryReference(value)).toEqual(expected);
   });
 
-  it.each(["", "D3R", "https://example.com/D3R/soho-home", "D3R/soho-home/extra"])(
+  it.each(["", "example-org", "https://example.com/example-org/commerce-platform", "example-org/commerce-platform/extra"])(
     "rejects %s",
     (value) => expect(() => parseGitHubRepositoryReference(value)).toThrow()
   );

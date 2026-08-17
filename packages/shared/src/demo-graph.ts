@@ -6,38 +6,38 @@ const entities: CodeEntity[] = [
     id: "entity_mapper_file",
     repositoryId: DEMO_REPOSITORY_ID,
     type: "file",
-    name: "AvalaraTransactionMapper.php",
-    qualifiedName: "src/Tax/Avalara/AvalaraTransactionMapper.php",
-    path: "src/Tax/Avalara/AvalaraTransactionMapper.php",
+    name: "TaxTransactionMapper.php",
+    qualifiedName: "src/Tax/Provider/TaxTransactionMapper.php",
+    path: "src/Tax/Provider/TaxTransactionMapper.php",
     language: "php",
-    fingerprint: "file:src/Tax/Avalara/AvalaraTransactionMapper.php",
-    metadata: { subsystem: "tax", integration: "Avalara" }
+    fingerprint: "file:src/Tax/Provider/TaxTransactionMapper.php",
+    metadata: { subsystem: "tax", integration: "external tax provider" }
   },
   {
     id: "entity_map_addresses",
     repositoryId: DEMO_REPOSITORY_ID,
     type: "method",
     name: "mapAddresses",
-    qualifiedName: "AvalaraTransactionMapper::mapAddresses",
-    path: "src/Tax/Avalara/AvalaraTransactionMapper.php",
+    qualifiedName: "TaxTransactionMapper::mapAddresses",
+    path: "src/Tax/Provider/TaxTransactionMapper.php",
     startLine: 42,
     endLine: 78,
     language: "php",
-    fingerprint: "method:AvalaraTransactionMapper::mapAddresses",
-    metadata: { subsystem: "tax", integration: "Avalara" }
+    fingerprint: "method:TaxTransactionMapper::mapAddresses",
+    metadata: { subsystem: "tax", integration: "external tax provider" }
   },
   {
     id: "entity_address_code",
     repositoryId: DEMO_REPOSITORY_ID,
     type: "method",
     name: "fromRole",
-    qualifiedName: "AddressCode::fromRole",
-    path: "src/Tax/Avalara/AddressCode.php",
+    qualifiedName: "AddressRoleCode::fromRole",
+    path: "src/Tax/Provider/AddressRoleCode.php",
     startLine: 19,
     endLine: 31,
     language: "php",
-    fingerprint: "method:AddressCode::fromRole",
-    metadata: { subsystem: "tax", integration: "Avalara" }
+    fingerprint: "method:AddressRoleCode::fromRole",
+    metadata: { subsystem: "tax", integration: "external tax provider" }
   },
   {
     id: "entity_create_tax",
@@ -65,11 +65,11 @@ const entities: CodeEntity[] = [
     id: "entity_mapper_test",
     repositoryId: DEMO_REPOSITORY_ID,
     type: "test",
-    name: "AvalaraTransactionMapperTest",
-    qualifiedName: "AvalaraTransactionMapperTest",
-    path: "tests/Tax/AvalaraTransactionMapperTest.php",
+    name: "TaxTransactionMapperTest",
+    qualifiedName: "TaxTransactionMapperTest",
+    path: "tests/Tax/TaxTransactionMapperTest.php",
     language: "php",
-    fingerprint: "test:AvalaraTransactionMapperTest",
+    fingerprint: "test:TaxTransactionMapperTest",
     metadata: { framework: "PHPUnit" }
   },
   {
@@ -92,7 +92,7 @@ const entities: CodeEntity[] = [
     path: "src/Search/Basket/BasketSearch.php",
     language: "php",
     fingerprint: "method:BasketSearch::applyActiveFilter",
-    metadata: { subsystem: "CP/POS" }
+    metadata: { subsystem: "support tools" }
   },
   {
     id: "entity_basket_test",
@@ -120,12 +120,12 @@ const entities: CodeEntity[] = [
     id: "entity_bc_exporter",
     repositoryId: DEMO_REPOSITORY_ID,
     type: "service",
-    name: "BusinessCentralOrderExporter",
-    qualifiedName: "BusinessCentralOrderExporter",
-    path: "src/BusinessCentral/OrderExporter.php",
+    name: "ErpOrderExporter",
+    qualifiedName: "ErpOrderExporter",
+    path: "src/Integration/ErpOrderExporter.php",
     language: "php",
-    fingerprint: "class:BusinessCentralOrderExporter",
-    metadata: { integration: "Business Central" }
+    fingerprint: "class:ErpOrderExporter",
+    metadata: { integration: "ERP" }
   }
 ];
 
@@ -154,10 +154,9 @@ const regressions: RegressionRecord[] = [
     id: "regression_refund",
     repositoryId: DEMO_REPOSITORY_ID,
     title: "Address role mapping broke refund tax requests",
-    description: "PR #782 changed address-role mapping and caused refund requests to reuse the ShipTo address code.",
+    description: "PR #782 changed address-role mapping and caused refund requests to reuse the destination address code.",
     pullRequestId: "782",
-    ticketId: "SS-5882",
-    affectedEntities: ["AddressCode::fromRole", "RefundTaxTransaction"],
+    affectedEntities: ["AddressRoleCode::fromRole", "RefundTaxTransaction"],
     evidenceIds: ["ev782"],
     severity: "warning",
     createdAt: "2025-11-12T15:36:00.000Z"
@@ -171,4 +170,3 @@ export function createDemoCodeGraph(): {
 } {
   return structuredClone({ entities, relationships, regressions });
 }
-

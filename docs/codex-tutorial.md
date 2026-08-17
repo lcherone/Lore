@@ -106,7 +106,7 @@ Open Codex from the target checkout and use a prompt like this:
 ```text
 Use Lore for this task.
 
-Investigate SS-6777 performance regressions in the current checkout. Before
+Investigate checkout performance regressions in the current checkout. Before
 editing, prepare Lore context for the complete task and inspect relevant code,
 history, decisions, rules, evidence, regressions, tests, and unknowns. Implement
 the smallest evidence-backed fix, run the focused and relevant broader tests,
@@ -124,7 +124,7 @@ Codex starts with:
 
 ```text
 lore_prepare_task({
-  "task": "Investigate SS-6777 performance regressions in the current checkout"
+  "task": "Investigate checkout performance regressions in the current checkout"
 })
 ```
 
@@ -145,7 +145,7 @@ The response can include:
 Codex may then call only what the task needs:
 
 ```text
-lore_search({ "query": "SS-6777 performance" })
+lore_search({ "query": "checkout performance regression" })
 lore_lookup_symbol({ "symbol": "ProductRepository" })
 lore_find_history({ "path": "src/ProductRepository.php", "limit": 20 })
 lore_get_rules({})
@@ -177,7 +177,7 @@ Before claiming the task is complete, Codex calls:
 
 ```text
 lore_verify_change({
-  "task": "Investigate SS-6777 performance regressions in the current checkout"
+  "task": "Investigate checkout performance regressions in the current checkout"
 })
 ```
 
@@ -210,7 +210,7 @@ Knowledge proposals never become active without human review in Lore.
 Once the server instructions or `AGENTS.md` rule is in place, a normal prompt is enough:
 
 ```text
-Fix SS-6777. Use Lore before editing and for final verification. Explain which
+Fix the checkout performance regression. Use Lore before editing and for final verification. Explain which
 evidence, decisions, impact paths, and tests affected your implementation.
 ```
 
@@ -244,7 +244,7 @@ Use MCP for everyday flexibility. Use the wrapper when you want Lore to own the 
 ```bash
 cd /absolute/path/to/checkout
 lore agent codex \
-  "SS-6777 investigate and fix the performance regression"
+  "Investigate and fix the checkout performance regression"
 ```
 
 ## 8. Troubleshooting

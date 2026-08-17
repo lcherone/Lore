@@ -11,7 +11,7 @@ async function dispositionFor(statement: string): Promise<EvidenceComparisonDisp
   const evidence: EvidenceRecord = {
     id,
     organisationId: "org_acme",
-    repositoryId: "repo_soho_ecom",
+    repositoryId: "repo_example_commerce",
     type: "communication",
     provider: "human-communication",
     externalId: `communication:test:${id}`,
@@ -47,7 +47,7 @@ async function dispositionFor(statement: string): Promise<EvidenceComparisonDisp
   }));
   const result = await new KnowledgeCandidateExtractionService(store, provider).extract({
     organisationId: "org_acme",
-    repositoryId: "repo_soho_ecom",
+    repositoryId: "repo_example_commerce",
     evidenceIds: [id]
   });
   return result.items[0]!.disposition;
@@ -56,13 +56,13 @@ async function dispositionFor(statement: string): Promise<EvidenceComparisonDisp
 describe("candidate comparison", () => {
   it("distinguishes new, already-added, supporting, and conflicting suggestions", async () => {
     await expect(dispositionFor(
-      "ShipFrom and ShipTo addresses must receive independent address codes in Avalara payloads."
+      "Origin and destination addresses must receive independent codes in external tax payloads."
     )).resolves.toBe("already_added");
     await expect(dispositionFor(
-      "Joe prefers application services built against repository interfaces."
+      "Alex prefers application services built against repository interfaces."
     )).resolves.toBe("supports_existing");
     await expect(dispositionFor(
-      "ShipFrom and ShipTo addresses must not receive independent address codes in Avalara payloads."
+      "Origin and destination addresses must not receive independent codes in external tax payloads."
     )).resolves.toBe("conflicts");
     await expect(dispositionFor(
       "Release notes should include a link to the weekend support rota."
@@ -75,7 +75,7 @@ describe("candidate comparison", () => {
     await store.ingestEvidence([{
       id,
       organisationId: "org_acme",
-      repositoryId: "repo_soho_ecom",
+      repositoryId: "repo_example_commerce",
       type: "pull_request",
       provider: "github",
       externalId: "owner/repository:pr:123",
@@ -141,7 +141,7 @@ describe("candidate comparison", () => {
 
     const result = await new KnowledgeCandidateExtractionService(store, provider).extract({
       organisationId: "org_acme",
-      repositoryId: "repo_soho_ecom",
+      repositoryId: "repo_example_commerce",
       evidenceIds: [id]
     });
 

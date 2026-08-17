@@ -34,7 +34,7 @@ No OAuth App or callback is needed. On the first request, Lore:
 
 The PAT remains in the API/worker environment. The browser never receives it. Local API access is accepted without a second Lore API token only because the complete Docker stack publishes its ports on `127.0.0.1` and verifies a loopback `APP_URL`.
 
-The local user can still create several organisations—for example **Personal**, **Acme Engineering**, and **Soho Home**—and keep their repositories and knowledge separate.
+The local user can still create several organisations—for example **Personal**, **Acme Engineering**, and **Example Store**—and keep their repositories and knowledge separate.
 
 ## SaaS/shared identity: GitHub OAuth
 

@@ -38,7 +38,7 @@ Use native persistent mode when you already run PostgreSQL and Redis locally. Se
 The CLI has its own explicit authority mode:
 
 - `local` (default) uses only the checkout's graph and Git history. It contains no organisational or fixture knowledge.
-- `demo` is an explicit opt-in to the bundled Soho scenario: `lore init --mode demo`.
+- `demo` is an explicit opt-in to the bundled fictional commerce scenario: `lore init --mode demo`.
 - `service` uses the Fastify API as the authority for knowledge, sessions, context, and reports. `lore connect` selects it automatically.
 
 Lore never falls back between these modes.

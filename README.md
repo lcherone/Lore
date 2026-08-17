@@ -77,7 +77,7 @@ npm run demo:check
 
 Try this five-minute product tour:
 
-1. On **Dashboard**, choose **Prepare context** for the pre-filled Avalara task.
+1. On **Dashboard**, choose **Prepare context** for the pre-filled tax-address task.
 2. Inspect relevant code, affected areas, policy, evidence, tests, and the known unknown.
 3. Open **Candidates** and review the statement, scope, contradictions, and confidence factors.
 4. Open **Safety reports** to see how the final diff is checked against impact and history.
@@ -218,8 +218,8 @@ Then, from a target Git repository:
 lore init --repository acme/commerce --organisation acme-engineering
 lore index
 lore prepare "TICKET-123 task description"
-lore impact AddressCode::fromRole
-lore explain AddressCode::fromRole
+lore impact AddressRoleCode::fromRole
+lore explain AddressRoleCode::fromRole
 lore verify
 ```
 
@@ -413,8 +413,8 @@ The full local path was exercised while it was being built. These were the concr
 | OpenAI rejected candidate extraction because optional scope fields are forbidden by strict Structured Outputs | Lore now sends every scope key as required and nullable, compacts nulls after validation, batches large evidence sets, and lets **Extract evidence** replay PostgreSQL records without re-crawling GitHub. |
 | A Docker rebuild stopped at `JavaScript heap out of memory` during the workspace type-check | The image build uses a bounded 1.25 GiB Node heap and `local:up` stops running containers before BuildKit starts, keeping the complete build within the supported 2 GiB Colima profile. Re-run `npm run local:up`; persistent volumes are unaffected by a failed image build. |
 | A repository reported tens of thousands of indexed entities and relationships but exposed no usable graph view | **Repositories → Browse graph** now provides server-paginated entity search, type filters, enriched relationship search, related-entity focus, and bounded paging. |
-| Long or minified JavaScript calls truncated exactly after a dot produced seven blank placeholder names in the Soho Home graph, while the CLI hid the schema paths | The analyzer now derives a non-empty final call segment, and CLI validation errors include bounded issue paths and messages without echoing source content. |
-| Atomically replacing the real Soho Home graph exceeded Prisma's default five-second interactive transaction timeout | Entity and relationship writes are now performed in bounded 5,000-row batches inside the same atomic transaction, with a route-specific two-minute persistence timeout for large validated graphs. |
+| Long or minified JavaScript calls truncated exactly after a dot produced blank placeholder names in a large production graph, while the CLI hid the schema paths | The analyzer now derives a non-empty final call segment, and CLI validation errors include bounded issue paths and messages without echoing source content. |
+| Atomically replacing a large production graph exceeded Prisma's default five-second interactive transaction timeout | Entity and relationship writes are now performed in bounded 5,000-row batches inside the same atomic transaction, with a route-specific two-minute persistence timeout for large validated graphs. |
 | Rebuilding the API left the long-running nginx container pinned to the retired container IP, making the browser report `Lore API returned 502` while the direct API remained healthy | nginx now re-resolves the Compose `api` service through Docker DNS every five seconds, startup checks the proxied path, and the production error screen points to `local:check`/`local:start` instead of development mode. |
 | A 2 GiB Colima VM could be exhausted when the Docker build also assigned the compiler a 2 GiB heap | The container compiler is bounded to a 1 GiB heap; runtime containers retain Node's normal limits. |
 | Rebuilding while the whole application was running still exhausted a 2 GiB Colima VM | `npm run local:up` now temporarily stops the containers before compiling, then recreates them against the same named PostgreSQL and Redis volumes. No stored data is removed. `local:start` remains the fast path that restarts existing images; `local:up` rebuilds changed code. |

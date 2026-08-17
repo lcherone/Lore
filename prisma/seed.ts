@@ -217,6 +217,7 @@ await prisma.reviewerProfile.createMany({
     name: reviewer.name,
     email: reviewer.email,
     metadata: json({
+      avatarUrl: reviewer.avatarUrl,
       preferenceCount: reviewer.preferenceCount,
       reinforcedCount: reviewer.reinforcedCount,
       lastObservedAt: reviewer.lastObservedAt

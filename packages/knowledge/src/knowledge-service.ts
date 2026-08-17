@@ -60,18 +60,6 @@ export class KnowledgeService {
     for (const candidateId of input.candidateIds) {
       try {
         const candidate = await this.store.getCandidate(organisationId, candidateId);
-        const expectedAction = input.action === "approve" ? "approve" : "ignore";
-        if (!hasFreshCandidateTriage(candidate)) {
-          result.skipped.push({ id: candidateId, reason: "AI triage is missing or stale" });
-          continue;
-        }
-        if (candidate.triage?.bulkEligibleAction !== expectedAction) {
-          result.skipped.push({
-            id: candidateId,
-            reason: `Candidate is not guarded for bulk ${input.action}`
-          });
-          continue;
-        }
         if (input.action === "approve") {
           const approved = await this.approveCandidate(
             organisationId,
@@ -81,6 +69,17 @@ export class KnowledgeService {
           );
           result.approved.push(approved);
         } else {
+          if (!hasFreshCandidateTriage(candidate)) {
+            result.skipped.push({ id: candidateId, reason: "AI triage is missing or stale" });
+            continue;
+          }
+          if (candidate.triage?.bulkEligibleAction !== "ignore") {
+            result.skipped.push({
+              id: candidateId,
+              reason: "Candidate is not guarded for bulk ignore"
+            });
+            continue;
+          }
           await this.rejectCandidate(organisationId, candidateId, input.reason, actor);
         }
         result.processedIds.push(candidateId);

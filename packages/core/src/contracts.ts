@@ -73,9 +73,11 @@ export interface PullRequestImport {
   body: string;
   author: string;
   reviewers: string[];
+  reviewerAvatars?: Record<string, string>;
   reviewComments: Array<{
     externalId: string;
     author: string;
+    avatarUrl?: string;
     body: string;
     url?: string;
     occurredAt: string;

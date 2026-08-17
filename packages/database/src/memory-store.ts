@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { newUuid } from "@lore/shared/ids.js";
 import { createDemoSnapshot, getDemoEvidence } from "@lore/shared/demo-data.js";
 import { createDemoCodeGraph } from "@lore/shared/demo-graph.js";
+import { buildReviewerProfiles } from "./reviewer-profiles.js";
 import type {
   AgentSession,
   CandidateRecord,
@@ -90,7 +91,7 @@ export class InMemoryLoreStore implements LoreStore {
     for (const record of this.#evidence) {
       this.#evidenceRevisions.set(record.id, [this.#revision(record, 1, createdAt)]);
     }
-    this.#graphs.set("repo_soho_ecom", createDemoCodeGraph());
+    this.#graphs.set("repo_example_commerce", createDemoCodeGraph());
     const now = new Date().toISOString();
     this.#users.set("user_casey", {
       id: "user_casey",
@@ -612,7 +613,26 @@ export class InMemoryLoreStore implements LoreStore {
   }
 
   async getSnapshot(organisationId: string): Promise<DashboardSnapshot> {
-    return structuredClone(this.#snapshotFor(organisationId));
+    const snapshot = this.#snapshotFor(organisationId);
+    const reviewers = buildReviewerProfiles({
+      organisationId,
+      existing: snapshot.reviewers,
+      evidence: this.#evidence
+        .filter(
+          (record) =>
+            record.organisationId === organisationId &&
+            record.provider === "github" &&
+            (record.type === "pull_request" || record.type === "review_comment")
+        )
+        .map((record) => ({
+          type: record.type as "pull_request" | "review_comment",
+          author: record.author,
+          occurredAt: record.occurredAt,
+          metadata: record.metadata
+        })),
+      knowledge: snapshot.knowledge
+    });
+    return structuredClone({ ...snapshot, reviewers });
   }
 
   async getEvidence(organisationId: string): Promise<EvidenceRecord[]> {

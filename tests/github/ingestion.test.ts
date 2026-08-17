@@ -42,6 +42,55 @@ describe("GitHub evidence ingestion", () => {
     expect(second.evidenceIds).toEqual([]);
   });
 
+  it("retains GitHub reviewer avatars with pull-request and comment evidence", async () => {
+    const [fixturePullRequest] = JSON.parse(
+      await readFile(fixture, "utf8")
+    ) as PullRequestImport[];
+    const avatarUrl = "https://avatars.githubusercontent.com/u/101?v=4";
+    const pullRequest: PullRequestImport = {
+      ...fixturePullRequest!,
+      reviewers: ["octo-reviewer"],
+      reviewerAvatars: { "octo-reviewer": avatarUrl },
+      reviewComments: [
+        {
+          externalId: "avatar-comment",
+          author: "octo-reviewer",
+          avatarUrl,
+          body: "Keep this boundary explicit.",
+          occurredAt: "2026-08-15T10:00:00.000Z"
+        }
+      ]
+    };
+    const provider: SourceControlProvider = {
+      listMergedPullRequests: async () => [pullRequest]
+    };
+    const snapshot = createDemoSnapshot();
+    const store = new InMemoryLoreStore(snapshot, []);
+
+    await new GitHubImportService(provider, store).importMergedPullRequests(
+      snapshot.organisation.id,
+      snapshot.repositories[0]!,
+      100
+    );
+
+    const evidence = await store.getEvidence(snapshot.organisation.id);
+    const importedPullRequest = evidence.find((item) =>
+      item.externalId.endsWith(`:pr:${pullRequest.number}`)
+    );
+    const importedComment = evidence.find((item) =>
+      item.externalId.endsWith(":review-comment:avatar-comment")
+    );
+    expect(importedPullRequest?.metadata.reviewerAvatars).toEqual({
+      "octo-reviewer": avatarUrl
+    });
+    expect(importedComment?.metadata.avatarUrl).toBe(avatarUrl);
+    expect(
+      (await store.getSnapshot(snapshot.organisation.id)).reviewers.find(
+        (reviewer) => reviewer.providerIdentity === "octo-reviewer"
+      )
+    ).toMatchObject({ avatarUrl });
+  });
+
   it("uses a durable source checkpoint without creating an evidence revision", async () => {
     const [fixturePullRequest] = JSON.parse(await readFile(fixture, "utf8")) as PullRequestImport[];
     const pullRequest = {
@@ -216,7 +265,7 @@ describe("GitHub evidence ingestion", () => {
     const payload = JSON.stringify({
       action: "submitted",
       installation: { id: 123 },
-      repository: { id: 73421009, name: "ecom", full_name: "soho/ecom", owner: { login: "soho" } },
+      repository: { id: 73421009, name: "commerce-platform", full_name: "example-org/commerce-platform", owner: { login: "example-org" } },
       pull_request: { number: 2401, updated_at: "2026-08-15T10:00:00.000Z" },
       review: {
         id: 7788,

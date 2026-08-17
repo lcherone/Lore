@@ -1,7 +1,12 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import clsx from "clsx";
-import type { KnowledgeKind, RiskLevel, Severity } from "@lore/shared/types.js";
+import type {
+  KnowledgeKind,
+  ReviewerProfile,
+  RiskLevel,
+  Severity
+} from "@lore/shared/types.js";
 
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
@@ -52,6 +57,47 @@ export function KindIcon({ kind }: { kind: KnowledgeKind }) {
   return (
     <span className={clsx("kind-icon", `kind-icon--${kind}`)} aria-hidden="true">
       {kind.slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
+export function ReviewerAvatar({
+  reviewer,
+  size = "medium",
+  className
+}: {
+  reviewer: Pick<ReviewerProfile, "name" | "providerIdentity" | "avatarUrl">;
+  size?: "small" | "medium";
+  className?: string;
+}) {
+  const [failedUrl, setFailedUrl] = useState<string>();
+  const initials = reviewer.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+  const showImage = Boolean(reviewer.avatarUrl && reviewer.avatarUrl !== failedUrl);
+
+  return (
+    <span
+      className={clsx("reviewer-avatar", `reviewer-avatar--${size}`, className)}
+      role="img"
+      aria-label={`${reviewer.name} profile image`}
+      title={`@${reviewer.providerIdentity}`}
+    >
+      <span aria-hidden="true">{initials}</span>
+      {showImage ? (
+        <img
+          src={reviewer.avatarUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setFailedUrl(reviewer.avatarUrl)}
+        />
+      ) : null}
     </span>
   );
 }

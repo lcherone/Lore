@@ -24,9 +24,9 @@ describe("bounded impact graph", () => {
     const commits = Array.from({ length: 6 }, (_, index) => ({
       sha: String(index),
       occurredAt: `2026-0${index + 1}-01T00:00:00.000Z`,
-      paths: ["src/Tax/Avalara/AddressCode.php", "tests/Tax/RefundTaxTransactionTest.php", "missing.php"]
+      paths: ["src/Tax/Provider/AddressRoleCode.php", "tests/Tax/RefundTaxTransactionTest.php", "missing.php"]
     }));
-    const enriched = addGitHistoryRelationships("repo_soho_ecom", data.entities, [], commits);
+    const enriched = addGitHistoryRelationships("repo_example_commerce", data.entities, [], commits);
     expect(enriched).toHaveLength(1);
     expect(enriched[0]!.source).toBe("git_history");
     expect(enriched[0]!.metadata).toMatchObject({ sampleCount: 6, coChangeCount: 6 });

@@ -68,15 +68,15 @@ describe("single-token local product mode", () => {
           JSON.stringify([
             {
               id: 73421010,
-              name: "soho-home",
-              full_name: "D3R/soho-home",
+              name: "storefront-web",
+              full_name: "example-org/storefront-web",
               private: true,
               archived: false,
               default_branch: "master",
               description: "Organisation repository",
-              clone_url: "https://github.com/D3R/soho-home.git",
-              html_url: "https://github.com/D3R/soho-home",
-              owner: { login: "D3R" }
+              clone_url: "https://github.com/example-org/storefront-web.git",
+              html_url: "https://github.com/example-org/storefront-web",
+              owner: { login: "example-org" }
             },
             {
               id: 22,
@@ -131,7 +131,7 @@ describe("single-token local product mode", () => {
     const repositoryOptions = discovered.json<{ items: GitHubRepositoryOption[]; count: number }>();
     expect(repositoryOptions.count).toBe(2);
     expect(repositoryOptions.items.map((repository) => repository.fullName)).toEqual([
-      "D3R/soho-home",
+      "example-org/storefront-web",
       "casey-hall/personal-repository"
     ]);
     expect(repositoryOptions.items[0]).toMatchObject({ private: true, defaultBranch: "master" });
@@ -239,8 +239,8 @@ describe("single-token local product mode", () => {
           {
             provider: "github",
             providerRepositoryId: "73421010",
-            owner: "D3R",
-            name: "soho-home",
+            owner: "example-org",
+            name: "storefront-web",
             defaultBranch: "master"
           },
           {
@@ -253,8 +253,8 @@ describe("single-token local product mode", () => {
           {
             provider: "github",
             providerRepositoryId: "73421010",
-            owner: "D3R",
-            name: "soho-home",
+            owner: "example-org",
+            name: "storefront-web",
             defaultBranch: "master"
           }
         ]
@@ -264,13 +264,13 @@ describe("single-token local product mode", () => {
     expect(connected.json()).toMatchObject({
       connected: 2,
       initialImportsQueued: 2,
-      skipped: [{ fullName: "D3R/soho-home", reason: "duplicate_request" }]
+      skipped: [{ fullName: "example-org/storefront-web", reason: "duplicate_request" }]
     });
     expect(
       connected
         .json<{ items: RepositorySummary[] }>()
         .items.map((repository) => `${repository.owner}/${repository.name}`)
-    ).toEqual(["D3R/soho-home", "casey-hall/personal-repository"]);
+    ).toEqual(["example-org/storefront-web", "casey-hall/personal-repository"]);
     expect(
       jobs.jobs.filter(
         (job) =>
@@ -295,8 +295,8 @@ describe("single-token local product mode", () => {
           {
             provider: "github",
             providerRepositoryId: "73421010",
-            owner: "D3R",
-            name: "soho-home",
+            owner: "example-org",
+            name: "storefront-web",
             defaultBranch: "master"
           }
         ]
@@ -306,7 +306,7 @@ describe("single-token local product mode", () => {
     expect(repeated.json()).toMatchObject({
       connected: 0,
       initialImportsQueued: 0,
-      skipped: [{ fullName: "D3R/soho-home", reason: "already_connected" }]
+      skipped: [{ fullName: "example-org/storefront-web", reason: "already_connected" }]
     });
     await app.close();
 
@@ -331,7 +331,7 @@ describe("single-token local product mode", () => {
       organisation: { id: "org_acme" }
     });
     expect(bootstrapBody.repositories).toEqual(
-      expect.arrayContaining([expect.objectContaining({ owner: "D3R", name: "soho-home" })])
+      expect.arrayContaining([expect.objectContaining({ owner: "example-org", name: "storefront-web" })])
     );
     const selectedOrganisation = await restarted.inject({
       method: "GET",

@@ -23,9 +23,9 @@ describe("progressive context", () => {
     snapshot.knowledge = [{
       ...snapshot.knowledge[0]!,
       id: "unrelated-scope",
-      title: "Avalara checkout guidance",
-      statement: "Avalara checkout calls require an integration token.",
-      scope: { repository: "soho/ecom", paths: ["src/Tax/Avalara/**"] }
+      title: "External tax checkout guidance",
+      statement: "External tax calls require an integration token.",
+      scope: { repository: "example-org/commerce-platform", paths: ["src/Tax/Provider/**"] }
     }];
     const context = new TaskPreparationService().prepare({
       repository,

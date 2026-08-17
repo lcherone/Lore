@@ -32,7 +32,7 @@ Select the repository from the token-backed repository picker. Lore immediately 
 Then connect the local checkout and build its code graph:
 
 ```bash
-cd /absolute/path/to/soho-home
+cd /absolute/path/to/commerce-platform
 node /Users/dev/Lore/dist/cli.js connect OWNER/REPOSITORY
 node /Users/dev/Lore/dist/cli.js index
 ```
@@ -45,7 +45,7 @@ Verify the real MCP protocol end to end:
 
 ```bash
 cd /Users/dev/Lore
-npm run mcp:check -- /absolute/path/to/soho-home
+npm run mcp:check -- /absolute/path/to/commerce-platform
 ```
 
 The check launches the built stdio server through the official MCP client SDK, lists its tools, calls `lore_search`, confirms that the result came from persistent service authority, and verifies that `lore_find_history` returns object-backed structured content.
@@ -72,7 +72,7 @@ startup_timeout_sec = 20
 tool_timeout_sec = 120
 
 [mcp_servers.lore.env]
-LORE_REPOSITORY_PATH = "/absolute/path/to/soho-home"
+LORE_REPOSITORY_PATH = "/absolute/path/to/commerce-platform"
 ```
 
 ### Claude Desktop or Cursor
@@ -86,7 +86,7 @@ Add this server to the client’s MCP JSON configuration:
       "command": "node",
       "args": ["/Users/dev/Lore/dist/mcp.js"],
       "env": {
-        "LORE_REPOSITORY_PATH": "/absolute/path/to/soho-home"
+        "LORE_REPOSITORY_PATH": "/absolute/path/to/commerce-platform"
       }
     }
   }

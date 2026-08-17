@@ -32,7 +32,7 @@ describe("evidence-backed knowledge", () => {
 
   it("does not treat a reviewer preference as global", () => {
     const repository = createDemoSnapshot().repositories[0]!;
-    const scope = { repository: "soho/ecom", reviewer: "joe@acme.example", paths: ["src/**/Service/**"] };
+    const scope = { repository: "example-org/commerce-platform", reviewer: "joe@acme.example", paths: ["src/**/Service/**"] };
     expect(scopeApplies(scope, { repository, reviewer: "joe@acme.example", paths: ["src/Order/Service/Create.php"] })).toBe(true);
     expect(scopeApplies(scope, { repository, reviewer: "rebecca@acme.example", paths: ["src/Order/Service/Create.php"] })).toBe(false);
     expect(scopeApplies(scope, { repository, paths: ["src/Order/Service/Create.php"] })).toBe(false);
@@ -51,7 +51,7 @@ describe("evidence-backed knowledge", () => {
     const existing: KnowledgeItem = {
       ...current,
       statement: "Checkout services must cache authentication tokens in memory.",
-      scope: { repository: "soho/ecom", paths: ["src/Checkout/**"] }
+      scope: { repository: "example-org/commerce-platform", paths: ["src/Checkout/**"] }
     };
     const evidence = getDemoEvidence();
     const result = validateKnowledgeProposal({
@@ -105,7 +105,7 @@ describe("evidence-backed knowledge", () => {
     expect(stale.health).toBe("stale");
 
     const preference: KnowledgeItem = { ...snapshot.knowledge[3]!, confidence: 0.99, scope: { organisation: "acme-engineering" } };
-    const symbolRule: KnowledgeItem = { ...snapshot.knowledge[1]!, confidence: 0.7, scope: { symbols: ["AddressCode::fromRole"] } };
+    const symbolRule: KnowledgeItem = { ...snapshot.knowledge[1]!, confidence: 0.7, scope: { symbols: ["AddressRoleCode::fromRole"] } };
     expect(sortByPrecedence([preference, symbolRule])[0]!.id).toBe(symbolRule.id);
   });
 });

@@ -21,7 +21,7 @@ try {
   const contextResponse = await app.inject({
     method: "POST",
     url: "/api/tasks/prepare",
-    payload: { repositoryId: repository.id, task: "SS-6160 Update Avalara ShipFrom and ShipTo addresses" }
+    payload: { repositoryId: repository.id, task: "Separate origin and destination tax address codes" }
   });
   if (contextResponse.statusCode !== 200) throw new Error(`Task preparation failed: ${contextResponse.body}`);
   const context = contextResponse.json<ContextPackage>();
@@ -44,7 +44,7 @@ try {
     url: `/api/sessions/${session.id}/verify`,
     payload: {
       currentCommit: repository.lastIndexedCommit ?? "working-tree",
-      changedFiles: [{ path: "src/Tax/Avalara/AddressCode.php", status: "modified", additions: 1, deletions: 0, patch: "@@ -1,1 +1,2 @@\n <?php\n+// smoke" }]
+      changedFiles: [{ path: "src/Tax/Provider/AddressRoleCode.php", status: "modified", additions: 1, deletions: 0, patch: "@@ -1,1 +1,2 @@\n <?php\n+// smoke" }]
     }
   });
   if (reportResponse.statusCode !== 200) throw new Error(`Report persistence failed: ${reportResponse.body}`);

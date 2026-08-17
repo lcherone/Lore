@@ -5,7 +5,7 @@ import { DEMO_ORGANISATION_ID } from "@lore/shared/demo-data.js";
 import type { CandidateBulkReviewResult, DashboardSnapshot } from "@lore/shared/types.js";
 
 describe("candidate triage API", () => {
-  it("triages the queue and bulk-approves only a guarded recommendation", async () => {
+  it("triages the queue and bulk-approves a guarded recommendation", async () => {
     const app = await createApp({
       demoMode: true,
       logger: false,
@@ -15,7 +15,7 @@ describe("candidate triage API", () => {
     const triage = await app.inject({
       method: "POST",
       url: "/api/knowledge-candidates/triage",
-      payload: { candidateIds: ["candidate_avalara"] }
+      payload: { candidateIds: ["candidate_tax_codes"] }
     });
     expect(triage.statusCode).toBe(200);
     expect(triage.json()).toMatchObject({ status: "completed", queued: 1 });
@@ -23,7 +23,7 @@ describe("candidate triage API", () => {
     const snapshot = await app.inject({ method: "GET", url: "/api/bootstrap" });
     const candidate = snapshot
       .json<DashboardSnapshot>()
-      .candidates.find((item) => item.id === "candidate_avalara");
+      .candidates.find((item) => item.id === "candidate_tax_codes");
     expect(candidate?.triage).toMatchObject({
       action: "approve",
       bulkEligibleAction: "approve",
@@ -35,14 +35,40 @@ describe("candidate triage API", () => {
       url: "/api/knowledge-candidates/bulk-review",
       payload: {
         action: "approve",
-        candidateIds: ["candidate_avalara"],
+        candidateIds: ["candidate_tax_codes"],
         confirmationCount: 1,
         reason: "Bulk approved after guarded AI triage"
       }
     });
     expect(bulk.statusCode).toBe(200);
     expect(bulk.json<CandidateBulkReviewResult>()).toMatchObject({
-      processedIds: ["candidate_avalara"],
+      processedIds: ["candidate_tax_codes"],
+      skipped: []
+    });
+    await app.close();
+  });
+
+  it("bulk-approves explicitly selected candidates without requiring AI recommendations", async () => {
+    const app = await createApp({
+      demoMode: true,
+      logger: false,
+      dependencies: { store: new InMemoryLoreStore(), jobs: new InMemoryJobDispatcher() }
+    });
+
+    const bulk = await app.inject({
+      method: "POST",
+      url: "/api/knowledge-candidates/bulk-review",
+      payload: {
+        action: "approve",
+        candidateIds: ["candidate_interfaces", "candidate_tax_codes"],
+        confirmationCount: 2,
+        reason: "Explicitly selected and approved by a human reviewer"
+      }
+    });
+
+    expect(bulk.statusCode).toBe(200);
+    expect(bulk.json<CandidateBulkReviewResult>()).toMatchObject({
+      processedIds: ["candidate_interfaces", "candidate_tax_codes"],
       skipped: []
     });
     await app.close();
@@ -67,7 +93,7 @@ describe("candidate triage API", () => {
   it("bounds list evidence but loads the complete selected candidate on demand", async () => {
     const store = new InMemoryLoreStore();
     const snapshot = await store.getSnapshot(DEMO_ORGANISATION_ID);
-    const source = snapshot.candidates.find((candidate) => candidate.id === "candidate_avalara")!;
+    const source = snapshot.candidates.find((candidate) => candidate.id === "candidate_tax_codes")!;
     const fullContent = "retained evidence ".repeat(200);
     await store.createKnowledgeCandidate(DEMO_ORGANISATION_ID, {
       ...structuredClone(source),

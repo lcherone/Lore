@@ -117,6 +117,13 @@ async function importMergedPullRequests(
       (page) => octokit.rest.pulls.listFiles({ ...common, page }),
       onRequestWait
     );
+    const reviewerAvatars = Object.fromEntries(
+      reviews.flatMap((review) =>
+        review.user?.login && review.user.avatar_url
+          ? [[review.user.login, review.user.avatar_url] as const]
+          : []
+      )
+    );
     const imported: PullRequestImport = {
       externalId: String(pullRequest.number),
       ...(sourceVersion ? { sourceVersion } : {}),
@@ -131,12 +138,14 @@ async function importMergedPullRequests(
             .filter((name): name is string => Boolean(name))
         )
       ],
+      ...(Object.keys(reviewerAvatars).length > 0 ? { reviewerAvatars } : {}),
       reviewComments: [
         ...reviews
           .filter((review) => Boolean(review.body?.trim()))
           .map((review) => ({
             externalId: `review-${review.id}`,
             author: review.user?.login ?? "unknown",
+            ...(review.user?.avatar_url ? { avatarUrl: review.user.avatar_url } : {}),
             body: review.body,
             url: review.html_url,
             occurredAt: review.submitted_at ?? pullRequest.merged_at ?? new Date().toISOString()
@@ -144,6 +153,7 @@ async function importMergedPullRequests(
         ...reviewComments.map((comment) => ({
           externalId: String(comment.id),
           author: comment.user.login,
+          ...(comment.user.avatar_url ? { avatarUrl: comment.user.avatar_url } : {}),
           body: comment.body,
           url: comment.html_url,
           occurredAt: comment.created_at
@@ -151,6 +161,7 @@ async function importMergedPullRequests(
         ...conversationComments.map((comment) => ({
           externalId: `conversation-${comment.id}`,
           author: comment.user?.login ?? "unknown",
+          ...(comment.user?.avatar_url ? { avatarUrl: comment.user.avatar_url } : {}),
           body: comment.body ?? "",
           url: comment.html_url,
           occurredAt: comment.created_at

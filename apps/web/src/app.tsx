@@ -474,20 +474,6 @@ export function App() {
     }
   };
 
-  const indexRepository = async (repository: RepositorySummary): Promise<void> => {
-    try {
-      if (!apiConnected) throw new Error("Lore is disconnected; no job was queued.");
-      const result = await loreApi.indexRepository(repository.id);
-      notify(
-        result.simulated
-          ? "Demo indexing simulated; no worker job was started"
-          : "Repository indexing queued"
-      );
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "Indexing could not start", "error");
-    }
-  };
-
   const importHistory = async (
     repository: RepositorySummary,
     limit: PullRequestImportLimit
@@ -625,7 +611,6 @@ export function App() {
             installationId={githubInstallationId}
             onInstallGitHub={installGitHubApp}
             onConnect={connectRepositories}
-            onIndex={indexRepository}
             onImport={importHistory}
             onExtract={extractRepositoryEvidence}
             onDelete={deleteRepository}
@@ -639,6 +624,7 @@ export function App() {
           <KnowledgePage
             items={data.knowledge}
             repositories={data.repositories}
+            reviewers={data.reviewers}
             onCreate={createKnowledge}
             onStatusChange={changeKnowledgeStatus}
             onReviewCandidates={() => navigate("candidates")}
@@ -648,6 +634,7 @@ export function App() {
         return (
           <EvidencePage
             repositories={data.repositories}
+            reviewers={data.reviewers}
             onAnalyse={analyseCommunication}
             onList={listCommunicationEvidence}
             onReview={() => navigate("candidates")}
@@ -658,6 +645,7 @@ export function App() {
           <CandidatesPage
             candidates={data.candidates}
             knowledge={data.knowledge}
+            reviewers={data.reviewers}
             onApprove={approveCandidate}
             onReject={rejectCandidate}
             onMerge={mergeCandidate}

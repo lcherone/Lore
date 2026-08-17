@@ -151,7 +151,7 @@ Candidate list and bootstrap responses bound each evidence body to a 1,500-chara
 curl -X POST http://127.0.0.1:3001/api/evidence/communications \
   -H 'content-type: application/json' \
   -d '{
-    "repositoryId":"repo_soho_ecom",
+    "repositoryId":"repo_example_commerce",
     "sourceType":"standup",
     "title":"Payments standup · 16 August",
     "participants":["Alex","Sam","Priya"],
@@ -218,9 +218,9 @@ Every body is validated with Zod. Errors use:
 curl -X POST http://127.0.0.1:3001/api/tasks/prepare \
   -H 'content-type: application/json' \
   -d '{
-    "repositoryId":"repo_soho_ecom",
-    "task":"SS-6160 Update Avalara ShipFrom and ShipTo addresses",
-    "paths":["src/Tax/Avalara/AddressCode.php"]
+    "repositoryId":"repo_example_commerce",
+    "task":"Separate origin and destination tax address codes",
+    "paths":["src/Tax/Provider/AddressRoleCode.php"]
   }'
 ```
 

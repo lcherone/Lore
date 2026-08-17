@@ -1,5 +1,6 @@
 import type {
   AccountSession,
+  AgentSession,
   AuthSessionSummary,
   CandidateBulkReviewResult,
   CandidateRecord,
@@ -22,6 +23,7 @@ import type {
   PullRequestImportLimit,
   RepositoryRetentionConfig,
   RepositorySummary,
+  SessionEvent,
   SettingsBundle,
   UserSettings,
   UserProfile
@@ -173,11 +175,13 @@ export const loreApi = {
     request("/api/repositories", { method: "POST", body: JSON.stringify(input) }),
   connectRepositories: (repositories: Array<Record<string, unknown>>): Promise<RepositoryBatchConnectionResult> =>
     request("/api/repositories/batch", { method: "POST", body: JSON.stringify({ repositories }) }),
-  indexRepository: (id: string): Promise<{ status: "queued" | "dispatch_pending" | "completed"; simulated?: boolean }> => request(`/api/repositories/${id}/index`, { method: "POST" }),
   importHistory: (id: string, limit: PullRequestImportLimit): Promise<{ status: "queued" | "dispatch_pending" | "already_running" | "simulated"; simulated?: boolean; alreadyRunning?: boolean }> =>
     request(`/api/repositories/${id}/github-import`, { method: "POST", body: JSON.stringify({ limit }) }),
   extractRepositoryEvidence: (id: string): Promise<{ status: "queued" | "simulated"; evidenceQueued: number; batchesQueued: number }> =>
     request(`/api/repositories/${id}/knowledge-extraction`, { method: "POST", body: JSON.stringify({}) }),
+  agentSession: (id: string): Promise<AgentSession> => request(`/api/sessions/${id}`),
+  agentSessionEvents: (id: string): Promise<{ items: SessionEvent[] }> =>
+    request(`/api/sessions/${id}/events`),
   repositoryEntities: (
     id: string,
     input: { search?: string; type?: CodeEntity["type"]; page?: number; pageSize?: number }

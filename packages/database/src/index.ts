@@ -8,6 +8,7 @@ export * from "./job-dispatcher.js";
 export * from "./job-ledger.js";
 export * from "./memory-store.js";
 export * from "./prisma-store.js";
+export * from "./reviewer-profiles.js";
 
 export function createLoreStore(environment = process.env): LoreStore {
   if (environment.DEMO_MODE === "true") {

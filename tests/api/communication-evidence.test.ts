@@ -13,10 +13,10 @@ describe("ad-hoc communication evidence API", () => {
       dependencies: { store, jobs: new InMemoryJobDispatcher() }
     });
     const payload = {
-      repositoryId: "repo_soho_ecom",
+      repositoryId: "repo_example_commerce",
       sourceType: "standup",
       title: "Payments engineering standup",
-      content: `Alex: Decision: ShipFrom and ShipTo addresses must receive independent address codes in Avalara payloads.
+      content: `Alex: Decision: Origin and destination addresses must receive independent codes in external tax payloads.
 Sam: We should add a regression test before changing refund tax mapping.
 Priya: Yesterday I finished release notes and today I am reviewing deployment.`,
       participants: ["Alex", "Sam", "Priya"],
@@ -32,7 +32,7 @@ Priya: Yesterday I finished release notes and today I am reviewing deployment.`,
     expect(analysis.candidates).toHaveLength(2);
     expect(analysis.candidates[0]).toMatchObject({
       disposition: "already_added",
-      matches: [{ id: "knowledge_avalara_codes" }]
+      matches: [{ id: "knowledge_tax_codes" }]
     });
     expect(analysis.counts.already_added).toBe(1);
     expect((await store.getSnapshot("org_acme")).knowledge).toHaveLength(initialKnowledgeCount);
@@ -47,7 +47,7 @@ Priya: Yesterday I finished release notes and today I am reviewing deployment.`,
       method: "POST",
       url: `/api/knowledge-candidates/${analysis.candidates[0]!.candidate.id}/merge`,
       payload: {
-        targetId: "knowledge_avalara_codes",
+        targetId: "knowledge_tax_codes",
         reason: "Standup confirms the existing address-code decision"
       }
     });

@@ -22,7 +22,6 @@ import {
   ListFilter,
   MessageSquareText,
   Mic,
-  Play,
   Plus,
   RefreshCw,
   Search,
@@ -33,6 +32,7 @@ import {
   UserRoundCheck
 } from "lucide-react";
 import type {
+  AgentSession,
   CandidateBulkReviewResult,
   CandidateRecord,
   CodeEntity,
@@ -50,9 +50,11 @@ import type {
   KnowledgeScope,
   PolicyRecord,
   PullRequestImportLimit,
+  ReviewerProfile,
   RepositoryRetentionConfig,
   RepositorySummary,
   SafetyReport,
+  SessionEvent,
   SettingsBundle
 } from "@lore/shared/types.js";
 import {
@@ -63,6 +65,7 @@ import {
   KindIcon,
   Modal,
   PageHeader,
+  ReviewerAvatar,
   Risk,
   SeverityLabel
 } from "./components.js";
@@ -234,6 +237,37 @@ const relativeTime = (value: string): string => {
   return `${days}d ago`;
 };
 
+const reviewerKey = (value: string): string => value.trim().replace(/^@/, "").toLowerCase();
+
+const findReviewer = (
+  reviewers: ReviewerProfile[],
+  identity?: string
+): ReviewerProfile | undefined => {
+  if (!identity) return undefined;
+  const key = reviewerKey(identity);
+  return reviewers.find(
+    (reviewer) =>
+      reviewerKey(reviewer.providerIdentity) === key ||
+      (reviewer.email ? reviewerKey(reviewer.email) === key : false)
+  );
+};
+
+function ReviewerAwareKindIcon({
+  item,
+  reviewers
+}: {
+  item: Pick<KnowledgeItem, "kind" | "scope">;
+  reviewers: ReviewerProfile[];
+}) {
+  const reviewer =
+    item.kind === "preference" ? findReviewer(reviewers, item.scope.reviewer) : undefined;
+  return reviewer ? (
+    <ReviewerAvatar reviewer={reviewer} size="small" />
+  ) : (
+    <KindIcon kind={item.kind} />
+  );
+}
+
 const communicationExample = `Alex: We agreed that refund tax changes must include RefundTaxTransactionTest.
 Sam: The checkout team prefers repository interfaces at application service boundaries.
 Priya: Remember: never log full external API payloads because they may contain customer data.
@@ -254,11 +288,13 @@ const communicationSourceLabel = (evidence: EvidenceRecord): string => {
 
 export function EvidencePage({
   repositories,
+  reviewers,
   onAnalyse,
   onList,
   onReview
 }: {
   repositories: RepositorySummary[];
+  reviewers: ReviewerProfile[];
   onAnalyse: (input: CommunicationEvidenceInput) => Promise<CommunicationEvidenceAnalysis>;
   onList: () => Promise<EvidenceRecord[]>;
   onReview: () => void;
@@ -335,7 +371,7 @@ export function EvidencePage({
       <div className="evidence-safety" role="note">
         <ShieldCheck size={19} />
         <span>
-          <strong>Private by design in this local demo.</strong> Lore stores the original text for provenance, treats it as untrusted input, and never activates extracted knowledge without human review. Remove secrets, payment data, and unnecessary customer information before pasting.
+          <strong>Private by design in this local installation.</strong> Lore stores the original text for provenance, treats it as untrusted input, and never activates extracted knowledge without human review. Remove secrets, payment data, and unnecessary customer information before pasting.
         </span>
       </div>
 
@@ -447,7 +483,7 @@ export function EvidencePage({
             {result.candidates.map((item) => (
               <article key={item.candidate.id}>
                 <span className={`comparison-badge comparison-badge--${item.disposition}`}>{dispositionLabel(item.disposition)}</span>
-                <KindIcon kind={item.candidate.kind} />
+                <ReviewerAwareKindIcon item={item.candidate} reviewers={reviewers} />
                 <div>
                   <h3>{item.candidate.title}</h3>
                   <p>{item.candidate.statement}</p>
@@ -473,7 +509,7 @@ export function DashboardPage({
   onPrepare: (task: string, repositoryId: string) => Promise<ContextPackage>;
   onNavigate: (page: string) => void;
 }) {
-  const [task, setTask] = useState("SS-6160 Update Avalara ShipFrom and ShipTo addresses");
+  const [task, setTask] = useState("Separate origin and destination tax address codes");
   const [repositoryId, setRepositoryId] = useState(data.repositories[0]?.id ?? "");
   const [context, setContext] = useState<ContextPackage>();
   const [preparing, setPreparing] = useState(false);
@@ -585,7 +621,7 @@ export function DashboardPage({
             <div className="attention-list">
               {data.candidates.slice(0, 3).map((candidate) => (
                 <button key={candidate.id} onClick={() => onNavigate("candidates")}>
-                  <KindIcon kind={candidate.kind} />
+                  <ReviewerAwareKindIcon item={candidate} reviewers={data.reviewers} />
                   <span>
                     <strong>{candidate.title}</strong>
                     <small>
@@ -796,6 +832,7 @@ function ContextModal({ context, onClose }: { context: ContextPackage; onClose: 
 export function CandidatesPage({
   candidates,
   knowledge,
+  reviewers,
   onApprove,
   onReject,
   onMerge,
@@ -805,6 +842,7 @@ export function CandidatesPage({
 }: {
   candidates: CandidateRecord[];
   knowledge: KnowledgeItem[];
+  reviewers: ReviewerProfile[];
   onApprove: (
     candidate: CandidateRecord,
     draft: Pick<CandidateRecord, "statement" | "kind" | "scope">
@@ -907,9 +945,7 @@ export function CandidatesPage({
       ? { ...loadedCandidate, ...selectedSummary, evidence: loadedCandidate.evidence }
       : selectedSummary;
   const selectedCandidates = candidates.filter((candidate) => selectedIds.has(candidate.id));
-  const bulkApproveIds = selectedCandidates
-    .filter((candidate) => candidate.triage?.bulkEligibleAction === "approve")
-    .map((candidate) => candidate.id);
+  const bulkApproveIds = selectedCandidates.map((candidate) => candidate.id);
   const bulkIgnoreIds = selectedCandidates
     .filter((candidate) => candidate.triage?.bulkEligibleAction === "ignore")
     .map((candidate) => candidate.id);
@@ -1194,7 +1230,7 @@ export function CandidatesPage({
                   />
                 </label>
                 <button className="candidate-row__open" onClick={() => select(candidate)}>
-                  <KindIcon kind={candidate.kind} />
+                  <ReviewerAwareKindIcon item={candidate} reviewers={reviewers} />
                   <span>
                     <span className={`triage-pill triage-pill--${candidate.triage?.action ?? "untriaged"}`}>
                       {triageActionLabel(candidate)}
@@ -1358,6 +1394,7 @@ export function CandidatesPage({
                     undefined,
                     item.type
                   );
+                  const evidenceReviewer = findReviewer(reviewers, item.author);
                   return (
                     <article key={item.id}>
                       <span className="timeline-check">
@@ -1366,6 +1403,19 @@ export function CandidatesPage({
                       <div>
                         <strong>{item.title ?? item.externalId}</strong>
                         <time>{formatDate(item.occurredAt)}</time>
+                        {item.author ? (
+                          <span className="evidence-author">
+                            {evidenceReviewer ? (
+                              <ReviewerAvatar reviewer={evidenceReviewer} size="small" />
+                            ) : (
+                              <UserRoundCheck size={16} aria-hidden="true" />
+                            )}
+                            <span>
+                              {item.type === "review_comment" ? "Review by " : "Authored by "}
+                              {evidenceReviewer?.name ?? `@${item.author}`}
+                            </span>
+                          </span>
+                        ) : null}
                         <p className="evidence-preview">{preview.text}</p>
                         <div className="evidence-source-actions">
                           {item.url && (
@@ -1728,7 +1778,7 @@ export function CandidatesPage({
             )}
             {bulkAction && (
               <Modal
-                title={bulkAction === "approve" ? "Add guarded candidates" : "Ignore likely noise"}
+                title={bulkAction === "approve" ? "Add selected candidates" : "Ignore likely noise"}
                 onClose={() => !working && setBulkAction(undefined)}
                 footer={
                   <>
@@ -1768,15 +1818,17 @@ export function CandidatesPage({
                   <div className="bulk-review-dialog__count">
                     <strong>{bulkActionIds.length}</strong>
                     <span>
-                      candidate{bulkActionIds.length === 1 ? "" : "s"} pass the guarded bulk {bulkAction} checks
+                      {bulkAction === "approve"
+                        ? `selected candidate${bulkActionIds.length === 1 ? "" : "s"} will be added`
+                        : `candidate${bulkActionIds.length === 1 ? "" : "s"} pass the guarded bulk ignore checks`}
                     </span>
                   </div>
                   <p>
                     {bulkAction === "approve"
-                      ? "Lore will create an active, audited knowledge revision for each unchanged high-confidence candidate. Wording changes, possible policies, contradictions, and uncertain items are excluded automatically."
+                      ? "Lore will create an active, audited knowledge revision for every candidate you explicitly selected. AI recommendations remain advisory; this confirmation is the human approval."
                       : "Lore will remove these high-confidence one-off or non-durable items from the queue. Their original evidence and the review action remain in the audit trail."}
                   </p>
-                  {selectedIds.size > bulkActionIds.length && (
+                  {bulkAction === "ignore" && selectedIds.size > bulkActionIds.length && (
                     <div className="info-callout">
                       <ShieldCheck size={17} />
                       <span>
@@ -1803,12 +1855,14 @@ export function CandidatesPage({
 export function KnowledgePage({
   items,
   repositories,
+  reviewers,
   onCreate,
   onStatusChange,
   onReviewCandidates
 }: {
   items: KnowledgeItem[];
   repositories: RepositorySummary[];
+  reviewers: ReviewerProfile[];
   onCreate: (input: Record<string, unknown>) => Promise<void>;
   onStatusChange: (
     item: KnowledgeItem,
@@ -1935,7 +1989,7 @@ export function KnowledgePage({
         {filtered.map((item) => (
           <button className="data-table__row" key={item.id} onClick={() => setSelected(item)}>
             <span className="table-primary">
-              <KindIcon kind={item.kind} />
+              <ReviewerAwareKindIcon item={item} reviewers={reviewers} />
               <span>
                 <strong>{item.title}</strong>
                 <small>{item.statement}</small>
@@ -2154,7 +2208,6 @@ export function RepositoriesPage({
   installationId: initialInstallationId,
   onInstallGitHub,
   onConnect,
-  onIndex,
   onImport,
   onExtract,
   onDelete,
@@ -2172,7 +2225,6 @@ export function RepositoriesPage({
   installationId?: string;
   onInstallGitHub: () => Promise<void>;
   onConnect: (inputs: Array<Record<string, unknown>>) => Promise<RepositoryBatchConnectionResult>;
-  onIndex: (repository: RepositorySummary) => Promise<void>;
   onImport: (repository: RepositorySummary, limit: PullRequestImportLimit) => Promise<void>;
   onExtract: (repository: RepositorySummary) => Promise<void>;
   onDelete: (repository: RepositorySummary, confirmation: string) => Promise<void>;
@@ -2422,13 +2474,6 @@ export function RepositoriesPage({
                 icon={<Sparkles size={15} />}
               >
                 Extract evidence
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => void onIndex(repository)}
-                icon={<Play size={15} />}
-              >
-                Index now
               </Button>
               <Button
                 variant="quiet"
@@ -3008,41 +3053,86 @@ export function PoliciesPage({
 }
 
 export function SessionsPage({ data }: { data: DashboardSnapshot }) {
+  const [selectedSession, setSelectedSession] = useState<AgentSession>();
+  const [sessionEvents, setSessionEvents] = useState<SessionEvent[]>([]);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionError, setSessionError] = useState<string>();
+  const [commandCopied, setCommandCopied] = useState(false);
+  const reportsBySession = useMemo(
+    () => new Map(data.reports.flatMap((report) => report.sessionId ? [[report.sessionId, report]] : [])),
+    [data.reports]
+  );
+
+  useEffect(() => {
+    if (!selectedSession) return;
+    let active = true;
+    setSessionLoading(true);
+    setSessionError(undefined);
+    void Promise.all([
+      loreApi.agentSession(selectedSession.id),
+      loreApi.agentSessionEvents(selectedSession.id)
+    ]).then(([session, events]) => {
+      if (!active) return;
+      setSelectedSession(session);
+      setSessionEvents(events.items);
+    }).catch((cause: unknown) => {
+      if (active) setSessionError(cause instanceof Error ? cause.message : "Session details could not be loaded");
+    }).finally(() => {
+      if (active) setSessionLoading(false);
+    });
+    return () => { active = false; };
+  }, [selectedSession?.id]);
+
+  const selectedReport = selectedSession ? reportsBySession.get(selectedSession.id) : undefined;
+  const selectedRepository = selectedSession
+    ? data.repositories.find((repository) => repository.id === selectedSession.repositoryId)
+    : undefined;
+  const selectedFiles = selectedReport?.changedFiles.map((file) => file.path) ?? selectedSession?.filesChanged ?? [];
+  const selectedCountsAvailable = selectedSession?.status === "completed";
+
   return (
     <div className="page-pad">
       <PageHeader
         title="Agent sessions"
         description="See the context Lore prepared, files an agent touched, and verification state."
-        actions={
-          <Button variant="primary" icon={<TerminalSquare size={16} />}>
-            Start with CLI
-          </Button>
-        }
       />
       <div className="session-list">
-        {data.sessions.map((session) => (
-          <article key={session.id}>
-            <span className={`session-status session-status--${session.status}`}>
-              <Code2 size={18} />
-            </span>
-            <div>
-              <h2>{session.task}</h2>
-              <p>
-                {session.agentType} · {session.status} · started {relativeTime(session.startedAt)}
-              </p>
-            </div>
-            <div>
-              <span>Changed files</span>
-              <strong>{session.filesChanged.length}</strong>
-            </div>
-            <div>
-              <span>Warnings</span>
-              <strong>{session.warningCount}</strong>
-            </div>
-            <Button variant="secondary">Open session</Button>
-            <ChevronRight size={17} />
-          </article>
-        ))}
+        {!data.sessions.length && (
+          <EmptyState title="No agent sessions yet" body="Run an agent through the Lore CLI to retain its context and verification lifecycle here." />
+        )}
+        {data.sessions.map((session) => {
+          const report = reportsBySession.get(session.id);
+          const countsAvailable = session.status === "completed";
+          const changedFileCount = report?.changedFiles.length ?? session.filesChanged.length;
+          const warningCount = report?.warnings.length ?? session.warningCount;
+          return (
+            <article key={session.id}>
+              <span className={`session-status session-status--${session.status}`}>
+                <Code2 size={18} />
+              </span>
+              <div>
+                <h2>{session.task}</h2>
+                <p>
+                  {session.agentType} · {session.status} · started {relativeTime(session.startedAt)}
+                </p>
+              </div>
+              <div>
+                <span>Changed files</span>
+                <strong title={countsAvailable ? undefined : "Available after verification completes"}>
+                  {countsAvailable ? changedFileCount : "—"}
+                </strong>
+              </div>
+              <div>
+                <span>Warnings</span>
+                <strong title={countsAvailable ? undefined : "Available after verification completes"}>
+                  {countsAvailable ? warningCount : "—"}
+                </strong>
+              </div>
+              <Button variant="secondary" onClick={() => setSelectedSession(session)}>Open session</Button>
+              <ChevronRight size={17} aria-hidden="true" />
+            </article>
+          );
+        })}
       </div>
       <div className="cli-callout">
         <TerminalSquare size={22} />
@@ -3053,10 +3143,73 @@ export function SessionsPage({ data }: { data: DashboardSnapshot }) {
             refreshes constraints, and verifies the final diff.
           </p>
         </div>
-        <Button variant="secondary" icon={<Copy size={15} />}>
-          Copy command
+        <Button
+          variant="secondary"
+          icon={commandCopied ? <Check size={15} /> : <Copy size={15} />}
+          onClick={() => {
+            void navigator.clipboard.writeText('lore agent codex "your task"').then(() => {
+              setCommandCopied(true);
+              window.setTimeout(() => setCommandCopied(false), 2_000);
+            }).catch(() => setCommandCopied(false));
+          }}
+        >
+          {commandCopied ? "Copied" : "Copy command"}
         </Button>
       </div>
+      {selectedSession && (
+        <Modal title="Agent session" wide onClose={() => setSelectedSession(undefined)}>
+          <div className="session-detail">
+            <header>
+              <span className={`session-status session-status--${selectedSession.status}`}><Code2 size={18} /></span>
+              <div>
+                <h3>{selectedSession.task}</h3>
+                <p>{selectedRepository ? `${selectedRepository.owner}/${selectedRepository.name}` : selectedSession.repositoryId}</p>
+              </div>
+              <span className={`job-state job-state--${selectedSession.status}`}>{selectedSession.status}</span>
+            </header>
+            {!selectedCountsAvailable && (
+              <div className="info-callout">
+                <CircleHelp size={17} />
+                <span><strong>Verification has not completed.</strong> Changed-file and warning totals are not available yet, so Lore shows a dash instead of a misleading zero.</span>
+              </div>
+            )}
+            {sessionError && <div className="form-error">{sessionError}</div>}
+            <dl className="session-detail__stats">
+              <div><dt>Agent</dt><dd>{selectedSession.agentType}</dd></div>
+              <div><dt>Started</dt><dd>{relativeTime(selectedSession.startedAt)}</dd></div>
+              <div><dt>Changed files</dt><dd>{selectedCountsAvailable ? selectedFiles.length : "Not verified"}</dd></div>
+              <div><dt>Warnings</dt><dd>{selectedCountsAvailable ? selectedReport?.warnings.length ?? selectedSession.warningCount : "Not verified"}</dd></div>
+            </dl>
+            {(selectedSession.baseCommit || selectedSession.currentCommit) && (
+              <div className="session-detail__commits">
+                {selectedSession.baseCommit && <p><span>Base commit</span><code>{selectedSession.baseCommit}</code></p>}
+                {selectedSession.currentCommit && <p><span>Current commit</span><code>{selectedSession.currentCommit}</code></p>}
+              </div>
+            )}
+            <section>
+              <h4>Changed files</h4>
+              {selectedFiles.length ? (
+                <ul className="session-file-list">{selectedFiles.map((path) => <li key={path}><FileCode2 size={14} /><code>{path}</code></li>)}</ul>
+              ) : (
+                <p className="detail-empty">{selectedCountsAvailable ? "No files changed in this verified session." : "No verified file list is available."}</p>
+              )}
+            </section>
+            <section>
+              <h4>Lifecycle</h4>
+              {sessionLoading ? <p className="detail-empty">Loading lifecycle…</p> : sessionEvents.length ? (
+                <ol className="session-event-list">
+                  {sessionEvents.map((event) => (
+                    <li key={event.id}>
+                      <CheckCircle2 size={15} />
+                      <span><strong>{event.type.replaceAll("_", " ")}</strong><small>{relativeTime(event.createdAt)}</small></span>
+                    </li>
+                  ))}
+                </ol>
+              ) : <p className="detail-empty">No lifecycle events were recorded.</p>}
+            </section>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -3076,6 +3229,7 @@ export function JobsPage() {
   const [jobs, setJobs] = useState<JobRunRecord[]>([]);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const [expandedJobId, setExpandedJobId] = useState<string>();
 
   useEffect(() => {
     let active = true;
@@ -3108,20 +3262,55 @@ export function JobsPage() {
       ) : (
         <div className="session-list job-list">
           {jobs.map((job) => (
-            <article key={job.id}>
-              <span className={`session-status job-status--${job.state}`}>
-                {job.state === "running" || job.state === "retrying" ? <LoaderCircle size={18} /> : <History size={18} />}
-              </span>
-              <div>
-                <h2>{jobName(job.name)}</h2>
-                <p>{job.state.replace("_", " ")} · queued {relativeTime(job.queuedAt)}</p>
-                {job.errorMessage && <small>{job.errorMessage}</small>}
-                {!job.errorMessage && jobProgressMessage(job) && <small className="job-progress">{jobProgressMessage(job)}</small>}
-              </div>
-              <div><span>Attempt</span><strong>{job.attempt}/{job.maximumAttempts}</strong></div>
-              <div><span>Events</span><strong>{job.events?.length ?? 0}</strong></div>
-              <div className={`job-state job-state--${job.state}`}>{job.state.replace("_", " ")}</div>
-              <ChevronRight size={17} />
+            <article key={job.id} className={expandedJobId === job.id ? "is-expanded" : undefined}>
+              <button
+                type="button"
+                className="job-summary"
+                aria-expanded={expandedJobId === job.id}
+                onClick={() => setExpandedJobId((current) => current === job.id ? undefined : job.id)}
+              >
+                <span className={`session-status job-status--${job.state}`}>
+                  {job.state === "running" || job.state === "retrying" ? <LoaderCircle size={18} /> : <History size={18} />}
+                </span>
+                <span className="job-summary__title">
+                  <strong>{jobName(job.name)}</strong>
+                  <small>{job.state.replace("_", " ")} · queued {relativeTime(job.queuedAt)}</small>
+                  {job.errorMessage && <em>{job.errorMessage}</em>}
+                  {!job.errorMessage && jobProgressMessage(job) && <em className="job-progress">{jobProgressMessage(job)}</em>}
+                </span>
+                <span className="job-summary__metric"><small>Attempt</small><strong>{job.attempt}/{job.maximumAttempts}</strong></span>
+                <span className="job-summary__metric"><small>Events</small><strong>{job.events?.length ?? 0}</strong></span>
+                <span className={`job-state job-state--${job.state}`}>{job.state.replace("_", " ")}</span>
+                <ChevronRight className="job-summary__chevron" size={17} aria-hidden="true" />
+              </button>
+              {expandedJobId === job.id && (
+                <div className="job-details">
+                  <dl>
+                    <div><dt>Job ID</dt><dd><code>{job.id}</code></dd></div>
+                    {job.repositoryId && <div><dt>Repository ID</dt><dd><code>{job.repositoryId}</code></dd></div>}
+                    <div><dt>Queued</dt><dd>{new Date(job.queuedAt).toLocaleString()}</dd></div>
+                    {job.startedAt && <div><dt>Started</dt><dd>{new Date(job.startedAt).toLocaleString()}</dd></div>}
+                    {job.finishedAt && <div><dt>Finished</dt><dd>{new Date(job.finishedAt).toLocaleString()}</dd></div>}
+                    <div><dt>Idempotency key</dt><dd><code>{job.idempotencyKey}</code></dd></div>
+                  </dl>
+                  {job.resultSummary && (
+                    <section><h3>Result</h3><pre>{JSON.stringify(job.resultSummary, null, 2)}</pre></section>
+                  )}
+                  <section>
+                    <h3>Event timeline</h3>
+                    {job.events?.length ? (
+                      <ol className="job-event-list">
+                        {job.events.map((event) => (
+                          <li key={event.id}>
+                            <span className={`job-state job-state--${event.state}`}>{event.state.replace("_", " ")}</span>
+                            <div><strong>{event.message ?? "State updated"}</strong><small>{new Date(event.createdAt).toLocaleString()}</small></div>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : <p className="detail-empty">No event details were recorded.</p>}
+                  </section>
+                </div>
+              )}
             </article>
           ))}
         </div>
@@ -3277,18 +3466,27 @@ export function ReviewersPage({ data }: { data: DashboardSnapshot }) {
         description="Scoped tendencies observed from explicit review feedback—not organisation-wide rules."
       />
       <div className="reviewer-grid">
+        {!data.reviewers.length && (
+          <EmptyState
+            title="No reviewer signals yet"
+            body="Import GitHub pull requests and review comments. Lore will derive reviewer profiles from the identities retained in that evidence."
+          />
+        )}
         {data.reviewers.map((reviewer) => {
+          const reviewerIdentities = new Set(
+            [reviewer.providerIdentity, reviewer.email]
+              .filter((value): value is string => Boolean(value))
+              .map((value) => value.replace(/^@/, "").toLowerCase())
+          );
           const preferences = data.knowledge.filter(
-            (item) => item.kind === "preference" && item.scope.reviewer === reviewer.email
+            (item) =>
+              item.kind === "preference" &&
+              typeof item.scope.reviewer === "string" &&
+              reviewerIdentities.has(item.scope.reviewer.replace(/^@/, "").toLowerCase())
           );
           return (
             <article key={reviewer.id}>
-              <div className="reviewer-avatar">
-                {reviewer.name
-                  .split(" ")
-                  .map((part) => part[0])
-                  .join("")}
-              </div>
+              <ReviewerAvatar reviewer={reviewer} className="reviewer-card-avatar" />
               <h2>{reviewer.name}</h2>
               <p>@{reviewer.providerIdentity}</p>
               <dl>

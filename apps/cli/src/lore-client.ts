@@ -124,7 +124,7 @@ export class HttpLoreClient implements LoreClient {
     });
     const context = await this.#request<ContextPackage>(
       `/api/sessions/${session.id}/refresh-context`,
-      { method: "POST" }
+      { method: "POST", body: JSON.stringify({}) }
     );
     return { session: { ...session, status: "active" }, context };
   }

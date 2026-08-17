@@ -10,6 +10,7 @@ import type {
 } from "@lore/core/index.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "@lore/core/index.js";
 import { createChangeObservation } from "./change-observation.js";
+import { buildReviewerProfiles } from "./reviewer-profiles.js";
 import type {
   AgentSession,
   ApiTokenSummary,
@@ -703,7 +704,7 @@ export class PrismaLoreStore implements LoreStore {
     });
     if (!organisation) throw new ForbiddenError();
 
-    const [repositoryRows, knowledgeRows, policyRows, reportRows, reviewerRows, sessionRows] =
+    const [repositoryRows, knowledgeRows, policyRows, reportRows, reviewerRows, reviewerEvidenceRows, sessionRows] =
       await Promise.all([
         this.prisma.repository.findMany({
           where: { organisationId },
@@ -721,6 +722,14 @@ export class PrismaLoreStore implements LoreStore {
           take: 50
         }),
         this.prisma.reviewerProfile.findMany({ where: { organisationId } }),
+        this.prisma.evidence.findMany({
+          where: {
+            organisationId,
+            provider: "github",
+            type: { in: ["pull_request", "review_comment"] }
+          },
+          select: { type: true, author: true, occurredAt: true, metadata: true }
+        }),
         this.prisma.agentSession.findMany({
           where: { organisationId },
           orderBy: { startedAt: "desc" },
@@ -773,18 +782,32 @@ export class PrismaLoreStore implements LoreStore {
     });
 
     const reports = reportRows.map((row) => row.payload as unknown as SafetyReport);
-    const reviewers: ReviewerProfile[] = reviewerRows.map((row) => {
+    const persistedReviewers: ReviewerProfile[] = reviewerRows.map((row) => {
       const metadata = asRecord(row.metadata);
       return {
         id: row.id,
         name: row.name,
         providerIdentity: row.providerIdentity,
+        ...(typeof metadata.avatarUrl === "string"
+          ? { avatarUrl: metadata.avatarUrl }
+          : {}),
         ...optional(row.email, "email"),
         preferenceCount: Number(metadata.preferenceCount ?? 0),
         reinforcedCount: Number(metadata.reinforcedCount ?? 0),
         lastObservedAt:
           typeof metadata.lastObservedAt === "string" ? metadata.lastObservedAt : row.id
       } as ReviewerProfile;
+    });
+    const reviewers = buildReviewerProfiles({
+      organisationId,
+      existing: persistedReviewers,
+      evidence: reviewerEvidenceRows.map((row) => ({
+        type: row.type as "pull_request" | "review_comment",
+        author: row.author,
+        occurredAt: row.occurredAt.toISOString(),
+        metadata: asRecord(row.metadata)
+      })),
+      knowledge
     });
 
     const sessions: AgentSession[] = sessionRows.map((row) => ({

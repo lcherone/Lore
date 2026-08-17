@@ -6,7 +6,7 @@ describe("tenant boundaries", () => {
   it("never returns organisation A data through organisation B", async () => {
     const store = new InMemoryLoreStore();
     await expect(store.getSnapshot("org_other")).rejects.toMatchObject({ name: "ForbiddenError" });
-    await expect(store.getRepository("org_other", "repo_soho_ecom")).rejects.toMatchObject({ name: "ForbiddenError" });
+    await expect(store.getRepository("org_other", "repo_example_commerce")).rejects.toMatchObject({ name: "ForbiddenError" });
   });
 
   it("creates human knowledge with first-party evidence", async () => {
@@ -19,7 +19,7 @@ describe("tenant boundaries", () => {
       statement: "Migration commands may use concrete repositories for one-off operations.",
       rationale: "The interface intentionally omits migration-only methods.",
       severity: "suggestion",
-      scope: { repository: "soho/ecom", paths: ["src/Migrations/**"] }
+      scope: { repository: "example-org/commerce-platform", paths: ["src/Migrations/**"] }
     }, "user_casey");
     expect(item.confidence).toBe(1);
     expect(item.evidenceIds).toHaveLength(1);
